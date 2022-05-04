@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import torch
 from torch import nn
-from torch.nn import functional as F
+from torch.nn.functional import relu as F_relu
 
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.modeling.backbone import resnet
@@ -42,8 +42,7 @@ class ResNet50Conv5ROIFeatureExtractor(nn.Module):
 
     def forward(self, x, proposals):
         x = self.pooler(x, proposals)
-        x = self.head(x)
-        return x
+        return self.head(x)
 
 
 @registry.ROI_BOX_FEATURE_EXTRACTORS.register("FPN2MLPFeatureExtractor")
@@ -75,24 +74,46 @@ class FPN2MLPFeatureExtractor(nn.Module):
             out_dim = int(representation_size / 2)
         else:
             out_dim = representation_size
-        
         self.fc7 = make_fc(representation_size, out_dim, use_gn)
         self.resize_channels = input_size
         self.out_channels = out_dim
 
     def forward(self, x, proposals):
+        # (Pdb) x.size()
+        # torch.Size([1280, 256, 7, 7])
+
         x = self.pooler(x, proposals)
+        # (Pdb) x.size()
+        # torch.Size([16196, 256, 7, 7])
+        # (Pdb) x.size()
+        # torch.Size([1280, 12544])
+        # (Pdb) x.size()
+        # torch.Size([1280, 256, 7, 7])
+
         x = x.view(x.size(0), -1)
 
-        x = F.relu(self.fc6(x))
-        x = F.relu(self.fc7(x))
+        # (Pdb) x.size()
+        # torch.Size([16196, 12544])
+        # (Pdb) x.size()
+        # torch.Size([1280, 12544])
+
+        x = F_relu(self.fc6(x))
+        # (Pdb) x.size()
+        # (Pdb) torch.Size([16196, 4096])
+        # (Pdb) x.size()
+        # torch.Size([1280, 4096])
+
+        x = F_relu(self.fc7(x))
+        # (Pdb) torch.Size([16196, 4096])
+        # (Pdb) x.size()
+        # torch.Size([1280, 4096])
 
         return x
 
     def forward_without_pool(self, x):
         x = x.view(x.size(0), -1)
-        x = F.relu(self.fc6(x))
-        x = F.relu(self.fc7(x))
+        x = F_relu(self.fc6(x))
+        x = F_relu(self.fc7(x))
         return x
 
 
@@ -155,7 +176,7 @@ class FPNXconv1fcFeatureExtractor(nn.Module):
         x = self.pooler(x, proposals)
         x = self.xconvs(x)
         x = x.view(x.size(0), -1)
-        x = F.relu(self.fc6(x))
+        x = F_relu(self.fc6(x))
         return x
 
 

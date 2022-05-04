@@ -1,5 +1,8 @@
 // modify from
 // https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/blob/mmdetection/mmdet/ops/dcn/src/deform_conv_cuda.c
+#ifndef AT_CHECK
+#define AT_CHECK TORCH_CHECK
+#endif
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -67,7 +70,7 @@ void modulated_deformable_col2im_coord_cuda(
 void shape_check(at::Tensor input, at::Tensor offset, at::Tensor *gradOutput,
                  at::Tensor weight, int kH, int kW, int dH, int dW, int padH,
                  int padW, int dilationH, int dilationW, int group,
-                 int deformable_group) 
+                 int deformable_group)
 {
   AT_CHECK(weight.ndimension() == 4,
            "4D weight tensor (nOutputPlane,nInputPlane,kH,kW) expected, "
@@ -160,7 +163,7 @@ int deform_conv_forward_cuda(at::Tensor input, at::Tensor weight,
                              at::Tensor columns, at::Tensor ones, int kW,
                              int kH, int dW, int dH, int padW, int padH,
                              int dilationW, int dilationH, int group,
-                             int deformable_group, int im2col_step) 
+                             int deformable_group, int im2col_step)
 {
   // todo: resize columns to include im2col: done
   // todo: add im2col_step as input
@@ -271,7 +274,7 @@ int deform_conv_backward_input_cuda(at::Tensor input, at::Tensor offset,
                                     at::Tensor columns, int kW, int kH, int dW,
                                     int dH, int padW, int padH, int dilationW,
                                     int dilationH, int group,
-                                    int deformable_group, int im2col_step) 
+                                    int deformable_group, int im2col_step)
 {
   shape_check(input, offset, &gradOutput, weight, kH, kW, dH, dW, padH, padW,
               dilationH, dilationW, group, deformable_group);
@@ -384,7 +387,7 @@ int deform_conv_backward_parameters_cuda(
     at::Tensor gradWeight,  // at::Tensor gradBias,
     at::Tensor columns, at::Tensor ones, int kW, int kH, int dW, int dH,
     int padW, int padH, int dilationW, int dilationH, int group,
-    int deformable_group, float scale, int im2col_step) 
+    int deformable_group, float scale, int im2col_step)
 {
   // todo: transpose and reshape outGrad
   // todo: reshape columns
@@ -499,7 +502,7 @@ void modulated_deform_conv_cuda_forward(
     int kernel_h, int kernel_w, const int stride_h, const int stride_w,
     const int pad_h, const int pad_w, const int dilation_h,
     const int dilation_w, const int group, const int deformable_group,
-    const bool with_bias) 
+    const bool with_bias)
 {
   AT_CHECK(input.is_contiguous(), "input tensor has to be contiguous");
   AT_CHECK(weight.is_contiguous(), "weight tensor has to be contiguous");
@@ -581,7 +584,7 @@ void modulated_deform_conv_cuda_backward(
     at::Tensor grad_offset, at::Tensor grad_mask, at::Tensor grad_output,
     int kernel_h, int kernel_w, int stride_h, int stride_w, int pad_h,
     int pad_w, int dilation_h, int dilation_w, int group, int deformable_group,
-    const bool with_bias) 
+    const bool with_bias)
 {
   AT_CHECK(input.is_contiguous(), "input tensor has to be contiguous");
   AT_CHECK(weight.is_contiguous(), "weight tensor has to be contiguous");

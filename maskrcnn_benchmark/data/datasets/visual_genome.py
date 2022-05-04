@@ -1,22 +1,29 @@
-import os
-import sys
-import torch
-import h5py
-import json
-from PIL import Image
-import numpy as np
+from os.path import join as os_path_join, exists as os_path_exists
+from json import load as json_load, dump as json_dump
 from collections import defaultdict
-from tqdm import tqdm
 import random
+import h5py
+from PIL.Image import open as Image_open, FLIP_LEFT_RIGHT as Image_FLIP_LEFT_RIGHT
+from torch import from_numpy as torch_from_numpy, zeros as torch_zeros, int64 as torch_int64, LongTensor as torch_LongTensor
+from torch.utils.data import Dataset
+from numpy import all as np_all, log as np_log, where as np_where,  array as np_array, \
+                  zeros as np_zeros, zeros_like as np_zeros_like, \
+                  ones_like as np_ones_like, \
+                  fill_diagonal as np_fill_diagonal, column_stack as np_column_stack, \
+                  maximum as np_maximum, minimum as np_minimum, \
+                  int32 as np_int32, int64 as np_int64, float as np_float, bool as np_bool
+from numpy.random import choice as np_random_choice
+from tqdm import tqdm
 
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
 
+
 BOX_SCALE = 1024  # Scale at which we have the boxes
+DICT_FILE_FPATH = '/home/zhanwen/datasets/visual_genome/VG-SGG-dicts-with-attri-info.json'
 
 
-class VGDataset(torch.utils.data.Dataset):
-
+class VGDataset(Dataset):
     def __init__(self, split, img_dir, roidb_file, dict_file, image_file, transforms=None,
                  filter_empty_rels=True, num_im=-1, num_val_im=5000,
                  filter_duplicate_rels=True, filter_non_overlap=True, flip_aug=False,
@@ -65,15 +72,15 @@ class VGDataset(torch.utils.data.Dataset):
             get_state =get_state,
         )
 
-        self.filenames = [self.filenames[i] for i in np.where(self.split_mask)[0]]
-        self.img_info = [self.img_info[i] for i in np.where(self.split_mask)[0]]
+        self.filenames = [self.filenames[i] for i in np_where(self.split_mask)[0]]
+        self.img_info = [self.img_info[i] for i in np_where(self.split_mask)[0]]
 
     def __getitem__(self, index):
         # if self.split == 'train':
         #    while(random.random() > self.img_info[index]['anti_prop']):
         #        index = int(random.random() * len(self.filenames))
 
-        img = Image.open(self.filenames[index]).convert("RGB")
+        img = Image_open(self.filenames[index]).convert("RGB")
         if img.size[0] != self.img_info[index]['width'] or img.size[1] != self.img_info[index]['height']:
             print('=' * 20, ' ERROR index ', str(index), ' ', str(img.size), ' ', str(self.img_info[index]['width']),
                   ' ', str(self.img_info[index]['height']), ' ', '=' * 20)
@@ -83,7 +90,7 @@ class VGDataset(torch.utils.data.Dataset):
         target = self.get_groundtruth(index, flip_img)
 
         if flip_img:
-            img = img.transpose(method=Image.FLIP_LEFT_RIGHT)
+            img = img.transpose(method=Image_FLIP_LEFT_RIGHT)
 
         if self.transforms is not None:
             img, target = self.transforms(img, target)
@@ -98,16 +105,17 @@ class VGDataset(torch.utils.data.Dataset):
         bg_matrix += 1
         fg_matrix[:, :, 0] = bg_matrix
         #np.save('./misc/fg_matrix.npy', fg_matrix)
-        pred_dist = np.log(fg_matrix / fg_matrix.sum(2)[:, :, None] + eps)
+        pred_dist = np_log(fg_matrix / fg_matrix.sum(2)[:, :, None] + eps)
 
         result = {
-            'fg_matrix': torch.from_numpy(fg_matrix),
-            'pred_dist': torch.from_numpy(pred_dist).float(),
+            'fg_matrix': torch_from_numpy(fg_matrix),
+            'pred_dist': torch_from_numpy(pred_dist).float(),
             'obj_classes': self.ind_to_classes,
             'rel_classes': self.ind_to_predicates,
             'att_classes': self.ind_to_attributes,
         }
         return result
+
 
     def get_img_info(self, index):
         # WARNING: original image_file.json has several pictures with false image size
@@ -117,37 +125,35 @@ class VGDataset(torch.utils.data.Dataset):
         # correct_img_info(self.img_dir, self.image_file)
         return self.img_info[index]
 
+
     def get_groundtruth(self, index, evaluation=False, flip_img=False):
         img_info = self.get_img_info(index)
         w, h = img_info['width'], img_info['height']
         # important: recover original box from BOX_SCALE
         box = self.gt_boxes[index] / BOX_SCALE * max(w, h)
-        box = torch.from_numpy(box).reshape(-1, 4)  # guard against no boxes
+        box = torch_from_numpy(box).reshape(-1, 4)  # guard against no boxes
         if flip_img:
-            new_xmin = w - box[:, 2]
-            new_xmax = w - box[:, 0]
-            box[:, 0] = new_xmin
-            box[:, 2] = new_xmax
+            box[:, 0] = w - box[:, 2]
+            box[:, 2] = w - box[:, 0]
 
         target = BoxList(box, (w, h), 'xyxy')  # xyxy
 
-        target.add_field("labels", torch.from_numpy(self.gt_classes[index]))
-        target.add_field("attributes", torch.from_numpy(self.gt_attributes[index]))
+        target.add_field("labels", torch_from_numpy(self.gt_classes[index]))
+        target.add_field("attributes", torch_from_numpy(self.gt_attributes[index]))
 
         relation = self.relationships[index].copy()  # (num_rel, 3)
         if self.filter_duplicate_rels:
             # Filter out dupes!
             assert self.split == 'train'
-            old_size = relation.shape[0]
             all_rel_sets = defaultdict(list)
             for (o0, o1, r) in relation:
                 all_rel_sets[(o0, o1)].append(r)
-            relation = [(k[0], k[1], np.random.choice(v)) for k, v in all_rel_sets.items()]
-            relation = np.array(relation, dtype=np.int32)
+            relation = [(k[0], k[1], np_random_choice(v)) for k, v in all_rel_sets.items()]
+            relation = np_array(relation, dtype=np_int32)
 
         # add relation to target
         num_box = len(target)
-        relation_map = torch.zeros((num_box, num_box), dtype=torch.int64)
+        relation_map = torch_zeros((num_box, num_box), dtype=torch_int64)
         for i in range(relation.shape[0]):
             if relation_map[int(relation[i, 0]), int(relation[i, 1])] > 0:
                 if (random.random() > 0.5):
@@ -158,11 +164,10 @@ class VGDataset(torch.utils.data.Dataset):
 
         if evaluation:
             target = target.clip_to_image(remove_empty=False)
-            target.add_field("relation_tuple", torch.LongTensor(relation))  # for evaluation
+            target.add_field("relation_tuple", torch_LongTensor(relation))  # for evaluation
             return target
-        else:
-            target = target.clip_to_image(remove_empty=True)
-            return target
+        target = target.clip_to_image(remove_empty=True)
+        return target
 
     def __len__(self):
         return len(self.filenames)
@@ -175,8 +180,8 @@ def get_VG_statistics(img_dir, roidb_file, dict_file, image_file, must_overlap=T
                            filter_duplicate_rels=False, get_state=True)
     num_obj_classes = len(train_data.ind_to_classes)
     num_rel_classes = len(train_data.ind_to_predicates)
-    fg_matrix = np.zeros((num_obj_classes, num_obj_classes, num_rel_classes), dtype=np.int64)
-    bg_matrix = np.zeros((num_obj_classes, num_obj_classes), dtype=np.int64)
+    fg_matrix = np_zeros((num_obj_classes, num_obj_classes, num_rel_classes), dtype=np_int64)
+    bg_matrix = np_zeros((num_obj_classes, num_obj_classes), dtype=np_int64)
 
     for ex_ind in tqdm(range(len(train_data))):
         gt_classes = train_data.gt_classes[ex_ind].copy()
@@ -188,7 +193,7 @@ def get_VG_statistics(img_dir, roidb_file, dict_file, image_file, must_overlap=T
         for (o1, o2), gtr in zip(o1o2, gt_relations[:, 2]):
             fg_matrix[o1, o2, gtr] += 1
         # For the background, get all of the things that overlap.
-        o1o2_total = gt_classes[np.array(
+        o1o2_total = gt_classes[np_array(
             box_filter(gt_boxes, must_overlap=must_overlap), dtype=int)]
         for (o1, o2) in o1o2_total:
             bg_matrix[o1, o2] += 1
@@ -199,21 +204,19 @@ def get_VG_statistics(img_dir, roidb_file, dict_file, image_file, must_overlap=T
 def box_filter(boxes, must_overlap=False):
     """ Only include boxes that overlap as possible relations.
     If no overlapping boxes, use all of them."""
-    n_cands = boxes.shape[0]
+    overlaps = bbox_overlaps(boxes.astype(np_float), boxes.astype(np_float), to_move=0) > 0
+    np_fill_diagonal(overlaps, 0)
 
-    overlaps = bbox_overlaps(boxes.astype(np.float), boxes.astype(np.float), to_move=0) > 0
-    np.fill_diagonal(overlaps, 0)
-
-    all_possib = np.ones_like(overlaps, dtype=np.bool)
-    np.fill_diagonal(all_possib, 0)
+    all_possib = np_ones_like(overlaps, dtype=np_bool)
+    np_fill_diagonal(all_possib, 0)
 
     if must_overlap:
-        possible_boxes = np.column_stack(np.where(overlaps))
+        possible_boxes = np_column_stack(np_where(overlaps))
 
         if possible_boxes.size == 0:
-            possible_boxes = np.column_stack(np.where(all_possib))
+            possible_boxes = np_column_stack(np_where(all_possib))
     else:
-        possible_boxes = np.column_stack(np.where(all_possib))
+        possible_boxes = np_column_stack(np_where(all_possib))
     return possible_boxes
 
 
@@ -226,8 +229,8 @@ def bbox_overlaps(boxes1, boxes2, to_move=1):
     # print('boxes2: ', boxes2.shape)
     num_box1 = boxes1.shape[0]
     num_box2 = boxes2.shape[0]
-    lt = np.maximum(boxes1.reshape([num_box1, 1, -1])[:, :, :2], boxes2.reshape([1, num_box2, -1])[:, :, :2])  # [N,M,2]
-    rb = np.minimum(boxes1.reshape([num_box1, 1, -1])[:, :, 2:], boxes2.reshape([1, num_box2, -1])[:, :, 2:])  # [N,M,2]
+    lt = np_maximum(boxes1.reshape([num_box1, 1, -1])[:, :, :2], boxes2.reshape([1, num_box2, -1])[:, :, :2])  # [N,M,2]
+    rb = np_minimum(boxes1.reshape([num_box1, 1, -1])[:, :, 2:], boxes2.reshape([1, num_box2, -1])[:, :, 2:])  # [N,M,2]
 
     wh = (rb - lt + to_move).clip(min=0)  # [N,M,2]
     inter = wh[:, :, 0] * wh[:, :, 1]  # [N,M]
@@ -237,12 +240,11 @@ def bbox_overlaps(boxes1, boxes2, to_move=1):
 
 def correct_img_info(img_dir, image_file):
     with open(image_file, 'r') as f:
-        data = json.load(f)
-    for i in range(len(data)):
-        img = data[i]
+        data = json_load(f)
+    for i, img in enumerate(data):
         basename = '{}.jpg'.format(img['image_id'])
-        filename = os.path.join(img_dir, basename)
-        img_data = Image.open(filename).convert("RGB")
+        filename = os_path_join(img_dir, basename)
+        img_data = Image_open(filename).convert("RGB")
         if img['width'] != img_data.size[0] or img['height'] != img_data.size[1]:
             print('--------- False id: ', i, '---------')
             print(img_data.size)
@@ -250,14 +252,15 @@ def correct_img_info(img_dir, image_file):
             data[i]['width'] = img_data.size[0]
             data[i]['height'] = img_data.size[1]
     with open(image_file, 'w') as outfile:
-        json.dump(data, outfile)
+        json_dump(data, outfile)
 
 
 def load_info(dict_file, add_bg=True):
     """
     Loads the file containing the visual genome label meanings
     """
-    info = json.load(open(dict_file, 'r'))
+    with open(dict_file, 'r') as f:
+        info = json_load(f)
     if add_bg:
         info['label_to_idx']['__background__'] = 0
         info['predicate_to_idx']['__background__'] = 0
@@ -284,7 +287,7 @@ def load_image_filenames(img_dir, image_file):
         List of filenames corresponding to the good images
     """
     with open(image_file, 'r') as f:
-        im_data = json.load(f)
+        im_data = json_load(f)
 
     corrupted_ims = ['1592.jpg', '1722.jpg', '4616.jpg', '4617.jpg']
     fns = []
@@ -294,8 +297,8 @@ def load_image_filenames(img_dir, image_file):
         if basename in corrupted_ims:
             continue
 
-        filename = os.path.join(img_dir, basename)
-        if os.path.exists(filename):
+        filename = os_path_join(img_dir, basename)
+        if os_path_exists(filename):
             fns.append(filename)
             img_info.append(img)
     assert len(fns) == 108073
@@ -333,7 +336,7 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
     if filter_empty_rels:
         split_mask &= roi_h5['img_to_first_rel'][:] >= 0
 
-    image_index = np.where(split_mask)[0]
+    image_index = np_where(split_mask)[0]
     if num_im > -1:
         image_index = image_index[:num_im]
     if num_val_im > 0:
@@ -342,15 +345,15 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
         elif split == 'train':
             image_index = image_index[num_val_im:]
 
-    split_mask = np.zeros_like(data_split).astype(bool)
+    split_mask = np_zeros_like(data_split).astype(bool)
     split_mask[image_index] = True
 
     # Get box information
     all_labels = roi_h5['labels'][:, 0]
     all_attributes = roi_h5['attributes'][:, :]
     all_boxes = roi_h5['boxes_{}'.format(BOX_SCALE)][:]  # cx,cy,w,h
-    assert np.all(all_boxes[:, :2] >= 0)  # sanity check
-    assert np.all(all_boxes[:, 2:] > 0)  # no empty box
+    assert np_all(all_boxes[:, :2] >= 0)  # sanity check
+    assert np_all(all_boxes[:, 2:] > 0)  # no empty box
 
     # convert from xc, yc, w, h to x1, y1, x2, y2
     all_boxes[:, :2] = all_boxes[:, :2] - all_boxes[:, 2:] / 2
@@ -375,7 +378,8 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
     pred_topk = []
     pred_num = 15
     pred_count=0
-    vg_dict_info = json.load(open('./datasets/vg/VG-SGG-dicts-with-attri-info.json','r'))
+    with open(DICT_FILE_FPATH,'r') as f:
+        vg_dict_info = json_load(f)
     predicates_tree = vg_dict_info['predicate_count']
     #predicates_tree = json.load(open('./datasets/vg/predicate_wikipedia_count.json', 'r'))
     predicates_sort = sorted(predicates_tree.items(), key=lambda x:x[1], reverse=True)
@@ -394,7 +398,7 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
     root_classes_count = {}
     leaf_classes_count = {}
     all_classes_count = {}
-    for i in range(len(image_index)):
+    for i, image_idx in enumerate(image_index):
         i_obj_start = im_to_first_box[i]
         i_obj_end = im_to_last_box[i]
         i_rel_start = im_to_first_rel[i]
@@ -407,12 +411,12 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
         if i_rel_start >= 0:
             predicates = _relation_predicates[i_rel_start: i_rel_end + 1]
             obj_idx = _relations[i_rel_start: i_rel_end + 1] - i_obj_start  # range is [0, num_box)
-            assert np.all(obj_idx >= 0)
-            assert np.all(obj_idx < boxes_i.shape[0])
-            rels = np.column_stack((obj_idx, predicates))  # (num_rel, 3), representing sub, obj, and pred
+            assert np_all(obj_idx >= 0)
+            assert np_all(obj_idx < boxes_i.shape[0])
+            rels = np_column_stack((obj_idx, predicates))  # (num_rel, 3), representing sub, obj, and pred
         else:
             assert not filter_empty_rels
-            rels = np.zeros((0, 3), dtype=np.int32)
+            rels = np_zeros((0, 3), dtype=np_int32)
 
         if filter_non_overlap:
             assert split == 'train'
@@ -421,21 +425,18 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
             boxes_i_obj = BoxList(boxes_i, (1000, 1000), 'xyxy')
             inters = boxlist_iou(boxes_i_obj, boxes_i_obj)
             rel_overs = inters[rels[:, 0], rels[:, 1]]
-            inc = np.where(rel_overs > 0.0)[0]
+            inc = np_where(rel_overs > 0.0)[0]
 
             if inc.size > 0:
                 rels = rels[inc]
             else:
-                split_mask[image_index[i]] = 0
+                split_mask[image_idx] = 0
                 continue
         if root_classes is not None and split == 'train':
             # print('old boxes: ', boxes_i)
             # print('old gt_classes_i: ', gt_classes_i)
             # print('old rels: ', rels)
             rel_temp = []
-            boxmap_old2new = {}
-            box_num = 0
-            retain_box = []
             # print('rels: ',rels)
             for rel_i in rels:
                 rel_i_pred = ind_to_predicates[rel_i[2]]
@@ -467,12 +468,11 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
                         rel_temp.append(rel_i_root)
                         root_classes_count[rel_i_pred] = root_classes_count[rel_i_pred] + 1
             if len(rel_temp) == 0:
-                split_mask[image_index[i]] = 0
+                split_mask[image_idx] = 0
                 continue
-            else:
-                rels = np.array(rel_temp, dtype=np.int32)
+            rels = np_array(rel_temp, dtype=np_int32)
 
-            # retain_box = np.array(retain_box, dtype=np.int64)
+            # retain_box = np_array(retain_box, dtype=np.int64)
             # boxes_i = boxes_i[retain_box]
             # gt_classes_i = gt_classes_i[retain_box]
             # gt_attributes_i = gt_attributes_i[retain_box]
@@ -486,15 +486,15 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
     count_list = [0,]
     for i in root_classes_count:
         count_list.append(root_classes_count[i])
-    print('mean root class number: ', np.array(count_list).mean())
-    print('sum root class number: ', np.array(count_list).sum())
+    print('mean root class number: ', np_array(count_list).mean())
+    print('sum root class number: ', np_array(count_list).sum())
 
     print('leaf_classes_count: ', leaf_classes_count)
     count_list = [0,]
     for i in leaf_classes_count:
         count_list.append(leaf_classes_count[i])
-    print('mean leaf class number: ', np.array(count_list).mean())
-    print('sum leaf class number: ', np.array(count_list).sum())
+    print('mean leaf class number: ', np_array(count_list).mean())
+    print('sum leaf class number: ', np_array(count_list).sum())
     # clean_classes_count = {}
     # clean_classes_count = root_classes_count.copy()
     # clean_classes_count.update(leaf_classes_count)
@@ -510,7 +510,7 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
     #         print('save all_classes_count')
     #         json.dump(all_classes_count, dump_f)
     #     os._exit(0)
-    print('mean all class number: ', np.array(count_list).mean())
-    print('sum all class number: ', np.array(count_list).sum())
+    print('mean all class number: ', np_array(count_list).mean())
+    print('sum all class number: ', np_array(count_list).sum())
     print('number images: ', split_mask.sum())
     return split_mask, boxes, gt_classes, gt_attributes, relationships

@@ -63,8 +63,15 @@ class ROIRelationHead(torch.nn.Module):
             rel_labels, rel_binarys = None, None
             rel_pair_idxs = self.samp_processor.prepare_test_pairs(features[0].device, proposals)
 
+        # (Pdb) len(features)
+        # 5
+        # (Pdb) features[0].size()
+        # torch.Size([16, 256, 256, 152])
+
         # use box_head to extract features that will be fed to the later predictor processing
         roi_features = self.box_feature_extractor(features, proposals)
+        # (Pdb) roi_features.size()
+        # torch.Size([1280, 4096])
 
         if self.cfg.MODEL.ATTRIBUTE_ON:
             att_features = self.att_feature_extractor(features, proposals)
@@ -74,10 +81,10 @@ class ROIRelationHead(torch.nn.Module):
             union_features = self.union_feature_extractor(features, proposals, rel_pair_idxs)
         else:
             union_features = None
-        
+
         # final classifier that converts the features into predictions
         # should corresponding to all the functions and layers after the self.context class
-        refine_logits, relation_logits, add_losses = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger)
+        refine_logits, relation_logits, add_losses = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger, features=features)
 
         # for test
         if not self.training:

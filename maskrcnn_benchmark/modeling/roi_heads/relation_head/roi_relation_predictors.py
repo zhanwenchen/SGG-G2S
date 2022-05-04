@@ -1,30 +1,24 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import os
 import numpy as np
-import torch
+from torch import cat as torch_cat, stack as torch_stack, no_grad as torch_no_grad, from_numpy as torch_from_numpy, sigmoid as torch_sigmoid, zeros as torch_zeros, arange as torch_arange
+from torch.nn import Module, Sequential, Linear, ReLU
+from torch.nn.functional import dropout as F_dropout, binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits, relu as F_relu, softmax as F_softmax, cross_entropy as F_cross_entropy
 from maskrcnn_benchmark.modeling import registry
-from torch import nn
-from torch.nn import functional as F
-
-from maskrcnn_benchmark.layers import smooth_l1_loss, kl_div_loss, entropy_loss, soft_cross_entropy_loss, \
-    Label_Smoothing_Regression
 from maskrcnn_benchmark.modeling.utils import cat
+from maskrcnn_benchmark.data import get_dataset_statistics
+from maskrcnn_benchmark.layers import Label_Smoothing_Regression
+from maskrcnn_benchmark.layers.gcn._utils import adj_normalize
 from .model_msg_passing import IMPContext
 from .model_vtranse import VTransEFeature
 from .model_vctree import VCTreeLSTMContext
-from .model_motifs import LSTMContext, FrequencyBias, SpuerFrequencyBias
+from .model_motifs import LSTMContext, FrequencyBias
 from .model_motifs_with_attribute import AttributeLSTMContext
-from .model_transformer import TransformerContext, ScaledDotProductAttention, MultiHeadAttention
-from .model_transformer_super import TransformerContext as TransformerContextSuper
+from .model_transformer import TransformerContext
 from .utils_relation import layer_init, get_box_info, get_box_pair_info
-from maskrcnn_benchmark.data import get_dataset_statistics
-from scipy.special import softmax as spysoftmax
-from maskrcnn_benchmark.layers.gcn.gcn_layers import GCN
-from maskrcnn_benchmark.layers.gcn._utils import adj_normalize
-import json
+
 
 @registry.ROI_RELATION_PREDICTOR.register("TransformerPredictor")
-class TransformerPredictor(nn.Module):
+class TransformerPredictor(Module):
     def __init__(self, config, in_channels):
         super(TransformerPredictor, self).__init__()
         self.attribute_on = config.MODEL.ATTRIBUTE_ON
@@ -34,7 +28,6 @@ class TransformerPredictor(nn.Module):
         self.num_rel_cls = config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES
         self.devices = config.MODEL.DEVICE
         assert in_channels is not None
-        num_inputs = in_channels
         self.use_vision = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
         self.use_bias = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS
 
@@ -51,10 +44,10 @@ class TransformerPredictor(nn.Module):
         # post decoding
         self.hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
         self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
-        self.post_emb = nn.Linear(self.hidden_dim, self.hidden_dim * 2)
-        self.post_cat = nn.Linear(self.hidden_dim * 2, self.pooling_dim)
-        self.rel_compress = nn.Linear(self.pooling_dim, self.num_rel_cls)
-        self.ctx_compress = nn.Linear(self.hidden_dim * 2, self.num_rel_cls)
+        self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
+        self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
+        self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
 
         # initialize layer parameters
         layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
@@ -64,7 +57,7 @@ class TransformerPredictor(nn.Module):
 
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
-            self.up_dim = nn.Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+            self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
             layer_init(self.up_dim, xavier=True)
         else:
             self.union_single_not_match = False
@@ -73,13 +66,16 @@ class TransformerPredictor(nn.Module):
             # convey statistics into FrequencyBias to avoid loading again
             self.freq_bias = FrequencyBias(config, statistics)
 
-    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None):
+    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None, features=None):
         """
         Returns:
             obj_dists (list[Tensor]): logits of object label distribution
             rel_dists (list[Tensor])
             rel_pair_idxs (list[Tensor]): (num_rel, 2) index of subject and object
             union_features (Tensor): (batch_num_rel, context_pooling_dim): visual union feature of each pair
+                                     (Pdb) union_features.size()
+                                     torch.Size([3009, 4096])
+
         """
         if self.attribute_on:
             obj_dists, obj_preds, att_dists, edge_ctx = self.context_layer(roi_features, proposals, logger)
@@ -88,7 +84,9 @@ class TransformerPredictor(nn.Module):
 
         # post decode
         edge_rep = self.post_emb(edge_ctx)
+
         edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim)
+
         head_rep = edge_rep[:, 0].contiguous().view(-1, self.hidden_dim)
         tail_rep = edge_rep[:, 1].contiguous().view(-1, self.hidden_dim)
 
@@ -104,16 +102,16 @@ class TransformerPredictor(nn.Module):
         prod_reps = []
         pair_preds = []
         for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
-            prod_reps.append(torch.cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
-            pair_preds.append(torch.stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
+            prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
+            pair_preds.append(torch_stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
         prod_rep = cat(prod_reps, dim=0)
         pair_pred = cat(pair_preds, dim=0)
 
-        ctx_gate = self.post_cat(prod_rep)
+        ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096]) Pairwise context.
 
         # use union box and mask convolution
-        if self.use_vision:
-            if self.union_single_not_match:
+        if self.use_vision: # True
+            if self.union_single_not_match: # False
                 visual_rep = ctx_gate * self.up_dim(union_features)
             else:
                 visual_rep = ctx_gate * union_features
@@ -123,7 +121,7 @@ class TransformerPredictor(nn.Module):
         # use frequence bias
         if self.use_bias:
             freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
-            freq_dists_bias = F.dropout(freq_dists_bias, 0.3, training=self.training)
+            freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
             rel_dists = rel_dists + freq_dists_bias
 
 
@@ -135,12 +133,11 @@ class TransformerPredictor(nn.Module):
         if self.attribute_on:
             att_dists = att_dists.split(num_objs, dim=0)
             return (obj_dists, att_dists), rel_dists, add_losses
-        else:
-            return obj_dists, rel_dists, add_losses
+        return obj_dists, rel_dists, add_losses
 
 
 @registry.ROI_RELATION_PREDICTOR.register("TransformerSuperPredictor")
-class TransformerSuperPredictor(nn.Module):
+class TransformerSuperPredictor(Module):
     def __init__(self, config, in_channels):
         super(TransformerSuperPredictor, self).__init__()
         self.attribute_on = config.MODEL.ATTRIBUTE_ON
@@ -150,7 +147,6 @@ class TransformerSuperPredictor(nn.Module):
         self.num_rel_cls = config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES
 
         assert in_channels is not None
-        num_inputs = in_channels
         self.use_vision = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
         self.use_bias = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS
 
@@ -168,10 +164,10 @@ class TransformerSuperPredictor(nn.Module):
         # post decoding
         self.hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
         self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
-        self.post_emb = nn.Linear(self.hidden_dim, self.hidden_dim * 2)
-        self.post_cat = nn.Linear(self.hidden_dim * 2, self.pooling_dim)
-        self.rel_compress = nn.Linear(self.pooling_dim, self.num_rel_cls)
-        self.ctx_compress = nn.Linear(self.hidden_dim * 2, self.num_rel_cls)
+        self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
+        self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
+        self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
         self.devices = config.MODEL.DEVICE
         # initialize layer parameters
         layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
@@ -181,7 +177,7 @@ class TransformerSuperPredictor(nn.Module):
 
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
-            self.up_dim = nn.Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+            self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
             layer_init(self.up_dim, xavier=True)
         else:
             self.union_single_not_match = False
@@ -191,8 +187,8 @@ class TransformerSuperPredictor(nn.Module):
             self.freq_bias = FrequencyBias(config, statistics)
         # Clean Head
         self.val_alpha = config.MODEL.ROI_RELATION_HEAD.VAL_ALPHA
-        self.rel_compress_clean = nn.Linear(self.pooling_dim, self.num_rel_cls)
-        self.ctx_compress_clean = nn.Linear(self.hidden_dim * 2, self.num_rel_cls)
+        self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
+        self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
         layer_init(self.rel_compress_clean, xavier=True)
         layer_init(self.ctx_compress_clean, xavier=True)
 
@@ -200,7 +196,7 @@ class TransformerSuperPredictor(nn.Module):
             # convey statistics into FrequencyBias to avoid loading again
             self.freq_bias_clean = FrequencyBias(config, statistics)
 
-    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None):
+    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None, features=None):
         """
         Returns:
             obj_dists (list[Tensor]): logits of object label distribution
@@ -231,8 +227,8 @@ class TransformerSuperPredictor(nn.Module):
         prod_reps = []
         pair_preds = []
         for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
-            prod_reps.append(torch.cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
-            pair_preds.append(torch.stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
+            prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
+            pair_preds.append(torch_stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
         prod_rep = cat(prod_reps, dim=0)
         pair_pred = cat(pair_preds, dim=0)
 
@@ -249,13 +245,13 @@ class TransformerSuperPredictor(nn.Module):
         # use frequence bias
         if self.use_bias:
             freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
-            freq_dists_bias = F.dropout(freq_dists_bias, 0.3, training=self.training)
+            freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
             rel_dists_noisy = rel_dists_noisy + freq_dists_bias
 
         rel_dists_clean = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep)
         if self.use_bias:
             freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
-            freq_dists_bias_clean = F.dropout(freq_dists_bias_clean, 0.3, training=self.training)
+            freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
             rel_dists_clean = rel_dists_clean + freq_dists_bias_clean
 
         rel_dists = rel_dists_clean
@@ -269,12 +265,11 @@ class TransformerSuperPredictor(nn.Module):
         if self.attribute_on:
             att_dists = att_dists.split(num_objs, dim=0)
             return (obj_dists, att_dists), rel_dists, add_losses
-        else:
-            return obj_dists, rel_dists, add_losses
+        return obj_dists, rel_dists, add_losses
 
 
 @registry.ROI_RELATION_PREDICTOR.register("TransformerTransferPredictor")
-class TransformerTransferPredictor(nn.Module):
+class TransformerTransferPredictor(Module):
     def __init__(self, config, in_channels):
         super(TransformerTransferPredictor, self).__init__()
         self.attribute_on = config.MODEL.ATTRIBUTE_ON
@@ -285,7 +280,6 @@ class TransformerTransferPredictor(nn.Module):
         self.dropout_rate = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.DROPOUT_RATE
 
         assert in_channels is not None
-        num_inputs = in_channels
         self.use_vision = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
         self.use_bias = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS
         self.with_knowdist = False
@@ -307,21 +301,22 @@ class TransformerTransferPredictor(nn.Module):
         # post decoding
         self.hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
         self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
-        self.post_emb = nn.Linear(self.hidden_dim, self.hidden_dim * 2)
+        self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
         layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
-        self.post_cat = nn.Linear(self.hidden_dim * 2, self.pooling_dim)
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
         layer_init(self.post_cat, xavier=True)
-        
+
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
-            self.up_dim = nn.Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+            self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
             layer_init(self.up_dim, xavier=True)
         else:
             self.union_single_not_match = False
-           
+
         # initialize layer parameters
-        self.rel_compress = nn.Linear(self.pooling_dim, self.num_rel_cls)
-        self.ctx_compress = nn.Linear(self.hidden_dim * 2, self.num_rel_cls)
+        self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
+        self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
+        self.feature_compress = Linear(self.hidden_dim, self.num_rel_cls)
         layer_init(self.rel_compress, xavier=True)
         layer_init(self.ctx_compress, xavier=True)
         if self.use_bias:
@@ -330,8 +325,8 @@ class TransformerTransferPredictor(nn.Module):
 
         # the transfer classifier
         if self.with_cleanclf:
-            self.rel_compress_clean = nn.Linear(self.pooling_dim, self.num_rel_cls)
-            self.ctx_compress_clean = nn.Linear(self.hidden_dim * 2, self.num_rel_cls)
+            self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
+            self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
             layer_init(self.rel_compress_clean, xavier=True)
             layer_init(self.ctx_compress_clean, xavier=True)
             # self.gcns_rel_clean = GCN(self.pooling_dim, self.pooling_dim, self.dropout_rate)
@@ -348,15 +343,31 @@ class TransformerTransferPredictor(nn.Module):
             # adj_i_j means the baseline outputs category j, but the ground truth is i.
             pred_adj_np = pred_adj_np / (pred_adj_np.sum(-1)[:, None] + 1e-8)
             pred_adj_np = adj_normalize(pred_adj_np)
-            self.pred_adj_nor = torch.from_numpy(pred_adj_np).float().to(self.devices)
-            # self.pred_adj_layer_clean = nn.Linear(self.num_rel_cls, self.num_rel_cls, bias=False)
+            self.pred_adj_nor = torch_from_numpy(pred_adj_np).float().to(self.devices)
+            # self.pred_adj_layer_clean = Linear(self.num_rel_cls, self.num_rel_cls, bias=False)
             # #layer_init(self.pred_adj_layer_clean, xavier=True)
-            # with torch.no_grad():
+            # with torch_no_grad():
             #     self.pred_adj_layer_clean.weight.copy_(torch.eye(self.num_rel_cls,dtype=torch.float), non_blocking=True)
                 #self.pred_adj_layer_clean.weight.copy_(self.pred_adj_nor, non_blocking=True)
-                
-    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None):
+
+    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None, features=None):
         """
+        Args:
+            proposals: list[Tensor]: of length batch_size
+                       len(proposals) = 16
+                       proposal_0 = proposals[0]
+                       proposal_0 is BoxList(num_boxes=80, image_width=600, image_height=900, mode=xyxy)
+                       len(proposal_0) = 80
+                       proposal_0[[0]] is the way to access the boxlist
+            obj_dists (list[Tensor]): logits of object label distribution
+            rel_dists (list[Tensor])
+            rel_pair_idxs (list[Tensor]): (num_rel, 2) index of subject and object
+                                          (Pdb) rel_pair_idxs[0].size()
+                                          torch.Size([156, 2])
+
+            union_features (Tensor): (batch_num_rel, context_pooling_dim): visual union feature of each pair
+                                     (Pdb) union_features.size()
+                                     torch.Size([3009, 4096])
         Returns:
             obj_dists (list[Tensor]): logits of object label distribution
             rel_dists (list[Tensor])
@@ -364,54 +375,60 @@ class TransformerTransferPredictor(nn.Module):
             union_features (Tensor): (batch_num_rel, context_pooling_dim): visual union feature of each pair
         """
         if self.attribute_on:
-            obj_dists, obj_preds, att_dists, edge_ctx = self.context_layer(roi_features, proposals, logger)
+            obj_dists, obj_preds, att_dists, edge_ctx = self.context_layer(roi_features, proposals, logger, features)
         else:
-            obj_dists, obj_preds, edge_ctx = self.context_layer(roi_features, proposals, logger)
+            obj_dists, obj_preds, edge_ctx = self.context_layer(roi_features, proposals, logger, features)
 
         # post decode
+        # (Pdb) edge_ctx.size()
+        # torch.Size([1280, 768])
         edge_rep = self.post_emb(edge_ctx)
-        edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim)
-        head_rep = edge_rep[:, 0].contiguous().view(-1, self.hidden_dim)
-        tail_rep = edge_rep[:, 1].contiguous().view(-1, self.hidden_dim)
+        # (Pdb) edge_ctx.size()
+        # torch.Size([1280, 1536])
+        edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim) # torch.Size([1280, 2, 768])
+
+        head_rep = edge_rep[:, 0].contiguous().view(-1, self.hidden_dim) # torch.Size([1280, 768])
+        tail_rep = edge_rep[:, 1].contiguous().view(-1, self.hidden_dim) # torch.Size([1280, 768])
 
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [len(b) for b in proposals]
         assert len(num_rels) == len(num_objs)
 
-        head_reps = head_rep.split(num_objs, dim=0)
-        tail_reps = tail_rep.split(num_objs, dim=0)
-        obj_preds = obj_preds.split(num_objs, dim=0)
+        head_reps = head_rep.split(num_objs, dim=0) # 16 * torch.Size([80, 768])
+        tail_reps = tail_rep.split(num_objs, dim=0) # 16 * torch.Size([80, 768])
+        obj_preds = obj_preds.split(num_objs, dim=0) # 16 * torch.Size([80])
 
         # from object level feature to pairwise relation level feature
         prod_reps = []
         pair_preds = []
         for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
-            prod_reps.append(torch.cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
-            pair_preds.append(torch.stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
-        prod_rep = cat(prod_reps, dim=0)
-        pair_pred = cat(pair_preds, dim=0)
+            prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
+            pair_preds.append(torch_stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
+        prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536])
+        pair_pred = cat(pair_preds, dim=0) # torch.Size([3009, 2])
 
-        ctx_gate = self.post_cat(prod_rep)
+        ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096])
 
         # use union box and mask convolution
-        if self.use_vision:
-            if self.union_single_not_match:
+        if self.use_vision: # True
+            if self.union_single_not_match: # False
                 visual_rep = ctx_gate * self.up_dim(union_features)
             else:
-                visual_rep = ctx_gate * union_features
+                visual_rep = ctx_gate * union_features # torch.Size([3009, 4096])
 
-        rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep)
-        if self.use_bias:
+        # rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) # A: bottlenecked edge * union features; => rels B: bottlenecked edge. torch.Size([3009, 51]) for all 3
+        rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) + self.feature_compress(features[-1])
+        if self.use_bias: # True
             freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
-            freq_dists_bias = F.dropout(freq_dists_bias, 0.3, training=self.training)
-            rel_dists_general = rel_dists_general + freq_dists_bias
+            freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
+            rel_dists_general = rel_dists_general + freq_dists_bias # torch.Size([3009, 51])
         rel_dists = rel_dists_general
         # the transfer classifier
         if self.with_cleanclf:
             rel_dists_clean = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep)
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
-                freq_dists_bias_clean = F.dropout(freq_dists_bias_clean, 0.3, training=self.training)
+                freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
                 rel_dists_clean = rel_dists_clean + freq_dists_bias_clean
             rel_dists = rel_dists_clean
 
@@ -421,11 +438,11 @@ class TransformerTransferPredictor(nn.Module):
         add_losses = {}
         # if self.with_knowdist:
         #     rel_dists_specific_soft = F.log_softmax(rel_dists, -1)
-        #     rel_dists_general_soft = F.softmax(rel_dists_general, -1)
+        #     rel_dists_general_soft = F_softmax(rel_dists_general, -1)
         #     add_losses['know_dist_kl'] = self.kd_alpha * self.kl_loss(rel_dists_specific_soft, rel_dists_general_soft)
 
-        obj_dists = obj_dists.split(num_objs, dim=0)
-        rel_dists = rel_dists.split(num_rels, dim=0)
+        obj_dists = obj_dists.split(num_objs, dim=0) # torch.Size([80, 151])
+        rel_dists = rel_dists.split(num_rels, dim=0) # torch.Size([156, 51])
 
         if self.attribute_on:
             att_dists = att_dists.split(num_objs, dim=0)
@@ -435,7 +452,7 @@ class TransformerTransferPredictor(nn.Module):
 
 
 @registry.ROI_RELATION_PREDICTOR.register("IMPPredictor")
-class IMPPredictor(nn.Module):
+class IMPPredictor(Module):
     def __init__(self, config, in_channels):
         super(IMPPredictor, self).__init__()
         self.num_obj_cls = config.MODEL.ROI_BOX_HEAD.NUM_CLASSES
@@ -452,7 +469,7 @@ class IMPPredictor(nn.Module):
 
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
-            self.up_dim = nn.Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+            self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
             layer_init(self.up_dim, xavier=True)
         else:
             self.union_single_not_match = False
@@ -487,7 +504,7 @@ class IMPPredictor(nn.Module):
 
             pair_preds = []
             for pair_idx, obj_pred in zip(rel_pair_idxs, obj_preds):
-                pair_preds.append(torch.stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
+                pair_preds.append(torch_stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
             pair_pred = cat(pair_preds, dim=0)
 
             rel_dists = rel_dists + self.freq_bias.index_with_labels(pair_pred.long())
@@ -502,7 +519,7 @@ class IMPPredictor(nn.Module):
         return obj_dists, rel_dists, add_losses
 
 @registry.ROI_RELATION_PREDICTOR.register("MotifPredictor")
-class MotifPredictor(nn.Module):
+class MotifPredictor(Module):
     def __init__(self, config, in_channels):
         super(MotifPredictor, self).__init__()
         self.attribute_on = config.MODEL.ATTRIBUTE_ON
@@ -511,7 +528,6 @@ class MotifPredictor(nn.Module):
         self.num_rel_cls = config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES
 
         assert in_channels is not None
-        num_inputs = in_channels
         self.use_vision = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
         self.use_bias = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS
 
@@ -531,9 +547,9 @@ class MotifPredictor(nn.Module):
         # post decoding
         self.hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
         self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
-        self.post_emb = nn.Linear(self.hidden_dim, self.hidden_dim * 2)
-        self.post_cat = nn.Linear(self.hidden_dim * 2, self.pooling_dim)
-        self.rel_compress = nn.Linear(self.pooling_dim, self.num_rel_cls, bias=True)
+        self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
+        self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
 
         # initialize layer parameters
         layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
@@ -542,7 +558,7 @@ class MotifPredictor(nn.Module):
 
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
-            self.up_dim = nn.Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+            self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
             layer_init(self.up_dim, xavier=True)
         else:
             self.union_single_not_match = False
@@ -556,12 +572,12 @@ class MotifPredictor(nn.Module):
         if self.with_clean_classifier:
             if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
                 self.union_single_not_match = True
-                self.up_dim_clean = nn.Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+                self.up_dim_clean = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
                 layer_init(self.up_dim_clean, xavier=True)
             else:
                 self.union_single_not_match = False
-            self.post_cat_clean = nn.Linear(self.hidden_dim * 2, self.pooling_dim)
-            self.rel_compress_clean = nn.Linear(self.pooling_dim, self.num_rel_cls, bias=True)
+            self.post_cat_clean = Linear(self.hidden_dim * 2, self.pooling_dim)
+            self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
             layer_init(self.post_cat_clean, xavier=True)
             layer_init(self.rel_compress_clean, xavier=True)
             if self.use_bias:
@@ -579,7 +595,7 @@ class MotifPredictor(nn.Module):
                 # adj_i_j means the baseline outputs category j, but the ground truth is i.
                 pred_adj_np = pred_adj_np / (pred_adj_np.sum(-1)[:, None] + 1e-8)
                 pred_adj_np = adj_normalize(pred_adj_np)
-                self.pred_adj_nor = torch.from_numpy(pred_adj_np).float().to(self.devices)
+                self.pred_adj_nor = torch_from_numpy(pred_adj_np).float().to(self.devices)
 
     def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None):
         """
@@ -613,8 +629,8 @@ class MotifPredictor(nn.Module):
         prod_reps = []
         pair_preds = []
         for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
-            prod_reps.append(torch.cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
-            pair_preds.append(torch.stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
+            prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
+            pair_preds.append(torch_stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
         prod_rep = cat(prod_reps, dim=0)
         pair_pred = cat(pair_preds, dim=0)
         prod_rep = self.post_cat(prod_rep)
@@ -629,7 +645,7 @@ class MotifPredictor(nn.Module):
 
         if self.use_bias:
             freq_dists_bias = self.freq_bias.index_with_labels(pair_pred.long())
-            freq_dists_bias = F.dropout(freq_dists_bias, 0.3, training=self.training)
+            freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
             rel_dists = rel_dists + freq_dists_bias
 
         if self.with_clean_classifier:
@@ -644,7 +660,7 @@ class MotifPredictor(nn.Module):
             rel_dists_clean = self.rel_compress_clean(prod_rep_clean)
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred.long())
-                freq_dists_bias_clean = F.dropout(freq_dists_bias_clean, 0.3, training=self.training)
+                freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
                 rel_dists_clean = rel_dists_clean + freq_dists_bias_clean
             if self.with_transfer:
                 rel_dists_clean = (self.pred_adj_nor @ rel_dists_clean.T).T
@@ -662,11 +678,10 @@ class MotifPredictor(nn.Module):
         if self.attribute_on:
             att_dists = att_dists.split(num_objs, dim=0)
             return (obj_dists, att_dists), rel_dists, add_losses
-        else:
-            return obj_dists, rel_dists, add_losses
+        return obj_dists, rel_dists, add_losses
 
 @registry.ROI_RELATION_PREDICTOR.register("VCTreePredictor")
-class VCTreePredictor(nn.Module):
+class VCTreePredictor(Module):
     def __init__(self, config, in_channels):
         super(VCTreePredictor, self).__init__()
         self.attribute_on = config.MODEL.ATTRIBUTE_ON
@@ -675,7 +690,6 @@ class VCTreePredictor(nn.Module):
         self.num_rel_cls = config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES
 
         assert in_channels is not None
-        num_inputs = in_channels
 
         # load class dict
         statistics = get_dataset_statistics(config)
@@ -690,14 +704,14 @@ class VCTreePredictor(nn.Module):
         # post decoding
         self.hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
         self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
-        self.post_emb = nn.Linear(self.hidden_dim, self.hidden_dim * 2)
-        self.post_cat = nn.Linear(self.hidden_dim * 2, self.pooling_dim)
+        self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
 
         # learned-mixin
-        # self.uni_gate = nn.Linear(self.pooling_dim, self.num_rel_cls)
-        # self.frq_gate = nn.Linear(self.pooling_dim, self.num_rel_cls)
-        self.ctx_compress = nn.Linear(self.pooling_dim, self.num_rel_cls)
-        # self.uni_compress = nn.Linear(self.pooling_dim, self.num_rel_cls)
+        # self.uni_gate = Linear(self.pooling_dim, self.num_rel_cls)
+        # self.frq_gate = Linear(self.pooling_dim, self.num_rel_cls)
+        self.ctx_compress = Linear(self.pooling_dim, self.num_rel_cls)
+        # self.uni_compress = Linear(self.pooling_dim, self.num_rel_cls)
         # layer_init(self.uni_gate, xavier=True)
         # layer_init(self.frq_gate, xavier=True)
         layer_init(self.ctx_compress, xavier=True)
@@ -709,7 +723,7 @@ class VCTreePredictor(nn.Module):
 
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
-            self.up_dim = nn.Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+            self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
             layer_init(self.up_dim, xavier=True)
         else:
             self.union_single_not_match = False
@@ -721,12 +735,12 @@ class VCTreePredictor(nn.Module):
         if self.with_clean_classifier:
             if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
                 self.union_single_not_match = True
-                self.up_dim_clean = nn.Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+                self.up_dim_clean = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
                 layer_init(self.up_dim_clean, xavier=True)
             else:
                 self.union_single_not_match = False
-            self.post_cat_clean = nn.Linear(self.hidden_dim * 2, self.pooling_dim)
-            self.ctx_compress_clean = nn.Linear(self.pooling_dim, self.num_rel_cls, bias=True)
+            self.post_cat_clean = Linear(self.hidden_dim * 2, self.pooling_dim)
+            self.ctx_compress_clean = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
             layer_init(self.post_cat_clean, xavier=True)
             layer_init(self.ctx_compress_clean, xavier=True)
             # convey statistics into FrequencyBias to avoid loading again
@@ -744,7 +758,7 @@ class VCTreePredictor(nn.Module):
                 # adj_i_j means the baseline outputs category j, but the ground truth is i.
                 pred_adj_np = pred_adj_np / (pred_adj_np.sum(-1)[:, None] + 1e-8)
                 pred_adj_np = adj_normalize(pred_adj_np)
-                self.pred_adj_nor = torch.from_numpy(pred_adj_np).float().to(self.devices)
+                self.pred_adj_nor = torch_from_numpy(pred_adj_np).float().to(self.devices)
 
     def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None):
         """
@@ -760,7 +774,7 @@ class VCTreePredictor(nn.Module):
                                                                           logger)
 
         # post decode
-        edge_rep = F.relu(self.post_emb(edge_ctx))
+        edge_rep = F_relu(self.post_emb(edge_ctx))
         edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim)
         head_rep = edge_rep[:, 0].contiguous().view(-1, self.hidden_dim)
         tail_rep = edge_rep[:, 1].contiguous().view(-1, self.hidden_dim)
@@ -776,8 +790,8 @@ class VCTreePredictor(nn.Module):
         prod_reps = []
         pair_preds = []
         for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
-            prod_reps.append(torch.cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
-            pair_preds.append(torch.stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
+            prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
+            pair_preds.append(torch_stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
         prod_rep = cat(prod_reps, dim=0)
         pair_pred = cat(pair_preds, dim=0)
 
@@ -793,7 +807,7 @@ class VCTreePredictor(nn.Module):
         ctx_dists = self.ctx_compress(prod_rep * union_features)
         # uni_dists = self.uni_compress(self.drop(union_features))
         frq_dists = self.freq_bias.index_with_labels(pair_pred.long())
-        frq_dists = F.dropout(frq_dists, 0.3, training=self.training)
+        frq_dists = F_dropout(frq_dists, 0.3, training=self.training)
         rel_dists = ctx_dists + frq_dists
         # rel_dists = ctx_dists + uni_gate * uni_dists + frq_gate * frq_dists
         if self.with_clean_classifier:
@@ -805,7 +819,7 @@ class VCTreePredictor(nn.Module):
             ctx_dists_clean = self.ctx_compress_clean(prod_rep_clean * union_features)
             # uni_dists = self.uni_compress(self.drop(union_features))
             frq_dists_clean = self.freq_bias_clean.index_with_labels(pair_pred.long())
-            frq_dists_clean = F.dropout(frq_dists_clean, 0.3, training=self.training)
+            frq_dists_clean = F_dropout(frq_dists_clean, 0.3, training=self.training)
             rel_dists_clean = ctx_dists_clean + frq_dists_clean
             if self.with_transfer:
                 rel_dists_clean = (self.pred_adj_nor @ rel_dists_clean.T).T
@@ -822,14 +836,14 @@ class VCTreePredictor(nn.Module):
             if binary_preds[0].requires_grad:
                 for bi_gt, bi_pred in zip(rel_binarys, binary_preds):
                     bi_gt = (bi_gt > 0).float()
-                    binary_loss.append(F.binary_cross_entropy_with_logits(bi_pred, bi_gt))
+                    binary_loss.append(F_binary_cross_entropy_with_logits(bi_pred, bi_gt))
                 add_losses["binary_loss"] = sum(binary_loss) / len(binary_loss)
 
         return obj_dists, rel_dists, add_losses
 
 
 @registry.ROI_RELATION_PREDICTOR.register("CausalAnalysisPredictor")
-class CausalAnalysisPredictor(nn.Module):
+class CausalAnalysisPredictor(Module):
     def __init__(self, config, in_channels):
         super(CausalAnalysisPredictor, self).__init__()
         self.cfg = config
@@ -843,7 +857,6 @@ class CausalAnalysisPredictor(nn.Module):
         self.effect_type = config.MODEL.ROI_RELATION_HEAD.CAUSAL.EFFECT_TYPE
 
         assert in_channels is not None
-        num_inputs = in_channels
 
         # load class dict
         statistics = get_dataset_statistics(config)
@@ -866,18 +879,18 @@ class CausalAnalysisPredictor(nn.Module):
 
         if self.use_vtranse:
             self.edge_dim = self.pooling_dim
-            self.post_emb = nn.Linear(self.hidden_dim, self.pooling_dim * 2)
-            self.ctx_compress = nn.Linear(self.pooling_dim, self.num_rel_cls, bias=False)
+            self.post_emb = Linear(self.hidden_dim, self.pooling_dim * 2)
+            self.ctx_compress = Linear(self.pooling_dim, self.num_rel_cls, bias=False)
         else:
             self.edge_dim = self.hidden_dim
-            self.post_emb = nn.Linear(self.hidden_dim, self.hidden_dim * 2)
-            self.post_cat = nn.Sequential(*[nn.Linear(self.hidden_dim * 2, self.pooling_dim),
-                                            nn.ReLU(inplace=True), ])
-            self.ctx_compress = nn.Linear(self.pooling_dim, self.num_rel_cls)
-        self.vis_compress = nn.Linear(self.pooling_dim, self.num_rel_cls)
+            self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
+            self.post_cat = Sequential(*[Linear(self.hidden_dim * 2, self.pooling_dim),
+                                            ReLU(inplace=True), ])
+            self.ctx_compress = Linear(self.pooling_dim, self.num_rel_cls)
+        self.vis_compress = Linear(self.pooling_dim, self.num_rel_cls)
 
         if self.fusion_type == 'gate':
-            self.ctx_gate_fc = nn.Linear(self.pooling_dim, self.num_rel_cls)
+            self.ctx_gate_fc = Linear(self.pooling_dim, self.num_rel_cls)
             layer_init(self.ctx_gate_fc, xavier=True)
 
         # initialize layer parameters
@@ -894,10 +907,10 @@ class CausalAnalysisPredictor(nn.Module):
 
         # add spatial emb for visual feature
         if self.spatial_for_vision:
-            self.spt_emb = nn.Sequential(*[nn.Linear(32, self.hidden_dim),
-                                           nn.ReLU(inplace=True),
-                                           nn.Linear(self.hidden_dim, self.pooling_dim),
-                                           nn.ReLU(inplace=True)
+            self.spt_emb = Sequential(*[Linear(32, self.hidden_dim),
+                                           ReLU(inplace=True),
+                                           Linear(self.hidden_dim, self.pooling_dim),
+                                           ReLU(inplace=True)
                                            ])
             layer_init(self.spt_emb[0], xavier=True)
             layer_init(self.spt_emb[2], xavier=True)
@@ -908,17 +921,17 @@ class CausalAnalysisPredictor(nn.Module):
         self.effect_analysis = config.MODEL.ROI_RELATION_HEAD.CAUSAL.EFFECT_ANALYSIS
         self.average_ratio = 0.0005
 
-        self.register_buffer("untreated_spt", torch.zeros(32))
-        self.register_buffer("untreated_conv_spt", torch.zeros(self.pooling_dim))
-        self.register_buffer("avg_post_ctx", torch.zeros(self.pooling_dim))
-        self.register_buffer("untreated_feat", torch.zeros(self.pooling_dim))
+        self.register_buffer("untreated_spt", torch_zeros(32))
+        self.register_buffer("untreated_conv_spt", torch_zeros(self.pooling_dim))
+        self.register_buffer("avg_post_ctx", torch_zeros(self.pooling_dim))
+        self.register_buffer("untreated_feat", torch_zeros(self.pooling_dim))
 
     def pair_feature_generate(self, roi_features, proposals, rel_pair_idxs, num_objs, obj_boxs, logger,
                               ctx_average=False):
         # encode context infomation
         obj_dists, obj_preds, edge_ctx, binary_preds = self.context_layer(roi_features, proposals, rel_pair_idxs,
                                                                           logger, ctx_average=ctx_average)
-        obj_dist_prob = F.softmax(obj_dists, dim=-1)
+        obj_dist_prob = F_softmax(obj_dists, dim=-1)
 
         # post decode
         edge_rep = self.post_emb(edge_ctx)
@@ -940,9 +953,9 @@ class CausalAnalysisPredictor(nn.Module):
             if self.use_vtranse:
                 ctx_reps.append(head_rep[pair_idx[:, 0]] - tail_rep[pair_idx[:, 1]])
             else:
-                ctx_reps.append(torch.cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
-            pair_preds.append(torch.stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
-            pair_obj_probs.append(torch.stack((obj_prob[pair_idx[:, 0]], obj_prob[pair_idx[:, 1]]), dim=2))
+                ctx_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
+            pair_preds.append(torch_stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
+            pair_obj_probs.append(torch_stack((obj_prob[pair_idx[:, 0]], obj_prob[pair_idx[:, 1]]), dim=2))
             pair_bboxs_info.append(get_box_pair_info(obj_box[pair_idx[:, 0]], obj_box[pair_idx[:, 1]]))
         pair_obj_probs = cat(pair_obj_probs, dim=0)
         pair_bbox = cat(pair_bboxs_info, dim=0)
@@ -973,7 +986,7 @@ class CausalAnalysisPredictor(nn.Module):
             roi_features, proposals, rel_pair_idxs, num_objs, obj_boxs, logger)
 
         if (not self.training) and self.effect_analysis:
-            with torch.no_grad():
+            with torch_no_grad():
                 avg_post_ctx_rep, _, _, avg_pair_obj_prob, _, _, _, _ = self.pair_feature_generate(roi_features,
                                                                                                    proposals,
                                                                                                    rel_pair_idxs,
@@ -1001,14 +1014,14 @@ class CausalAnalysisPredictor(nn.Module):
                 binary_loss = []
                 for bi_gt, bi_pred in zip(rel_binarys, binary_preds):
                     bi_gt = (bi_gt > 0).float()
-                    binary_loss.append(F.binary_cross_entropy_with_logits(bi_pred, bi_gt))
+                    binary_loss.append(F_binary_cross_entropy_with_logits(bi_pred, bi_gt))
                 add_losses["binary_loss"] = sum(binary_loss) / len(binary_loss)
 
             # branch constraint: make sure each branch can predict independently
-            add_losses['auxiliary_ctx'] = F.cross_entropy(self.ctx_compress(post_ctx_rep), rel_labels)
+            add_losses['auxiliary_ctx'] = F_cross_entropy(self.ctx_compress(post_ctx_rep), rel_labels)
             if not (self.fusion_type == 'gate'):
-                add_losses['auxiliary_vis'] = F.cross_entropy(self.vis_compress(union_features), rel_labels)
-                add_losses['auxiliary_frq'] = F.cross_entropy(self.freq_bias.index_with_labels(pair_pred.long()),
+                add_losses['auxiliary_vis'] = F_cross_entropy(self.vis_compress(union_features), rel_labels)
+                add_losses['auxiliary_frq'] = F_cross_entropy(self.freq_bias.index_with_labels(pair_pred.long()),
                                                               rel_labels)
 
             # untreated average feature
@@ -1020,7 +1033,7 @@ class CausalAnalysisPredictor(nn.Module):
             self.untreated_feat = self.moving_average(self.untreated_feat, union_features)
 
         elif self.effect_analysis:
-            with torch.no_grad():
+            with torch_no_grad():
                 # untreated spatial
                 if self.spatial_for_vision:
                     avg_spt_rep = self.spt_emb(self.untreated_spt.clone().detach().view(1, -1))
@@ -1029,7 +1042,6 @@ class CausalAnalysisPredictor(nn.Module):
                 avg_ctx_rep = avg_ctx_rep * self.untreated_conv_spt.clone().detach().view(1,
                                                                                           -1) if self.separate_spatial else avg_ctx_rep
                 # untreated visual
-                avg_vis_rep = self.untreated_feat.clone().detach().view(1, -1)
                 # untreated category dist
                 avg_frq_rep = avg_pair_obj_prob
 
@@ -1051,7 +1063,7 @@ class CausalAnalysisPredictor(nn.Module):
 
     def moving_average(self, holder, input):
         assert len(input.shape) == 2
-        with torch.no_grad():
+        with torch_no_grad():
             holder = holder * (1 - self.average_ratio) + self.average_ratio * input.mean(0).view(-1)
         return holder
 
@@ -1068,14 +1080,14 @@ class CausalAnalysisPredictor(nn.Module):
 
         if self.fusion_type == 'gate':
             ctx_gate_dists = self.ctx_gate_fc(ctx_rep)
-            union_dists = ctx_dists * torch.sigmoid(vis_dists + frq_dists + ctx_gate_dists)
-            # union_dists = (ctx_dists.exp() * torch.sigmoid(vis_dists + frq_dists + ctx_constraint) + 1e-9).log()    # improve on zero-shot, but low mean recall and TDE recall
-            # union_dists = ctx_dists * torch.sigmoid(vis_dists * frq_dists)                                          # best conventional Recall results
+            union_dists = ctx_dists * torch_sigmoid(vis_dists + frq_dists + ctx_gate_dists)
+            # union_dists = (ctx_dists.exp() * torch_sigmoid(vis_dists + frq_dists + ctx_constraint) + 1e-9).log()    # improve on zero-shot, but low mean recall and TDE recall
+            # union_dists = ctx_dists * torch_sigmoid(vis_dists * frq_dists)                                          # best conventional Recall results
             # union_dists = (ctx_dists.exp() + vis_dists.exp() + frq_dists.exp() + 1e-9).log()                        # good zero-shot Recall
-            # union_dists = ctx_dists * torch.max(torch.sigmoid(vis_dists), torch.sigmoid(frq_dists))                 # good zero-shot Recall
-            # union_dists = ctx_dists * torch.sigmoid(vis_dists) * torch.sigmoid(frq_dists)                           # balanced recall and mean recall
-            # union_dists = ctx_dists * (torch.sigmoid(vis_dists) + torch.sigmoid(frq_dists)) / 2.0                   # good zero-shot Recall
-            # union_dists = ctx_dists * torch.sigmoid((vis_dists.exp() + frq_dists.exp() + 1e-9).log())               # good zero-shot Recall, bad for all of the rest
+            # union_dists = ctx_dists * torch.max(torch_sigmoid(vis_dists), torch_sigmoid(frq_dists))                 # good zero-shot Recall
+            # union_dists = ctx_dists * torch_sigmoid(vis_dists) * torch_sigmoid(frq_dists)                           # balanced recall and mean recall
+            # union_dists = ctx_dists * (torch_sigmoid(vis_dists) + torch_sigmoid(frq_dists)) / 2.0                   # good zero-shot Recall
+            # union_dists = ctx_dists * torch_sigmoid((vis_dists.exp() + frq_dists.exp() + 1e-9).log())               # good zero-shot Recall, bad for all of the rest
 
         elif self.fusion_type == 'sum':
             union_dists = vis_dists + ctx_dists + frq_dists
@@ -1086,12 +1098,12 @@ class CausalAnalysisPredictor(nn.Module):
 
     def binary_ce_loss(self, logits, gt):
         batch_size, num_cat = logits.shape
-        answer = torch.zeros((batch_size, num_cat), device=gt.device).float()
-        answer[torch.arange(batch_size, device=gt.device), gt.long()] = 1.0
-        return F.binary_cross_entropy_with_logits(logits, answer) * num_cat
+        answer = torch_zeros((batch_size, num_cat), device=gt.device).float()
+        answer[torch_arange(batch_size, device=gt.device), gt.long()] = 1.0
+        return F_binary_cross_entropy_with_logits(logits, answer) * num_cat
 
     def fusion(self, x, y):
-        return F.relu(x + y) - (x - y) ** 2
+        return F_relu(x + y) - (x - y) ** 2
 
 
 def make_roi_relation_predictor(cfg, in_channels):

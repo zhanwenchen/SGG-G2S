@@ -35,7 +35,7 @@ from maskrcnn_benchmark.utils.miscellaneous import mkdir, save_config
 from maskrcnn_benchmark.utils.metric_logger import MetricLogger
 
 # where to load detected scene graph
-model_path = '/mnt/hdd3/***/datasets/visual_genome/model/sgg_benchmark/checkpoints_best/'
+model_path = '/home/zhanwen/bpl_og/checkpoints/models/checkpoints_best/' # Unnecessary
 model_name = 'transformer_sgdet_dist20_2k_FixPModel_lr1e3_B16_FixCMatDot'
 #model_name ='transformer_sgdet_Lr1e3_B16_It16'
 
@@ -83,16 +83,16 @@ def generate_gt_sg():
     img_obj_end = torch.LongTensor(vg_data['img_to_last_box'][:])
     img_rel_start = torch.LongTensor(vg_data['img_to_first_rel'][:])
     img_rel_end = torch.LongTensor(vg_data['img_to_last_rel'][:])
-    
+
     assert valid.shape[0] == img_obj_start.shape[0]
     assert valid.shape[0] == img_obj_end.shape[0]
     assert valid.shape[0] == img_rel_start.shape[0]
     assert valid.shape[0] == img_rel_end.shape[0]
-    
+
     img_obj_labels = torch.LongTensor(vg_data['labels'][:]).view(-1)
     img_rel_pairs = torch.LongTensor(vg_data['relationships'][:])
     img_rel_labels = torch.LongTensor(vg_data['predicates'][:]).view(-1)
-    
+
     img_to_sg = {}
     for i in range(valid.shape[0]):
         coco_id = cap_graph['vg_coco_ids'][i]
@@ -120,7 +120,7 @@ def generate_detect_sg(det_result, det_info, valid_ids, img_coco_map, obj_thres 
     predictions = det_result['predictions']
     assert len(groundtruths) == num_img
     assert len(predictions) == num_img
-    
+
     output = {}
     for i in range(num_img):
         # load detect result
@@ -133,14 +133,14 @@ def generate_detect_sg(det_result, det_info, valid_ids, img_coco_map, obj_thres 
         all_rel_prob = predictions[i].get_field('pred_rel_scores')
         all_rel_prob[:, 0] = 0
         all_rel_scores, all_rel_labels = all_rel_prob.max(-1)
-        
+
         # filter objects and relationships
         all_obj_scores[all_obj_scores < obj_thres] = 0.0
         obj_mask = all_obj_scores >= obj_thres
         all_rel_pairs = all_rel_pairs.data.numpy()
         triplet_score = all_obj_scores[all_rel_pairs[:, 0]] * all_obj_scores[all_rel_pairs[:, 1]] * all_rel_scores
         rel_mask = ((all_rel_labels > 0) + (triplet_score > 0)) > 0
-        
+
         # generate filterred result
         num_obj = obj_mask.shape[0]
         num_rel = rel_mask.shape[0]
@@ -152,11 +152,11 @@ def generate_detect_sg(det_result, det_info, valid_ids, img_coco_map, obj_thres 
         filter_obj = all_obj_labels[obj_mask]
         filter_pair = torch.nonzero(rel_matrix > 0)
         filter_rel = rel_matrix[filter_pair[:, 0], filter_pair[:, 1]]
-        
+
         # generate labels
         pred_objs = [vg_dict['idx_to_label'][str(int(i))] for i in filter_obj.tolist()]
         pred_rels = [[i[0], i[1], cap_graph['idx_to_meta_predicate'][str(j)]] for i, j in zip(filter_pair.tolist(), filter_rel.tolist())]
-        
+
         coco_id = img_coco_map[int(image_id)]
         output[str(coco_id)] = [{'entities' : pred_objs, 'relations' : pred_rels}, ]
     return output

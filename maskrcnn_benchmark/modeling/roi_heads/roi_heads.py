@@ -26,7 +26,7 @@ class CombinedROIHeads(torch.nn.ModuleDict):
         losses = {}
         x, detections, loss_box = self.box(features, proposals, targets)
         if not self.cfg.MODEL.RELATION_ON:
-            # During the relationship training stage, the bbox_proposal_network should be fixed, and no loss. 
+            # During the relationship training stage, the bbox_proposal_network should be fixed, and no loss.
             losses.update(loss_box)
 
         if self.cfg.MODEL.ATTRIBUTE_ON:

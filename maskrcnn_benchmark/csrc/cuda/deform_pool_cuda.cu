@@ -4,6 +4,9 @@
 // based on
 // author: Charles Shang
 // https://github.com/torch/cunn/blob/master/lib/THCUNN/generic/SpatialConvolutionMM.cu
+#ifndef AT_CHECK
+#define AT_CHECK TORCH_CHECK
+#endif
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
@@ -37,7 +40,7 @@ void deform_psroi_pooling_cuda_forward(
     at::Tensor input, at::Tensor bbox, at::Tensor trans, at::Tensor out,
     at::Tensor top_count, const int no_trans, const float spatial_scale,
     const int output_dim, const int group_size, const int pooled_size,
-    const int part_size, const int sample_per_part, const float trans_std) 
+    const int part_size, const int sample_per_part, const float trans_std)
 {
   AT_CHECK(input.is_contiguous(), "input tensor has to be contiguous");
 
@@ -63,7 +66,7 @@ void deform_psroi_pooling_cuda_backward(
     at::Tensor top_count, at::Tensor input_grad, at::Tensor trans_grad,
     const int no_trans, const float spatial_scale, const int output_dim,
     const int group_size, const int pooled_size, const int part_size,
-    const int sample_per_part, const float trans_std) 
+    const int sample_per_part, const float trans_std)
 {
   AT_CHECK(out_grad.is_contiguous(), "out_grad tensor has to be contiguous");
   AT_CHECK(input.is_contiguous(), "input tensor has to be contiguous");

@@ -34,6 +34,9 @@ class GeneralizedRCNN(nn.Module):
         """
         Arguments:
             images (list[Tensor] or ImageList): images to be processed
+            (Pdb) images.tensors.size()
+            torch.Size([16, 3, 1024, 608])
+
             targets (list[BoxList]): ground-truth boxes present in the image (optional)
 
         Returns:
@@ -47,12 +50,25 @@ class GeneralizedRCNN(nn.Module):
             raise ValueError("In training mode, targets should be passed")
         images = to_image_list(images)
         features = self.backbone(images.tensors)
+        # (Pdb) len(features)
+        # 5
+        # (Pdb) features[0].size()
+        # torch.Size([16, 256, 256, 152])
+        # (Pdb) features[1].size()
+        # torch.Size([16, 256, 128, 76])
+        # (Pdb) features[2].size()
+        # torch.Size([16, 256, 64, 38])
+        # (Pdb) features[3].size()
+        # torch.Size([16, 256, 32, 19])
+        # (Pdb) features[4].size()
+        # torch.Size([16, 256, 16, 10])
+
         proposals, proposal_losses = self.rpn(images, features, targets)
+        # boxlist
         if self.roi_heads:
-            x, result, detector_losses = self.roi_heads(features, proposals, targets, logger)
+            _, result, detector_losses = self.roi_heads(features, proposals, targets, logger)
         else:
             # RPN-only models don't have roi_heads
-            x = features
             result = proposals
             detector_losses = {}
 
@@ -60,7 +76,7 @@ class GeneralizedRCNN(nn.Module):
             losses = {}
             losses.update(detector_losses)
             if not self.cfg.MODEL.RELATION_ON:
-                # During the relationship training stage, the rpn_head should be fixed, and no loss. 
+                # During the relationship training stage, the rpn_head should be fixed, and no loss.
                 losses.update(proposal_losses)
             return losses
 

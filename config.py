@@ -3,10 +3,9 @@ Configuration file!
 """
 import os
 from argparse import ArgumentParser
-import numpy as np
 
 ROOT_PATH = os.path.dirname(os.path.realpath(__file__))
-DATA_PATH = '/hhd/***/datasets/visual_genome/data/genome/'
+DATA_PATH = '/home/zhanwen/datasets/visual_genome/'
 
 def path(fn):
     return os.path.join(DATA_PATH, fn)
@@ -19,15 +18,13 @@ def stanford_path(fn):
 # =============================================================================
 # Update these with where your data is stored ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-VG_IMAGES = '/hhd/***/datasets/visual_genome/data/genome/VG_100K'
-RCNN_CHECKPOINT_FN = path('faster_rcnn_500k.h5')
+VG_IMAGES = '/home/zhanwen/datasets/visual_genome/VG_100K'
 
 IM_DATA_FN = stanford_path('image_data.json')
 VG_SGG_FN = stanford_path('VG-SGG.h5')
 VG_SGG_DICT_FN = stanford_path('VG-SGG-dicts.json')
 PROPOSAL_FN = stanford_path('proposals.h5')
 
-COCO_PATH = '/mnt/data1/fankaixuan/dataset/mscoco/'
 # =============================================================================
 # =============================================================================
 
@@ -144,7 +141,7 @@ class ModelConfig(object):
             print("{} : {}".format(x, y))
 
         self.__dict__.update(self.args)
-        
+
         if len(self.ckpt) != 0:
             self.ckpt = os.path.join(ROOT_PATH, self.ckpt)
         else:
@@ -175,10 +172,10 @@ class ModelConfig(object):
 
         print('--------',self.ckpt)
         if self.ckpt is not None and not os.path.exists(self.ckpt):
-            
+
             raise ValueError("Ckpt file ({}) doesnt exist".format(self.ckpt))
-        
-        
+
+
     def setup_parser(self):
         """
         Sets up an argument parser

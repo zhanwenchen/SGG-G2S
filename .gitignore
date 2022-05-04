@@ -26,3 +26,9 @@ dist/
 # MacOS
 .DS_Store
 
+# Data Files
+*.pth
+*.txt
+
+checkpoints/
+*glove*

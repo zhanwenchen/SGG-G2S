@@ -9,6 +9,7 @@ import torch.utils.data
 from maskrcnn_benchmark.utils.comm import get_world_size
 from maskrcnn_benchmark.utils.imports import import_file
 from maskrcnn_benchmark.utils.miscellaneous import save_labels
+from maskrcnn_benchmark.utils.logger import debug_print
 
 from . import datasets as D
 from . import samplers
@@ -33,7 +34,7 @@ def get_dataset_statistics(cfg):
 
     data_statistics_name = ''.join(dataset_names) + '_statistics'
     save_file = os.path.join(cfg.OUTPUT_DIR, "{}.cache".format(data_statistics_name))
-    
+
     if os.path.exists(save_file):
         logger.info('Loading data statistics from: ' + str(save_file))
         logger.info('-'*100)
@@ -177,6 +178,7 @@ def make_data_loader(cfg, mode='train', is_distributed=False, start_iter=0):
             images_per_batch, num_gpus)
         images_per_gpu = images_per_batch // num_gpus
         shuffle = False if not is_distributed else True
+        print(f'is_distributed={is_distributed}, shuffle={shuffle}')
         num_iters = None
         start_iter = 0
 
