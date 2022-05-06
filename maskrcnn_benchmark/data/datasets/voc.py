@@ -1,9 +1,9 @@
 import os
+import sys
 
 import torch
 import torch.utils.data
-from PIL import Image
-import sys
+from PIL.Image import open as Image_open
 
 if sys.version_info[0] == 2:
     import xml.etree.cElementTree as ET
@@ -61,7 +61,7 @@ class PascalVOCDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         img_id = self.ids[index]
-        img = Image.open(self._imgpath % img_id).convert("RGB")
+        img = Image_open(self._imgpath % img_id).convert("RGB")
 
         target = self.get_groundtruth(index)
         target = target.clip_to_image(remove_empty=True)

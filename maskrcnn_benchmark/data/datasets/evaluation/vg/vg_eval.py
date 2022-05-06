@@ -1,33 +1,26 @@
-import logging
-import os
-import torch
-import numpy as np
-import json
-from tqdm import tqdm
-from functools import reduce
+from os import makedirs as os_makedirs
+from os.path import join as os_path_join, abspath as os_path_abspath, exists as os_path_exists
+from json import dump as json_dump
+from torch import load as torch_load, save as torch_save, device as torch_device, zeros as torch_zeros, nonzero as torch_nonzero, LongTensor as torch_LongTensor
+from numpy import mean as np_mean, ones as np_ones, asarray as np_asarray, column_stack as np_column_stack, concatenate as np_concatenate
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
-
-from maskrcnn_benchmark.data import get_dataset_statistics
-from maskrcnn_benchmark.structures.bounding_box import BoxList
-from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
-from maskrcnn_benchmark.utils.miscellaneous import intersect_2d, argsort_desc, bbox_overlaps
-from maskrcnn_benchmark.data.datasets.evaluation.vg.sgg_eval import SGRecall, SGNoGraphConstraintRecall, \
-    SGZeroShotRecall, SGPairAccuracy, SGMeanRecall, SGAccumulateRecall
-from maskrcnn_benchmark.data.datasets.evaluation.vg.sgg_eval import SGConfMat
+from maskrcnn_benchmark.data.datasets.evaluation.vg.sgg_eval import SGRecall, SGNoGraphConstraintRecall, SGZeroShotRecall, SGPairAccuracy, SGMeanRecall, SGConfMat
 
 
 def do_vg_evaluation(
-        cfg,
-        dataset,
-        predictions,
-        output_folder,
-        logger,
-        iou_types,
+        cfg=None,
+        dataset=None,
+        predictions=None,
+        output_folder=None,
+        logger=None,
+        iou_types=None,
+        writer=None,
+        iteration=None,
 ):
     # get zeroshot triplet
-    zeroshot_triplet = torch.load("maskrcnn_benchmark/data/datasets/evaluation/vg/zeroshot_triplet.pytorch",
-                                  map_location=torch.device("cpu")).long().numpy()
+    zeroshot_triplet = torch_load("maskrcnn_benchmark/data/datasets/evaluation/vg/zeroshot_triplet.pytorch",
+                                  map_location=torch_device("cpu")).long().numpy()
 
     attribute_on = cfg.MODEL.ATTRIBUTE_ON
     num_attributes = cfg.MODEL.ROI_ATTRIBUTE_HEAD.NUM_ATTRIBUTES
@@ -57,6 +50,8 @@ def do_vg_evaluation(
         gt = dataset.get_groundtruth(image_id, evaluation=True)
         groundtruths.append(gt)
 
+    if not os_path_exists(output_folder):
+        os_makedirs(output_folder)
     save_output(output_folder, groundtruths, predictions, dataset)
 
     result_str = '\n' + '=' * 100 + '\n'
@@ -96,14 +91,14 @@ def do_vg_evaluation(
             # for predcls, we set label and score to groundtruth
             if mode == 'predcls':
                 label = prediction.get_field('labels').detach().cpu().numpy()
-                score = np.ones(label.shape[0])
+                score = np_ones(label.shape[0])
                 assert len(label) == len(box)
-            image_id = np.asarray([image_id] * len(box))
+            image_id = np_asarray([image_id] * len(box))
             cocolike_predictions.append(
-                np.column_stack((image_id, box, score, label))
+                np_column_stack((image_id, box, score, label))
             )
             # logger.info(cocolike_predictions)
-        cocolike_predictions = np.concatenate(cocolike_predictions, 0)
+        cocolike_predictions = np_concatenate(cocolike_predictions, 0)
         # evaluate via coco API
         res = fauxcoco.loadRes(cocolike_predictions)
         coco_eval = COCOeval(fauxcoco, res, 'bbox')
@@ -113,6 +108,7 @@ def do_vg_evaluation(
         coco_eval.summarize()
         mAp = coco_eval.stats[1]
 
+        writer.add_scalar(f'{mode}/mAp', mAp, iteration)
         result_str += 'Detection evaluation mAp=%.4f\n' % mAp
         result_str += '=' * 100 + '\n'
 
@@ -167,20 +163,45 @@ def do_vg_evaluation(
         eval_mean_recall.calculate_mean_recall(mode)
 
         # print result
-        result_str += eval_recall.generate_print_string(mode)
-        result_str += eval_nog_recall.generate_print_string(mode)
-        result_str += eval_zeroshot_recall.generate_print_string(mode)
-        result_str += eval_mean_recall.generate_print_string(mode)
+        result_str_i, writer_dict_i = eval_recall.generate_print_string(mode)
+        result_str += result_str_i
+        writer.add_scalars(f'{mode}/eval_recall', writer_dict_i, iteration)
+
+        result_str_i, writer_dict_i = eval_mean_recall.generate_print_string(mode)
+        result_str += result_str_i
+        writer.add_scalars(f'{mode}/eval_mean_recall', writer_dict_i, iteration)
+
+        result_str_i, writer_dict_i = eval_nog_recall.generate_print_string(mode)
+        result_str += result_str_i
+        writer.add_scalars(f'{mode}/eval_nog_recall', writer_dict_i, iteration)
+
+        result_str_i, writer_dict_i = eval_zeroshot_recall.generate_print_string(mode)
+        result_str += result_str_i
+        writer.add_scalars(f'{mode}/eval_zeroshot_recall', writer_dict_i, iteration)
+
+        if mode != 'sgdet':
+            result_str_i, fig = eval_conf_mat.generate_print_string(mode)
+            result_str += result_str_i
+            writer.add_figure(f'{mode}/eval_conf_mat', fig, iteration)
+            conf_dir = os_path_join(output_folder, 'conf_mat_pred')
+            if not os_path_exists(conf_dir):
+                os_makedirs(conf_dir)
+            torch_save(eval_conf_mat.result_dict['predicate_confusion_matrix'], os_path_join(conf_dir, f'predicate_confusion_matrix_{iteration}.pth'))
         if cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
-            result_str += eval_pair_accuracy.generate_print_string(mode)
+            result_str_i, writer_dict_i = eval_pair_accuracy.generate_print_string(mode)
+            result_str += result_str_i
+            writer.add_scalars(f'{mode}/eval_pair_accuracy', writer_dict_i, iteration)
         result_str += '=' * 100 + '\n'
 
     logger.info(result_str)
 
     if "relations" in iou_types:
         if output_folder:
-            torch.save(result_dict, os.path.join(output_folder, 'result_dict.pytorch'))
-        return float(np.mean(result_dict[mode + '_recall'][100]))
+            torch_save(result_dict, os_path_join(output_folder, 'result_dict.pytorch'))
+        # if return_all is True:
+            # return result_dict
+        # return float(np_mean(result_dict[mode + '_recall'][100]))
+        return float(np_mean(result_dict[mode + '_mean_recall'][100])) # # REVIEW: Is there a point for neural motifs using recall instead of mean recall
     elif "bbox" in iou_types:
         return float(mAp)
     else:
@@ -189,15 +210,15 @@ def do_vg_evaluation(
 
 def save_output(output_folder, groundtruths, predictions, dataset):
     if output_folder:
-        torch.save({'groundtruths': groundtruths, 'predictions': predictions},
-                   os.path.join(output_folder, "eval_results.pytorch"))
+        torch_save({'groundtruths': groundtruths, 'predictions': predictions},
+                   os_path_join(output_folder, "eval_results.pytorch"))
 
-        # with open(os.path.join(output_folder, "result.txt"), "w") as f:
+        # with open(os_path_join(output_folder, "result.txt"), "w") as f:
         #    f.write(result_str)
         # visualization information
         visual_info = []
         for image_id, (groundtruth, prediction) in enumerate(zip(groundtruths, predictions)):
-            img_file = os.path.abspath(dataset.filenames[image_id])
+            img_file = os_path_abspath(dataset.filenames[image_id])
             groundtruth = [
                 [b[0], b[1], b[2], b[3], dataset.categories[l]]  # xyxy, str
                 for b, l in zip(groundtruth.bbox.tolist(), groundtruth.get_field('labels').tolist())
@@ -211,8 +232,8 @@ def save_output(output_folder, groundtruths, predictions, dataset):
                 'groundtruth': groundtruth,
                 'prediction': prediction
             })
-        with open(os.path.join(output_folder, "visual_info.json"), "w") as f:
-            json.dump(visual_info, f)
+        with open(os_path_join(output_folder, "visual_info.json"), "w") as f:
+            json_dump(visual_info, f)
 
 
 def evaluate_relation_of_one_image(groundtruth, prediction, global_container, evaluator):
@@ -260,12 +281,12 @@ def evaluate_relation_of_one_image(groundtruth, prediction, global_container, ev
     if mode == 'predcls':
         local_container['pred_boxes'] = local_container['gt_boxes']
         local_container['pred_classes'] = local_container['gt_classes']
-        local_container['obj_scores'] = np.ones(local_container['gt_classes'].shape[0])
+        local_container['obj_scores'] = np_ones(local_container['gt_classes'].shape[0])
 
     elif mode == 'sgcls':
         if local_container['gt_boxes'].shape[0] != local_container['pred_boxes'].shape[0]:
             print('Num of GT boxes is not matching with num of pred boxes in SGCLS')
-    elif mode == 'sgdet' or mode == 'phrdet':
+    elif mode in ('sgdet', 'phrdet'):
         pass
     else:
         raise ValueError('invalid mode')
@@ -284,7 +305,7 @@ def evaluate_relation_of_one_image(groundtruth, prediction, global_container, ev
         # Now sort the matching ones
         rel_scores_sorted = argsort_desc(rel_scores[:,1:])
         rel_scores_sorted[:,1] += 1
-        rel_scores_sorted = np.column_stack((pred_rel_inds[rel_scores_sorted[:,0]], rel_scores_sorted[:,1]))
+        rel_scores_sorted = np_column_stack((pred_rel_inds[rel_scores_sorted[:,0]], rel_scores_sorted[:,1]))
 
         matches = intersect_2d(rel_scores_sorted, gt_rels)
         for k in result_dict[mode + '_recall']:
@@ -321,7 +342,7 @@ def convert_relation_matrix_to_triplets(relation):
         for j in range(len(relation)):
             if relation[i, j] > 0:
                 triplets.append((i, j, relation[i, j]))
-    return torch.LongTensor(triplets)  # (num_rel, 3)
+    return torch_LongTensor(triplets)  # (num_rel, 3)
 
 
 def generate_attributes_target(attributes, num_attributes):
@@ -337,9 +358,9 @@ def generate_attributes_target(attributes, num_attributes):
     num_neg = int(without_attri_idx.sum())
     assert num_pos + num_neg == num_obj
 
-    attribute_targets = torch.zeros((num_obj, num_attributes), device=attributes.device).float()
+    attribute_targets = torch_zeros((num_obj, num_attributes), device=attributes.device).float()
 
-    for idx in torch.nonzero(with_attri_idx).squeeze(1).tolist():
+    for idx in torch_nonzero(with_attri_idx).squeeze(1).tolist():
         for k in range(max_att):
             att_id = int(attributes[idx, k])
             if att_id == 0:

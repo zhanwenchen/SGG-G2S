@@ -1,5 +1,5 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+from torch.nn import ModuleDict
 
 from .box_head.box_head import build_roi_box_head
 from .mask_head.mask_head import build_roi_mask_head
@@ -8,7 +8,7 @@ from .keypoint_head.keypoint_head import build_roi_keypoint_head
 from .relation_head.relation_head import build_roi_relation_head
 
 
-class CombinedROIHeads(torch.nn.ModuleDict):
+class CombinedROIHeads(ModuleDict):
     """
     Combines a set of individual heads (for box prediction or masks) into a single
     head.
@@ -22,7 +22,7 @@ class CombinedROIHeads(torch.nn.ModuleDict):
         if cfg.MODEL.KEYPOINT_ON and cfg.MODEL.ROI_KEYPOINT_HEAD.SHARE_BOX_FEATURE_EXTRACTOR:
             self.keypoint.feature_extractor = self.box.feature_extractor
 
-    def forward(self, features, proposals, targets=None, logger=None):
+    def forward(self, features, proposals, targets=None, logger=None, boxes_global=None):
         losses = {}
         x, detections, loss_box = self.box(features, proposals, targets)
         if not self.cfg.MODEL.RELATION_ON:
@@ -66,7 +66,7 @@ class CombinedROIHeads(torch.nn.ModuleDict):
             # it may be not safe to share features due to post processing
             # During training, self.box() will return the unaltered proposals as "detections"
             # this makes the API consistent during training and testing
-            x, detections, loss_relation = self.relation(features, detections, targets, logger)
+            x, detections, loss_relation = self.relation(features, detections, targets, logger, boxes_global=boxes_global)
             losses.update(loss_relation)
 
         return x, detections, losses

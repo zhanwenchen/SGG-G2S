@@ -246,8 +246,12 @@ class TransformerContext(Module):
                                               self.v_dim, self.hidden_dim, self.inner_dim, self.dropout_rate)
         self.context_edge = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim,
                                                self.v_dim, self.hidden_dim, self.inner_dim, self.dropout_rate)
+        self.context_union = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim,
+                                               self.v_dim, self.hidden_dim, self.inner_dim, self.dropout_rate)
+        self.context_gsc = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim,
+                                               self.v_dim, self.hidden_dim, self.inner_dim, self.dropout_rate)
 
-    def forward(self, roi_features, proposals, logger=None, features=None):
+    def forward(self, roi_features, proposals, logger=None):
         '''
         Args:
             roi_features:
@@ -333,7 +337,7 @@ class TransformerContext(Module):
                 # What is obj_preds?
 
             # edge_pre_rep = cat((roi_features, obj_feats, features, self.obj_embed2(obj_preds)), dim=-1)
-            edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_preds)), dim=-1)
+            edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_preds)), dim=-1) # This is where it is if we want to include global features in the edge computation
 
         # edge context
         # (Pdb) edge_pre_rep.size()

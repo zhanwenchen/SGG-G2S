@@ -1,8 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-from torch import nn
+from torch import no_grad as torch_no_grad, cat as torch_cat
+from torch.nn import Module
 
-from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
 from ..attribute_head.roi_attribute_feature_extractors import make_roi_attribute_feature_extractor
 from ..box_head.roi_box_feature_extractors import make_roi_box_feature_extractor
 from .roi_relation_feature_extractors import make_roi_relation_feature_extractor
@@ -11,7 +10,8 @@ from .inference import make_roi_relation_post_processor
 from .loss import make_roi_relation_loss_evaluator
 from .sampling import make_roi_relation_samp_processor
 
-class ROIRelationHead(torch.nn.Module):
+
+class ROIRelationHead(Module):
     """
     Generic Relation Head class.
     """
@@ -38,7 +38,7 @@ class ROIRelationHead(torch.nn.Module):
         # parameters
         self.use_union_box = self.cfg.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
 
-    def forward(self, features, proposals, targets=None, logger=None):
+    def forward(self, features, proposals, targets=None, logger=None, boxes_global=None):
         """
         Arguments:
             features (list[Tensor]): feature-maps from possibly several levels
@@ -54,7 +54,7 @@ class ROIRelationHead(torch.nn.Module):
         """
         if self.training:
             # relation subsamples and assign ground truth label during training
-            with torch.no_grad():
+            with torch_no_grad():
                 if self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
                     proposals, rel_labels, rel_pair_idxs, rel_binarys = self.samp_processor.gtbox_relsample(proposals, targets)
                 else:
@@ -72,10 +72,12 @@ class ROIRelationHead(torch.nn.Module):
         roi_features = self.box_feature_extractor(features, proposals)
         # (Pdb) roi_features.size()
         # torch.Size([1280, 4096])
+        with torch_no_grad():
+            global_image_features = self.box_feature_extractor(features, boxes_global) # torch.Size([16, 4096]) # TODO: if this works, then I won't need to implement the features 5=>1 reduction myself and then can move on to the linear? layers design and feature concat.
 
         if self.cfg.MODEL.ATTRIBUTE_ON:
             att_features = self.att_feature_extractor(features, proposals)
-            roi_features = torch.cat((roi_features, att_features), dim=-1)
+            roi_features = torch_cat((roi_features, att_features), dim=-1)
 
         if self.use_union_box:
             union_features = self.union_feature_extractor(features, proposals, rel_pair_idxs)
@@ -84,7 +86,7 @@ class ROIRelationHead(torch.nn.Module):
 
         # final classifier that converts the features into predictions
         # should corresponding to all the functions and layers after the self.context class
-        refine_logits, relation_logits, add_losses = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger, features=features)
+        refine_logits, relation_logits, add_losses = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger, features=features, global_image_features=global_image_features)
 
         # for test
         if not self.training:

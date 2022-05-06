@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import numpy as np
-from torch import cat as torch_cat, stack as torch_stack, no_grad as torch_no_grad, from_numpy as torch_from_numpy, sigmoid as torch_sigmoid, zeros as torch_zeros, arange as torch_arange
+from torch import cat as torch_cat, stack as torch_stack, no_grad as torch_no_grad, from_numpy as torch_from_numpy, sigmoid as torch_sigmoid, zeros as torch_zeros, arange as torch_arange, empty_like as torch_empty_like, empty as torch_empty
 from torch.nn import Module, Sequential, Linear, ReLU
 from torch.nn.functional import dropout as F_dropout, binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits, relu as F_relu, softmax as F_softmax, cross_entropy as F_cross_entropy
 from maskrcnn_benchmark.modeling import registry
@@ -316,9 +316,10 @@ class TransformerTransferPredictor(Module):
         # initialize layer parameters
         self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
         self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
-        self.feature_compress = Linear(self.hidden_dim, self.num_rel_cls)
+        self.feature_compress = Linear(self.pooling_dim, self.num_rel_cls)
         layer_init(self.rel_compress, xavier=True)
         layer_init(self.ctx_compress, xavier=True)
+        layer_init(self.feature_compress, xavier=True)
         if self.use_bias:
             # convey statistics into FrequencyBias to avoid loading again
             self.freq_bias = FrequencyBias(config, statistics)
@@ -327,8 +328,10 @@ class TransformerTransferPredictor(Module):
         if self.with_cleanclf:
             self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
             self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
+            self.feature_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
             layer_init(self.rel_compress_clean, xavier=True)
             layer_init(self.ctx_compress_clean, xavier=True)
+            layer_init(self.feature_compress_clean, xavier=True)
             # self.gcns_rel_clean = GCN(self.pooling_dim, self.pooling_dim, self.dropout_rate)
             # self.gcns_ctx_clean = GCN(self.hidden_dim * 2, self.hidden_dim * 2, self.dropout_rate)
             self.freq_bias_clean = FrequencyBias(config, statistics)
@@ -350,7 +353,7 @@ class TransformerTransferPredictor(Module):
             #     self.pred_adj_layer_clean.weight.copy_(torch.eye(self.num_rel_cls,dtype=torch.float), non_blocking=True)
                 #self.pred_adj_layer_clean.weight.copy_(self.pred_adj_nor, non_blocking=True)
 
-    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None, features=None):
+    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None, global_image_features=None):
         """
         Args:
             proposals: list[Tensor]: of length batch_size
@@ -375,9 +378,9 @@ class TransformerTransferPredictor(Module):
             union_features (Tensor): (batch_num_rel, context_pooling_dim): visual union feature of each pair
         """
         if self.attribute_on:
-            obj_dists, obj_preds, att_dists, edge_ctx = self.context_layer(roi_features, proposals, logger, features)
+            obj_dists, obj_preds, att_dists, edge_ctx = self.context_layer(roi_features, proposals, logger)
         else:
-            obj_dists, obj_preds, edge_ctx = self.context_layer(roi_features, proposals, logger, features)
+            obj_dists, obj_preds, edge_ctx = self.context_layer(roi_features, proposals, logger)
 
         # post decode
         # (Pdb) edge_ctx.size()
@@ -401,11 +404,19 @@ class TransformerTransferPredictor(Module):
         # from object level feature to pairwise relation level feature
         prod_reps = []
         pair_preds = []
-        for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
+        pairs_culsum = 0
+        global_features_mapped = torch_empty_like(union_features)
+        # new_to_old = torch_empty(union_features.size(0), dtype=int)
+        for img_idx, (pair_idx, head_rep, tail_rep, obj_pred) in enumerate(zip(rel_pair_idxs, head_reps, tail_reps, obj_preds)):
             prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
             pair_preds.append(torch_stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
-        prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536])
+            # new_to_old[pairs_culsum:pairs_culsum+len(pair_idx)] = img_idx
+            global_features_mapped[pairs_culsum:pairs_culsum+len(pair_idx)] = global_image_features[img_idx]
+            pairs_culsum += len(pair_idx)
+        del global_image_features
+        prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536]) torch.Size([5022, 1536]) # # REVIEW: Is this some sort of stateful bug?
         pair_pred = cat(pair_preds, dim=0) # torch.Size([3009, 2])
+        # global_features_mapped[new_to_old] = global_image_features
 
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096])
 
@@ -417,7 +428,7 @@ class TransformerTransferPredictor(Module):
                 visual_rep = ctx_gate * union_features # torch.Size([3009, 4096])
 
         # rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) # A: bottlenecked edge * union features; => rels B: bottlenecked edge. torch.Size([3009, 51]) for all 3
-        rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) + self.feature_compress(features[-1])
+        rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) + self.feature_compress(global_features_mapped) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
         if self.use_bias: # True
             freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
             freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
@@ -425,7 +436,7 @@ class TransformerTransferPredictor(Module):
         rel_dists = rel_dists_general
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists_clean = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep)
+            rel_dists_clean = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep) + self.feature_compress_clean(global_features_mapped)
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
@@ -441,14 +452,13 @@ class TransformerTransferPredictor(Module):
         #     rel_dists_general_soft = F_softmax(rel_dists_general, -1)
         #     add_losses['know_dist_kl'] = self.kd_alpha * self.kl_loss(rel_dists_specific_soft, rel_dists_general_soft)
 
-        obj_dists = obj_dists.split(num_objs, dim=0) # torch.Size([80, 151])
-        rel_dists = rel_dists.split(num_rels, dim=0) # torch.Size([156, 51])
+        obj_dists = obj_dists.split(num_objs, dim=0) # torch.Size([1280, 151]) => 16 * torch.Size([80, 151])
+        rel_dists = rel_dists.split(num_rels, dim=0) # torch.Size([5022, 51]) => (Pdb) rel_dists.split(num_rels, dim=0)[0].size() torch.Size([156, 51]), 240, ...
 
         if self.attribute_on:
             att_dists = att_dists.split(num_objs, dim=0)
             return (obj_dists, att_dists), rel_dists, add_losses
-        else:
-            return obj_dists, rel_dists, add_losses
+        return obj_dists, rel_dists, add_losses
 
 
 @registry.ROI_RELATION_PREDICTOR.register("IMPPredictor")

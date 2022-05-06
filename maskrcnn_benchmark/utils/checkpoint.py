@@ -1,8 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import logging
-import os
+from os.path import join as os_path_join, exists as os_path_exists
 
-import torch
+from torch import save as torch_save, load as torch_load, device as torch_device
 
 from maskrcnn_benchmark.utils.model_serialization import load_state_dict
 from maskrcnn_benchmark.utils.c2_model_loading import load_c2_format
@@ -46,9 +46,9 @@ class Checkpointer(object):
             data["scheduler"] = self.scheduler.state_dict()
         data.update(kwargs)
 
-        save_file = os.path.join(self.save_dir, "{}.pth".format(name))
+        save_file = os_path_join(self.save_dir, "{}.pth".format(name))
         self.logger.info("Saving checkpoint to {}".format(save_file))
-        torch.save(data, save_file)
+        torch_save(data, save_file)
         self.tag_last_checkpoint(save_file)
 
     def load(self, f=None, with_optim=True, update_schedule=False, load_mapping={}):
@@ -76,13 +76,13 @@ class Checkpointer(object):
         # return any further checkpoint data
         return checkpoint
 
-        
+
     def has_checkpoint(self):
-        save_file = os.path.join(self.save_dir, "last_checkpoint")
-        return os.path.exists(save_file)
+        save_file = os_path_join(self.save_dir, "last_checkpoint")
+        return os_path_exists(save_file)
 
     def get_checkpoint_file(self):
-        save_file = os.path.join(self.save_dir, "last_checkpoint")
+        save_file = os_path_join(self.save_dir, "last_checkpoint")
         try:
             with open(save_file, "r") as f:
                 last_saved = f.read()
@@ -94,12 +94,12 @@ class Checkpointer(object):
         return last_saved
 
     def tag_last_checkpoint(self, last_filename):
-        save_file = os.path.join(self.save_dir, "last_checkpoint")
+        save_file = os_path_join(self.save_dir, "last_checkpoint")
         with open(save_file, "w") as f:
             f.write(last_filename)
 
     def _load_file(self, f):
-        return torch.load(f, map_location=torch.device("cpu"))
+        return torch_load(f, map_location=torch_device("cpu"))
 
     def _load_model(self, checkpoint, load_mapping):
         load_state_dict(self.model, checkpoint.pop("model"), load_mapping)
@@ -147,7 +147,7 @@ class DetectronCheckpointer(Checkpointer):
         return loaded
 
 
-def clip_grad_norm(named_parameters, max_norm, logger, clip=False, verbose=False):
+def clip_grad_norm(named_parameters, max_norm, logger, writer=None, iteration=None, clip=False, verbose=False):
     """Clips gradient norm of an iterable of parameters.
 
     The norm is computed over all gradients together, as if they were
@@ -182,6 +182,8 @@ def clip_grad_norm(named_parameters, max_norm, logger, clip=False, verbose=False
 
     if verbose:
         logger.info('---Total norm {:.5f} clip coef {:.5f}-----------------'.format(total_norm, clip_coef))
+        writer.add_scalar('total_norm', total_norm, iteration)
+        writer.add_scalar('clip_coef', clip_coef, iteration)
         for name, norm in sorted(param_to_norm.items(), key=lambda x: -x[1]):
             logger.info("{:<50s}: {:.5f}, ({})".format(name, norm, param_to_shape[name]))
         logger.info('-------------------------------')
