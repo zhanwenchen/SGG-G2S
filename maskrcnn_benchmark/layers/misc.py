@@ -9,13 +9,15 @@ This can be removed once https://github.com/pytorch/pytorch/issues/12013
 is implemented
 """
 
-import math
-import torch
-from torch import nn
+from math import floor as math_floor
+from torch.autograd import Function
+from torch.nn import Module, BatchNorm2d as nn_BatchNorm2d, Conv2d as nn_Conv2d, ConvTranspose2d as nn_ConvTranspose2d
+from torch.nn.init import kaiming_uniform_, constant_
+from torch.nn.functional import interpolate as F_interpolate
 from torch.nn.modules.utils import _ntuple
 
 
-class _NewEmptyTensorOp(torch.autograd.Function):
+class _NewEmptyTensorOp(Function):
     @staticmethod
     def forward(ctx, x, new_shape):
         ctx.shape = x.shape
@@ -27,7 +29,7 @@ class _NewEmptyTensorOp(torch.autograd.Function):
         return _NewEmptyTensorOp.apply(grad, shape), None
 
 
-class Conv2d(torch.nn.Conv2d):
+class Conv2d(nn_Conv2d):
     def forward(self, x):
         if x.numel() > 0:
             return super(Conv2d, self).forward(x)
@@ -43,7 +45,7 @@ class Conv2d(torch.nn.Conv2d):
         return _NewEmptyTensorOp.apply(x, output_shape)
 
 
-class ConvTranspose2d(torch.nn.ConvTranspose2d):
+class ConvTranspose2d(nn_ConvTranspose2d):
     def forward(self, x):
         if x.numel() > 0:
             return super(ConvTranspose2d, self).forward(x)
@@ -64,7 +66,7 @@ class ConvTranspose2d(torch.nn.ConvTranspose2d):
         return _NewEmptyTensorOp.apply(x, output_shape)
 
 
-class BatchNorm2d(torch.nn.BatchNorm2d):
+class BatchNorm2d(nn_BatchNorm2d):
     def forward(self, x):
         if x.numel() > 0:
             return super(BatchNorm2d, self).forward(x)
@@ -77,7 +79,7 @@ def interpolate(
     input, size=None, scale_factor=None, mode="nearest", align_corners=None
 ):
     if input.numel() > 0:
-        return torch.nn.functional.interpolate(
+        return F_interpolate(
             input, size, scale_factor, mode, align_corners
         )
 
@@ -103,7 +105,7 @@ def interpolate(
         scale_factors = _ntuple(dim)(scale_factor)
         # math.floor might return float in py2.7
         return [
-            int(math.floor(input.size(i + 2) * scale_factors[i])) for i in range(dim)
+            int(math_floor(input.size(i + 2) * scale_factors[i])) for i in range(dim)
         ]
 
     output_shape = tuple(_output_size(2))
@@ -111,7 +113,7 @@ def interpolate(
     return _NewEmptyTensorOp.apply(input, output_shape)
 
 
-class DFConv2d(nn.Module):
+class DFConv2d(Module):
     """Deformable convolutional layer"""
     def __init__(
         self,
@@ -158,8 +160,8 @@ class DFConv2d(nn.Module):
             dilation=dilation
         )
         for l in [self.offset,]:
-            nn.init.kaiming_uniform_(l.weight, a=1)
-            torch.nn.init.constant_(l.bias, 0.)
+            kaiming_uniform_(l.weight, a=1)
+            constant_(l.bias, 0.)
         self.conv = conv_block(
             in_channels,
             out_channels,
@@ -181,13 +183,12 @@ class DFConv2d(nn.Module):
         if x.numel() > 0:
             if not self.with_modulated_dcn:
                 offset = self.offset(x)
-                x = self.conv(x, offset)
+                return self.conv(x, offset)
             else:
                 offset_mask = self.offset(x)
                 offset = offset_mask[:, :18, :, :]
                 mask = offset_mask[:, -9:, :, :].sigmoid()
-                x = self.conv(x, offset, mask)
-            return x
+                return self.conv(x, offset, mask)
         # get output shape
         output_shape = [
             (i + 2 * p - (di * (k - 1) + 1)) // d + 1

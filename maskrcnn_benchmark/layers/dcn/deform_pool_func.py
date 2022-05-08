@@ -1,12 +1,12 @@
 import torch
+from torch import zeros_like as torch_zeros_like
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
 
-from maskrcnn_benchmark import _C
+from maskrcnn_benchmark._C import deform_psroi_pooling_backward, deform_psroi_pooling_forward
 
 
 class DeformRoIPoolingFunction(Function):
-
     @staticmethod
     def forward(
         ctx,
@@ -38,7 +38,7 @@ class DeformRoIPoolingFunction(Function):
         n = rois.shape[0]
         output = data.new_empty(n, out_channels, out_size, out_size)
         output_count = data.new_empty(n, out_channels, out_size, out_size)
-        _C.deform_psroi_pooling_forward(
+        deform_psroi_pooling_forward(
             data,
             rois,
             offset,
@@ -68,11 +68,11 @@ class DeformRoIPoolingFunction(Function):
 
         data, rois, offset = ctx.saved_tensors
         output_count = ctx.output_count
-        grad_input = torch.zeros_like(data)
+        grad_input = torch_zeros_like(data)
         grad_rois = None
-        grad_offset = torch.zeros_like(offset)
+        grad_offset = torch_zeros_like(offset)
 
-        _C.deform_psroi_pooling_backward(
+        deform_psroi_pooling_backward(
             grad_output,
             data,
             rois,
