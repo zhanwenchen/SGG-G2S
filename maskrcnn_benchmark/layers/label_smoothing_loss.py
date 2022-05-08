@@ -23,10 +23,11 @@ class Label_Smoothing_Regression(Module):
             return one hot format labels in shape [batchsize, classes]
         """
         device = labels.device
-        one_hot = torch_zeros(labels.size(0), classes, device=device)
+        len_labels = labels.size(0)
+        one_hot = torch_zeros(len_labels, classes, device=device)
 
         #labels and value_added  size must match
-        labels = labels.view(labels.size(0), -1)
+        labels = labels.view(len_labels, -1)
         value_added = torch_full((labels.size(0), 1), value, device=device)
 
         one_hot.scatter_add_(1, labels, value_added)
