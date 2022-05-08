@@ -165,6 +165,8 @@ class ModulatedDeformConvPack(ModulatedDeformConv):
 
     def forward(self, input):
         o1, o2, mask = torch_chunk(self.conv_offset_mask(input), 3, dim=1)
+        offset = torch.cat((o1, o2), dim=1)
+        mask = torch.sigmoid(mask)
         return modulated_deform_conv(
-            input, torch_cat((o1, o2), dim=1), torch_sigmoid(mask), self.weight, self.bias, self.stride,
+            input,offset, mask, self.weight, self.bias, self.stride,
             self.padding, self.dilation, self.groups, self.deformable_groups)
