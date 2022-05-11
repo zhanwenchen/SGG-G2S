@@ -8,17 +8,28 @@ mkdir ~/sgb && cd ~/sgb
 export INSTALL_DIR=$(pwd)
 echo $INSTALL_DIR
 
+# install pycocotools
 cd $INSTALL_DIR
 git clone https://github.com/cocodataset/cocoapi.git
 cd cocoapi/PythonAPI
 python setup.py build_ext install
-python setup.py install --cuda_ext --cpp_ext
 
+# install apex
+cd $INSTALL_DIR
+git clone https://github.com/NVIDIA/apex.git
+cd apex
+# python setup.py install --cuda_ext --cpp_ext
+pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
+
+# install PyTorch Detection
 cd $INSTALL_DIR
 git clone https://github.com/KaihuaTang/Scene-Graph-Benchmark.pytorch.git
 cd scene-graph-benchmark
 
+# the following will install the lib with
+# symbolic links, so that you can modify
+# the files if you want and won't need to
+# re-build it
 python setup.py build develop
-
 
 unset INSTALL_DIR
