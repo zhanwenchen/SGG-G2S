@@ -3,7 +3,9 @@ conda activate sgb
 conda install -c conda-forge overrides
 
 conda install ipython scipy h5py ninja yacs cython matplotlib tqdm opencv
-conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
+# conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch # does not work with Pytorch 1.11.0
+conda install pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 -c pytorch
+
 mkdir ~/sgb && cd ~/sgb
 export INSTALL_DIR=$(pwd)
 echo $INSTALL_DIR
