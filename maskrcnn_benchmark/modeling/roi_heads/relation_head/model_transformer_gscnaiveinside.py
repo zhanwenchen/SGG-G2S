@@ -1,7 +1,7 @@
 """
 Based on the implementation of https://github.com/jadore801120/attention-is-all-you-need-pytorch
 """
-from torch import bmm as torch_bmm, no_grad as torch_no_grad, arange as torch_arange, LongTensor as torch_LongTensor, cat as torch_cat
+from torch import bmm as torch_bmm, no_grad as torch_no_grad, arange as torch_arange, as_tensor as torch_as_tensor, cat as torch_cat, int64 as torch_int64, float32 as torch_float32, zeros as torch_zeros
 from torch.nn import Module, ModuleList, Sequential, Dropout, Softmax, Linear, Conv1d, ReLU, LayerNorm, Embedding
 from torch.nn.functional import softmax as F_softmax, relu as F_relu
 from torch.nn.init import normal_, xavier_normal_
@@ -13,7 +13,6 @@ from .utils_motifs import obj_edge_vectors, to_onehot, nms_overlaps, encode_box_
 
 class ScaledDotProductAttention(Module):
     ''' Scaled Dot-Product Attention '''
-
     def __init__(self, temperature, attn_dropout=0.1):
         super().__init__()
         self.temperature = temperature
@@ -31,8 +30,8 @@ class ScaledDotProductAttention(Module):
             output (bsz, len_q, dim_v)
             attn (bsz, len_q, len_k)
         """
-        attn = torch_bmm(q, k.transpose(1, 2))
-        attn = attn / self.temperature
+        attn = torch_bmm(q, k.transpose(1, 2)) / self.temperature
+        del q, k
 
         if mask is not None:
             attn = attn.masked_fill(mask, -np_inf)
@@ -46,7 +45,6 @@ class ScaledDotProductAttention(Module):
 
 class MultiHeadAttention(Module):
     ''' Multi-Head Attention module '''
-
     def __init__(self, n_head, d_model, d_k, d_v, dropout=0.1):
         super().__init__()
         self.n_head = n_head
@@ -97,6 +95,7 @@ class MultiHeadAttention(Module):
         if mask is not None:
             mask = mask.repeat(n_head, 1, 1)  # (n*b) x .. x ..
         output, attn = self.attention(q, k, v, mask=mask)
+        del q, k, v
 
         output = output.view(n_head, sz_b, len_q, d_v)
         output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_q, -1)  # b x lq x (n*dv)
@@ -109,7 +108,6 @@ class MultiHeadAttention(Module):
 
 class PositionwiseFeedForward(Module):
     ''' A two-feed-forward-layer module '''
-
     def __init__(self, d_in, d_hid, dropout=0.1):
         super().__init__()
         self.w_1 = Conv1d(d_in, d_hid, 1)  # position-wise
@@ -127,11 +125,11 @@ class PositionwiseFeedForward(Module):
         """
         residual = x
         output = x.transpose(1, 2)
+        del x
         output = self.w_2(F_relu(self.w_1(output)))
         output = output.transpose(1, 2)
         output = self.dropout(output)
-        output = self.layer_norm(output + residual)
-        return output
+        return self.layer_norm(output + residual)
 
 
 class EncoderLayer(Module):
@@ -146,10 +144,10 @@ class EncoderLayer(Module):
     def forward(self, enc_input, non_pad_mask=None, slf_attn_mask=None):
         enc_output, enc_slf_attn = self.slf_attn(
             enc_input, enc_input, enc_input, mask=slf_attn_mask)
-        enc_output *= non_pad_mask.float()
+        enc_output *= non_pad_mask
 
         enc_output = self.pos_ffn(enc_output)
-        enc_output *= non_pad_mask.float()
+        enc_output *= non_pad_mask
 
         return enc_output, enc_slf_attn
 
@@ -180,26 +178,26 @@ class TransformerEncoder(Module):
         bsz = len(num_objs)
         device = input_feats.device
         pad_len = max(num_objs)
-        num_objs_ = torch_LongTensor(num_objs).to(device).unsqueeze(1).expand(-1, pad_len)
-        slf_attn_mask = torch_arange(pad_len, device=device).view(1, -1).expand(bsz, -1).ge(num_objs_).unsqueeze(
+        num_objs_ = torch_as_tensor(num_objs, device=device, dtype=torch_int64).unsqueeze(1).expand(-1, pad_len)
+        slf_attn_mask = torch_arange(pad_len, device=device, dtype=torch_float32).view(1, -1).expand(bsz, -1).ge(num_objs_).unsqueeze(
             1).expand(-1, pad_len, -1)  # (bsz, pad_len, pad_len)
-        non_pad_mask = torch_arange(pad_len, device=device).to(device).view(1, -1).expand(bsz, -1).lt(
+        non_pad_mask = torch_arange(pad_len, device=device, dtype=torch_float32).view(1, -1).expand(bsz, -1).lt(
             num_objs_).unsqueeze(-1)  # (bsz, pad_len, 1)
 
         # -- Forward
         enc_output = input_feats
+        del input_feats
         for enc_layer in self.layer_stack:
             enc_output, _ = enc_layer(
                 enc_output,
                 non_pad_mask=non_pad_mask,
                 slf_attn_mask=slf_attn_mask)
 
-        enc_output = enc_output[non_pad_mask.squeeze(-1)]
-        return enc_output
+        return enc_output[non_pad_mask.squeeze(-1)]
 
 
-class TransformerContext(Module):
-    def __init__(self, config, obj_classes, rel_classes, in_channels):
+class TransformerContextNaiveInside(Module):
+    def __init__(self, config, obj_classes, rel_classes, in_channels): # in_channels is sum number of rois
         super().__init__()
         self.cfg = config
         # setting parameters
@@ -213,8 +211,8 @@ class TransformerContext(Module):
         self.num_rel_cls = len(rel_classes)
         self.in_channels = in_channels
         self.obj_dim = in_channels
-        self.embed_dim = self.cfg.MODEL.ROI_RELATION_HEAD.EMBED_DIM
-        self.hidden_dim = self.cfg.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
+        self.embed_dim = self.cfg.MODEL.ROI_RELATION_HEAD.EMBED_DIM # 200
+        self.hidden_dim = self.cfg.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM # 768
         self.nms_thresh = self.cfg.TEST.RELATION.LATER_NMS_PREDICTION_THRES
 
         self.dropout_rate = self.cfg.MODEL.ROI_RELATION_HEAD.TRANSFORMER.DROPOUT_RATE
@@ -239,13 +237,26 @@ class TransformerContext(Module):
             Linear(9, 32), ReLU(inplace=True), Dropout(0.1),
             Linear(32, 128), ReLU(inplace=True), Dropout(0.1),
         ])
-        self.lin_obj = Linear(self.in_channels + self.embed_dim + 128, self.hidden_dim)
+        self.context_pooling_dim = self.cfg.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
+        # self.union_embed = Linear(self.context_pooling_dim, self.hidden_dim)
+        # self.gsc_embed = Linear(self.context_pooling_dim, self.hidden_dim)
+        self.lin_obj = Linear(self.in_channels + self.embed_dim + 128, self.hidden_dim) # 4424 => 768
         self.lin_edge = Linear(self.embed_dim + self.hidden_dim + self.in_channels, self.hidden_dim)
+        # self.lin_union = Linear(self.context_pooling_dim + self.hidden_dim, self.hidden_dim)
+        # self.lin_gsc = Linear(self.context_pooling_dim + self.hidden_dim, self.hidden_dim)
         self.out_obj = Linear(self.hidden_dim, self.num_obj_cls)
         self.context_obj = TransformerEncoder(self.obj_layer, self.num_head, self.k_dim,
                                               self.v_dim, self.hidden_dim, self.inner_dim, self.dropout_rate)
         self.context_edge = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim,
                                                self.v_dim, self.hidden_dim, self.inner_dim, self.dropout_rate)
+        # self.context_union = TransformerEncoder(self.obj_layer, self.num_head, self.k_dim,
+        #                                        self.v_dim, self.hidden_dim, self.inner_dim, self.dropout_rate)
+        # self.context_gsc = TransformerEncoder(self.obj_layer, self.num_head, self.k_dim,
+        #                                        self.v_dim, self.hidden_dim, self.inner_dim, self.dropout_rate)
+        # self.rois2union_rois = Linear(self.hidden_dim, self.hidden_dim)
+        # self.rois2union_union = Linear(self.hidden_dim, self.hidden_dim)#  @ [768, 746] => [39, 746]
+        # self.rois2gsc_rois = Linear(self.hidden_dim, self.hidden_dim)
+        # self.rois2gsc_gsc = Linear(self.hidden_dim, self.hidden_dim)# torch.Size([39, 768]) @ torch.Size([768, 2]) => [39, 2]
 
     def forward(self, roi_features, proposals, logger=None):
         '''
@@ -270,6 +281,15 @@ class TransformerContext(Module):
                 # torch.Size([16, 256, 32, 19])
                 # (Pdb) features[4].size()
                 # torch.Size([16, 256, 16, 10])
+            union_features (Tensor): (batch_num_rel, context_pooling_dim): visual union feature of each pair
+                                     (Pdb) union_features.size()
+                                     torch.Size([3009, 4096])
+            global_image_features: [16, 4096]
+
+            edges_img2ont_pred = torch_zeros((num_img_pred, self.num_ont_pred), dtype=torch_float32, device=CUDA_DEVICE, requires_grad=False) # torch.Size([506, 51])
+            edges_ont2img_pred = edges_img2ont_pred.t()
+            edges_ont2img_pred: edges_img2ont_pred @ union features with fcs: torch.Size([51, 506]) @ torch.Size([506, 256])
+            768, 39, 746 *
         Returns:
             (Pdb) obj_dists.size()
             torch.Size([1280, 151])
@@ -300,15 +320,39 @@ class TransformerContext(Module):
         # torch.Size([1280, 128])
 
         # encode objects with transformer
-        obj_pre_rep = cat((roi_features, obj_embed, pos_embed), -1)
+        obj_pre_rep = cat((roi_features, obj_embed, pos_embed), -1) # torch.Size([39, 4096]) + torch.Size([39, 200]) + torch.Size([39, 128]) => torch.Size([39, 4424])
+        del pos_embed, obj_embed
         num_objs = [len(p) for p in proposals]
-        obj_pre_rep = self.lin_obj(obj_pre_rep)
+        obj_pre_rep = self.lin_obj(obj_pre_rep) # torch.Size([39, 4424]) => torch.Size([39, 768])
         # (Pdb) obj_pre_rep.size()
         # torch.Size([1280, 768])
-        obj_feats = self.context_obj(obj_pre_rep, num_objs)
+        obj_feats = self.context_obj(obj_pre_rep, num_objs) # torch.Size([39, 768]) => torch.Size([39, 768])
+        del obj_pre_rep
         # (Pdb) obj_feats.size()
         # torch.Size([1280, 768])
+        # import pdb; pdb.set_trace()
+        # union_pre_rep = cat((union_features, self.union_embed(union_features)), dim=-1) # torch.Size([746, 4096]) + torch.Size([746, 768]) => torch.Size([746, 4864])
+        # union_ctx = self.context_union(self.lin_union(union_pre_rep), num_rels) # lin_union: torch.Size([746, 4864])=>torch.Size([746, 768]) # sum(num_objs) need to equal 746
+        # del union_pre_rep
+        # unions2objs = torch_zeros((union_features.size(0), self.num_obj_cls * 2), dtype=torch_float32, device=union_features.device) # [746, 151*2]
+        # unions2objs = union_ctx @ unions2objs # [768, 746] @ [746, 151*2] => [768, 151*2]
+        # But zeros would cause the result to be 0?
+        # Two strategies:
+        # 1. Use union_ctx directly. Pad union features as a sequence. [745: [...], 746: None].
+        # *2. union_ctx. Pad union_features like an image. But does that work conceptually? I think it does.  Is there a max union features defined? The numbers differ wildly
+        # 3. Fill unions2objs with full of norm [746, 151*2]. But what does that even mean?
+        # 4. Fill unions2objs with [746, 39] [num_unions, num_boxes] indices and then pass it through some sort of linear layer? But that's not possible because neither dim is predetermined
 
+        # We just need to see which union features belong to which image.
+        # import pdb; pdb.set_trace()
+        # num_images = [1 for _ in range(global_image_features.size(0))]
+        # gsc_pre_rep = cat((global_image_features, self.gsc_embed(global_image_features)), dim=-1) # torch.Size([2, 4096]) + torch.Size([2, 768]) => # This is where it is if we want to include global features in the edge computation
+        # gsc_ctx = self.context_gsc(self.lin_gsc(gsc_pre_rep), num_images)
+        # del gsc_pre_rep
+
+        # new_to_old = torch_empty(union_features.size(0), dtype=int)
+        # rois2union = self.rois2union_rois(obj_feats) @ self.rois2union_rois(union_ctx).T # torch.Size([39, 768]) @ [768, 746] => [39, 746]
+        # rois2gsc = self.rois2gsc_rois(obj_feats) @ self.rois2gsc_gsc(gsc_ctx).T # torch.Size([39, 768]) @ torch.Size([768, 2]) => [39, 2]
         # predict obj_dists and obj_preds
         if self.mode == 'predcls':
             obj_preds = obj_labels
@@ -316,8 +360,19 @@ class TransformerContext(Module):
             # (Pdb) obj_dists.size()
             # torch.Size([1280, 151])
             # edge_pre_rep = cat((roi_features, obj_feats, features, self.obj_embed2(obj_labels)), dim=-1)
-            edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_labels)), dim=-1)
+            # import pdb; pdb.set_trace()
+            # TODO: we can either bring everything up to union batch size or down to roi size. It makes more sense to bring up except the output needs to be 1280. So let's bring to roi size.
+            # TODO: It doesn't make logical sense to size down union either, so I guess is updim time!
+            # Strategy 1 is updiming by roi_features, obj_feats, and self.obj_embed2(obj_labels) existing as either subjet or object.
+            # Strategy 2 is updiming by roi_features as either, obj_feats existing as subject and self.obj_embed2(obj_labels) existing as object
+            # Updim roi_features as either
+            # For each roi_feature, if roi in
+            # import pdb; pdb.set_trace()
+            # edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_labels), rois2union, rois2gsc), dim=-1) #torch.Size([39, 4096]) + torch.Size([39, 768]) + torch.Size([39, 200]) + torch.Size([746, 768]) + torch.Size([2, 768])# This is where it is if we want to include global features in the edge computation
+            edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_labels)), dim=-1) #torch.Size([39, 4096]) + torch.Size([39, 768]) + torch.Size([39, 200])]
+            del obj_labels
         else:
+            del obj_labels
             obj_dists = self.out_obj(obj_feats)
             # (Pdb) obj_dists.size()
             # torch.Size([1280, 151])
@@ -325,6 +380,7 @@ class TransformerContext(Module):
             if use_decoder_nms:
                 boxes_per_cls = [proposal.get_field('boxes_per_cls') for proposal in proposals]
                 obj_preds = self.nms_per_cls(obj_dists, boxes_per_cls, num_objs)
+                del boxes_per_cls
             else:
                 obj_preds = obj_dists[:, 1:].max(1)[1] + 1
                 # obj_preds are object predictions.
@@ -332,20 +388,24 @@ class TransformerContext(Module):
                 # torch.Size([1280])
                 # What is obj_preds?
 
-            # edge_pre_rep = cat((roi_features, obj_feats, features, self.obj_embed2(obj_preds)), dim=-1)
-            edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_preds)), dim=-1) # This is where it is if we want to include global features in the edge computation
-
+            # edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_preds)), dim=-1)
+            # import pdb; pdb.set_trace()
+            # edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_preds), rois2union, rois2gsc), dim=-1) # This is where it is if we want to include global features in the edge computation
+            edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_preds)), dim=-1)
+        del obj_feats
+        # del rois2union, rois2gsc
         # edge context
         # (Pdb) edge_pre_rep.size()
         # torch.Size([1280, 5064])
+        # import pdb; pdb.set_trace()
         edge_pre_rep = self.lin_edge(edge_pre_rep)
         # (Pdb) edge_pre_rep.size()
         # torch.Size([1280, 768])
-
+        # import pdb; pdb.set_trace()
         edge_ctx = self.context_edge(edge_pre_rep, num_objs)
+        del edge_pre_rep, num_objs
         # (Pdb) edge_ctx.size()
         # torch.Size([1280, 768])
-
         return obj_dists, obj_preds, edge_ctx
 
     def nms_per_cls(self, obj_dists, boxes_per_cls, num_objs):

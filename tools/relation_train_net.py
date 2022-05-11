@@ -12,6 +12,7 @@ import os
 from time import time as time_time
 import datetime
 import random
+from resource import RLIMIT_NOFILE, getrlimit, setrlimit
 
 import numpy as np
 from torch import cat as torch_cat, tensor as torch_tensor, manual_seed as torch_manual_seed, device as torch_device
@@ -20,6 +21,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
 from torch.utils.tensorboard import SummaryWriter
 from torch.backends import cudnn
+from torch.multiprocessing import set_sharing_strategy
 
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
 from maskrcnn_benchmark.config import cfg
@@ -205,7 +207,7 @@ def train(cfg, local_rank, distributed, logger):
         if any(len(target) < 1 for target in targets):
             logger.error("Iteration={iteration + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
         data_time = time_time() - end
-        iteration = iteration + 1
+        iteration += 1
         arguments["iteration"] = iteration
 
         model.train()
@@ -300,7 +302,6 @@ def train(cfg, local_rank, distributed, logger):
             total_time_str, total_training_time / (max_iter)
         )
     )
-    writer.export_scalars_to_json("./all_scalars.json")
     writer.close()
     return model
 
@@ -318,6 +319,7 @@ def fix_eval_modules_no_classifier(module, with_grad_name='_clean'):
         # DO NOT use module.eval(), otherwise the module will be in the test mode, i.e., all self.training condition is set to False
 
 def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir):
+    # set_sharing_strategy('file_system')
     if distributed:
         model = model.module
     #torch.cuda.empty_cache()
@@ -405,6 +407,7 @@ def run_test(cfg, model, distributed, logger):
 
 
 def main():
+    setrlimit(RLIMIT_NOFILE, (4096, getrlimit(RLIMIT_NOFILE)[1]))
     setup_seed(20)
     parser = argparse.ArgumentParser(description="PyTorch Relation Detection Training")
     parser.add_argument(

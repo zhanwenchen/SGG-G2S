@@ -113,8 +113,7 @@ class FPN2MLPFeatureExtractor(nn.Module):
     def forward_without_pool(self, x):
         x = x.view(x.size(0), -1)
         x = F_relu(self.fc6(x))
-        x = F_relu(self.fc7(x))
-        return x
+        return F_relu(self.fc7(x))
 
 
 @registry.ROI_BOX_FEATURE_EXTRACTORS.register("FPNXconv1fcFeatureExtractor")

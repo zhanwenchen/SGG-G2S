@@ -164,10 +164,9 @@ class VGDataset(Dataset):
 
         if evaluation:
             target = target.clip_to_image(remove_empty=False)
-            target.add_field("relation_tuple", torch_LongTensor(relation))  # for evaluation
+            target.add_field("relation_tuple", torch_LongTensor(relation))  # for evaluation # TODO: # OPTIMIZE: 
             return target
-        target = target.clip_to_image(remove_empty=True)
-        return target
+        return target.clip_to_image(remove_empty=True)
 
     def __len__(self):
         return len(self.filenames)

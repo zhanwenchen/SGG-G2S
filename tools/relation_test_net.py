@@ -5,10 +5,11 @@ from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:sk
 
 import argparse
 import os
-
+from os.path import join as os_path_join
 import torch
+from torch.utils.tensorboard import SummaryWriter
 from maskrcnn_benchmark.config import cfg
-from maskrcnn_benchmark.data import make_data_loader, make_data_loader_val
+from maskrcnn_benchmark.data import make_data_loader
 from maskrcnn_benchmark.engine.inference import inference
 from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
@@ -56,8 +57,10 @@ def main():
     cfg.merge_from_list(args.opts)
     cfg.freeze()
 
-    save_dir = ""
-    logger = setup_logger("maskrcnn_benchmark", save_dir, get_rank())
+    output_dir = cfg.OUTPUT_DIR
+    if output_dir:
+        mkdir(output_dir)
+    logger = setup_logger("maskrcnn_benchmark", output_dir, get_rank(), filename="log_test.txt")
     logger.info("Using {} GPUs".format(num_gpus))
     logger.info(cfg)
 
@@ -105,7 +108,7 @@ def main():
     # #load_mapping_classifier = {}
     # checkpointer.load('checkpoints/' + load_init_model_name + '/model_0010000.pth',
     #                    load_mapping=load_mapping_classifier)
-                       
+
     iou_types = ("bbox",)
     if cfg.MODEL.MASK_ON:
         iou_types = iou_types + ("segm",)
@@ -126,6 +129,7 @@ def main():
         data_loaders_val = make_data_loader(cfg, mode="val", is_distributed=distributed)
     else:
         data_loaders_val = make_data_loader(cfg, mode="test", is_distributed=distributed)
+    writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_test'))
     for output_folder, dataset_name, data_loader_val in zip(output_folders, dataset_names, data_loaders_val):
         inference(
             cfg,
@@ -138,6 +142,9 @@ def main():
             expected_results=cfg.TEST.EXPECTED_RESULTS,
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
             output_folder=output_folder,
+            logger=logger,
+            writer=writer,
+            iteration=0,
         )
         synchronize()
 

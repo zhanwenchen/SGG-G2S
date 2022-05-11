@@ -56,15 +56,16 @@ class RelationFeatureExtractor(nn.Module):
             ])
 
 
-    def forward(self, x, proposals, rel_pair_idxs=None):
+    def forward(self, x, proposals, rel_pair_idxs=None, return_indices=None):
+        # import pdb; pdb.set_trace()
         device = x[0].device
         union_proposals = []
         rect_inputs = []
+        # num_proposals = [len(proposal) for proposal in proposals]
         for proposal, rel_pair_idx in zip(proposals, rel_pair_idxs):
             head_proposal = proposal[rel_pair_idx[:, 0]]
             tail_proposal = proposal[rel_pair_idx[:, 1]]
-            union_proposal = boxlist_union(head_proposal, tail_proposal)
-            union_proposals.append(union_proposal)
+            union_proposals.append(boxlist_union(head_proposal, tail_proposal))
 
             # use range to construct rectangle, sized (rect_size, rect_size)
             num_rel = len(rel_pair_idx)
@@ -82,8 +83,8 @@ class RelationFeatureExtractor(nn.Module):
                         (dummy_y_range >= tail_proposal.bbox[:,1].floor().view(-1,1,1).long()) & \
                         (dummy_y_range <= tail_proposal.bbox[:,3].ceil().view(-1,1,1).long())).float()
 
-            rect_input = torch_stack((head_rect, tail_rect), dim=1) # (num_rel, 4, rect_size, rect_size) # torch.Size([651, 2, 27, 27]), torch.Size([110, 2, 27, 27])
-            rect_inputs.append(rect_input)
+            # (num_rel, 4, rect_size, rect_size) # torch.Size([651, 2, 27, 27]), torch.Size([110, 2, 27, 27])
+            rect_inputs.append(torch_stack((head_rect, tail_rect), dim=1))
 
         # rectangle feature. size (total_num_rel, in_channels, POOLER_RESOLUTION, POOLER_RESOLUTION)
         rect_inputs = torch_cat(rect_inputs, dim=0) # original: rect_inputs = 16 * torch.Size([651, 2, 27, 27]), [650, ...], [110, ...], ... => torch.Size([5049, 2, 27, 27])
@@ -107,6 +108,8 @@ class RelationFeatureExtractor(nn.Module):
             union_features_att = self.att_feature_extractor.forward_without_pool(union_features_att)
             union_features = torch_cat((union_features, union_features_att), dim=-1)
 
+        # if return_indices is True:
+            # return union_features, indices
         return union_features
 
 
