@@ -1,45 +1,22 @@
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
 
-import argparse
-import os
-import time
-import datetime
-import json
-import random
+from json import load as json_load
+from random import random as random_random
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.utils import clip_grad_norm_
-import torch.utils.data as data
-from torch.nn.utils import weight_norm
-from tqdm import tqdm
-
-from maskrcnn_benchmark.config import cfg
-from maskrcnn_benchmark.data import make_data_loader
-from maskrcnn_benchmark.solver import make_lr_scheduler
-from maskrcnn_benchmark.solver import make_optimizer
-from maskrcnn_benchmark.engine.trainer import reduce_loss_dict
-from maskrcnn_benchmark.engine.inference import inference
-from maskrcnn_benchmark.modeling.detector import build_detection_model
-from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
-from maskrcnn_benchmark.utils.checkpoint import clip_grad_norm
-from maskrcnn_benchmark.utils.collect_env import collect_env_info
-from maskrcnn_benchmark.utils.comm import synchronize, get_rank, all_gather
-from maskrcnn_benchmark.utils.imports import import_file
-from maskrcnn_benchmark.utils.logger import setup_logger, debug_print
-from maskrcnn_benchmark.utils.miscellaneous import mkdir, save_config
-from maskrcnn_benchmark.utils.metric_logger import MetricLogger
+from torch import FloatTensor as torch_FloatTensor, LongTensor as torch_LongTensor
+from torch.utils.data import Dataset, DataLoader
 
 
-class SGEncoding(data.Dataset):
+class SGEncoding(Dataset):
     """ SGEncoding dataset """
-
     def __init__(self, train_ids, test_ids, sg_data, test_on=False, val_on=False, num_test=5000, num_val=5000):
         super(SGEncoding, self).__init__()
         data_path = './datasets/vg/'
-        cap_graph = json.load(open(data_path+'vg_capgraphs_anno.json'))
-        vg_dict = json.load(open(data_path+'VG-SGG-dicts-with-attri.json'))
+        with open(data_path+'vg_capgraphs_anno.json') as f:
+            cap_graph = json_load(f)
+
+        with open(data_path+'VG-SGG-dicts-with-attri.json') as f:
+            vg_dict = json_load(f)
         self.img_txt_sg = sg_data
         self.key_list = list(self.img_txt_sg.keys())
         self.key_list.sort()
@@ -68,15 +45,15 @@ class SGEncoding(data.Dataset):
         self.num_txt_obj = len(self.txt_obj_vocab)
 
     def _to_tensor(self, inp_dict):
-        return {'entities': torch.LongTensor(inp_dict['entities']),
-                'relations': torch.LongTensor(inp_dict['relations'])}
+        return {'entities': torch_LongTensor(inp_dict['entities']),
+                'relations': torch_LongTensor(inp_dict['relations'])}
 
     def _generate_tensor_by_idx(self, idx):
         img = self._to_tensor(self.img_txt_sg[self.key_list[idx]]['img'])
-        img_graph = torch.FloatTensor(self.img_txt_sg[self.key_list[idx]]['image_graph'])
+        img_graph = torch_FloatTensor(self.img_txt_sg[self.key_list[idx]]['image_graph'])
 
         txt = self._to_tensor(self.img_txt_sg[self.key_list[idx]]['txt'])
-        txt_graph = torch.FloatTensor(self.img_txt_sg[self.key_list[idx]]['text_graph'])
+        txt_graph = torch_FloatTensor(self.img_txt_sg[self.key_list[idx]]['text_graph'])
 
         img['graph'] = img_graph
         txt['graph'] = txt_graph
@@ -87,7 +64,7 @@ class SGEncoding(data.Dataset):
         # generate negative sample
         bg_idx = item
         while (bg_idx == item):
-            bg_idx = int(random.random() * len(self.key_list))
+            bg_idx = int(random_random() * len(self.key_list))
         bg_img, bg_txt = self._generate_tensor_by_idx(bg_idx)
         return fg_img, fg_txt, bg_img, bg_txt
 
@@ -105,11 +82,10 @@ def get_loader(cfg, train_ids, test_ids, sg_data, test_on=False, val_on=False, n
     split = SGEncoding(train_ids, test_ids, sg_data=sg_data, test_on=test_on, val_on=val_on, num_test=num_test,
                        num_val=num_val)
 
-    loader = torch.utils.data.DataLoader(split,
-                                         batch_size=cfg.SOLVER.IMS_PER_BATCH,
-                                         shuffle=not (test_on or val_on),  # only shuffle the data in training
-                                         pin_memory=True,
-                                         num_workers=4,
-                                         collate_fn=SimpleCollator(),
-                                         )
-    return loader
+    return DataLoader(split,
+                        batch_size=cfg.SOLVER.IMS_PER_BATCH,
+                        shuffle=not (test_on or val_on),  # only shuffle the data in training
+                        pin_memory=True,
+                        num_workers=8,
+                        collate_fn=SimpleCollator(),
+                       )

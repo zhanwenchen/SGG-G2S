@@ -22,8 +22,7 @@ from maskrcnn_benchmark.solver import make_optimizer
 from maskrcnn_benchmark.engine.trainer import reduce_loss_dict
 from maskrcnn_benchmark.engine.inference import inference
 from maskrcnn_benchmark.modeling.detector import build_detection_model
-from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
-from maskrcnn_benchmark.utils.checkpoint import clip_grad_norm
+from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer, clip_grad_norm
 from maskrcnn_benchmark.utils.collect_env import collect_env_info
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank, all_gather
 from maskrcnn_benchmark.utils.imports import import_file

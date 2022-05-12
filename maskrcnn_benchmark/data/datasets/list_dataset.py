@@ -3,7 +3,7 @@
 Simple dataset class that wraps a list of path names
 """
 
-from PIL import Image
+from PIL.Image import open as Image_open
 
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 
@@ -14,7 +14,7 @@ class ListDataset(object):
         self.transforms = transforms
 
     def __getitem__(self, item):
-        img = Image.open(self.image_lists[item]).convert("RGB")
+        img = Image_open(self.image_lists[item]).convert("RGB")
 
         # dummy target
         w, h = img.size

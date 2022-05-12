@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 from maskrcnn_benchmark.structures.image_list import to_image_list
+from maskrcnn_benchmark.structures.bounding_box import BoxList
 
 from ..backbone import build_backbone
 from ..rpn.rpn import build_rpn
@@ -48,7 +49,8 @@ class GeneralizedRCNN(nn.Module):
         """
         if self.training and targets is None:
             raise ValueError("In training mode, targets should be passed")
-        images = to_image_list(images)
+        images = to_image_list(images) # (Pdb) images.tensors.size() torch.Size([16, 3, 608, 1024])
+        boxes_global = [BoxList([[0, 0, *image_size]], image_size).to(images.tensors.device) for image_size in images.image_sizes]
         features = self.backbone(images.tensors)
         # (Pdb) len(features)
         # 5
@@ -66,7 +68,7 @@ class GeneralizedRCNN(nn.Module):
         proposals, proposal_losses = self.rpn(images, features, targets)
         # boxlist
         if self.roi_heads:
-            _, result, detector_losses = self.roi_heads(features, proposals, targets, logger)
+            _, result, detector_losses = self.roi_heads(features, proposals, targets, logger, boxes_global=boxes_global)
         else:
             # RPN-only models don't have roi_heads
             result = proposals

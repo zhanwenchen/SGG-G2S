@@ -1,9 +1,9 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import logging
-import time
-import os
+from os.path import join as os_path_join, exists as os_path_exists
 
-import torch
+from torch import no_grad as torch_no_grad, device as torch_device, load as torch_load
+from torch.cuda import empty_cache, synchronize
 from tqdm import tqdm
 
 from maskrcnn_benchmark.config import cfg
@@ -18,10 +18,10 @@ from .bbox_aug import im_detect_bbox_aug
 def compute_on_dataset(model, data_loader, device, synchronize_gather=True, timer=None):
     model.eval()
     results_dict = {}
-    cpu_device = torch.device("cpu")
-    torch.cuda.empty_cache()
+    cpu_device = torch_device("cpu")
+    empty_cache()
     for _, batch in enumerate(tqdm(data_loader)):
-        with torch.no_grad():
+        with torch_no_grad():
             images, targets, image_ids = batch
             targets = [target.to(device) for target in targets]
             if timer:
@@ -33,7 +33,7 @@ def compute_on_dataset(model, data_loader, device, synchronize_gather=True, time
                 output = model(images.to(device), targets)
             if timer:
                 if not cfg.MODEL.DEVICE == 'cpu':
-                    torch.cuda.synchronize()
+                    synchronize()
                 timer.toc()
             output = [o.to(cpu_device) for o in output]
         if synchronize_gather:
@@ -46,7 +46,7 @@ def compute_on_dataset(model, data_loader, device, synchronize_gather=True, time
             results_dict.update(
                 {img_id: result for img_id, result in zip(image_ids, output)}
             )
-    torch.cuda.empty_cache()
+    empty_cache()
     return results_dict
 
 
@@ -63,7 +63,7 @@ def _accumulate_predictions_from_multiple_gpus(predictions_per_gpu, synchronize_
         predictions = {}
         for p in all_predictions:
             predictions.update(p)
-    
+
     # convert a dict where the key is the index in a list
     image_ids = list(sorted(predictions.keys()))
     if len(image_ids) != image_ids[-1] + 1:
@@ -91,10 +91,12 @@ def inference(
         expected_results_sigma_tol=4,
         output_folder=None,
         logger=None,
+        writer=None,
+        iteration=None,
 ):
-    load_prediction_from_cache = cfg.TEST.ALLOW_LOAD_FROM_CACHE and output_folder is not None and os.path.exists(os.path.join(output_folder, "eval_results.pytorch"))
+    load_prediction_from_cache = cfg.TEST.ALLOW_LOAD_FROM_CACHE and output_folder is not None and os_path_exists(os_path_join(output_folder, "eval_results.pytorch"))
     # convert to a torch.device for efficiency
-    device = torch.device(device)
+    device = torch_device(device)
     num_devices = get_world_size()
     if logger is None:
         logger = logging.getLogger("maskrcnn_benchmark.inference")
@@ -104,7 +106,7 @@ def inference(
     inference_timer = Timer()
     total_timer.tic()
     if load_prediction_from_cache:
-        predictions = torch.load(os.path.join(output_folder, "eval_results.pytorch"), map_location=torch.device("cpu"))['predictions']
+        predictions = torch_load(os_path_join(output_folder, "eval_results.pytorch"), map_location=torch_device("cpu"))['predictions']
     else:
         predictions = compute_on_dataset(model, data_loader, device, synchronize_gather=cfg.TEST.RELATION.SYNC_GATHER, timer=inference_timer)
     # wait for all processes to complete before measuring the time
@@ -146,4 +148,6 @@ def inference(
                     predictions=predictions,
                     output_folder=output_folder,
                     logger=logger,
+                    writer=writer,
+                    iteration=iteration,
                     **extra_args)

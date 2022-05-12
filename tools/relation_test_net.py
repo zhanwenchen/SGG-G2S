@@ -4,11 +4,13 @@
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
 
 import argparse
-import os
-
+from os import environ as os_environ
+from os.path import join as os_path_join
+from resource import RLIMIT_NOFILE, getrlimit, setrlimit
 import torch
+from torch.utils.tensorboard import SummaryWriter
 from maskrcnn_benchmark.config import cfg
-from maskrcnn_benchmark.data import make_data_loader, make_data_loader_val
+from maskrcnn_benchmark.data import make_data_loader
 from maskrcnn_benchmark.engine.inference import inference
 from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
@@ -25,6 +27,7 @@ except ImportError:
 
 
 def main():
+    setrlimit(RLIMIT_NOFILE, (4096, getrlimit(RLIMIT_NOFILE)[1]))
     parser = argparse.ArgumentParser(description="PyTorch Object Detection Inference")
     parser.add_argument(
         "--config-file",
@@ -42,7 +45,7 @@ def main():
 
     args = parser.parse_args()
 
-    num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
+    num_gpus = int(os_environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     distributed = num_gpus > 1
 
     if distributed:
@@ -56,8 +59,11 @@ def main():
     cfg.merge_from_list(args.opts)
     cfg.freeze()
 
-    save_dir = ""
-    logger = setup_logger("maskrcnn_benchmark", save_dir, get_rank())
+    output_dir = cfg.OUTPUT_DIR
+    if output_dir:
+        mkdir(output_dir)
+    model_name = os_environ['MODEL_NAME']
+    logger = setup_logger("maskrcnn_benchmark", output_dir, get_rank(), filename=f'log_test_{model_name}.txt')
     logger.info("Using {} GPUs".format(num_gpus))
     logger.info(cfg)
 
@@ -105,7 +111,7 @@ def main():
     # #load_mapping_classifier = {}
     # checkpointer.load('checkpoints/' + load_init_model_name + '/model_0010000.pth',
     #                    load_mapping=load_mapping_classifier)
-                       
+
     iou_types = ("bbox",)
     if cfg.MODEL.MASK_ON:
         iou_types = iou_types + ("segm",)
@@ -119,13 +125,14 @@ def main():
     dataset_names = cfg.DATASETS.TEST
     if cfg.OUTPUT_DIR:
         for idx, dataset_name in enumerate(dataset_names):
-            output_folder = os.path.join(cfg.OUTPUT_DIR, "inference", dataset_name)
+            output_folder = os_path_join(cfg.OUTPUT_DIR, "inference", dataset_name)
             mkdir(output_folder)
             output_folders[idx] = output_folder
     if cfg.TEST.VAL_FLAG:
         data_loaders_val = make_data_loader(cfg, mode="val", is_distributed=distributed)
     else:
         data_loaders_val = make_data_loader(cfg, mode="test", is_distributed=distributed)
+    writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_test'))
     for output_folder, dataset_name, data_loader_val in zip(output_folders, dataset_names, data_loaders_val):
         inference(
             cfg,
@@ -138,6 +145,9 @@ def main():
             expected_results=cfg.TEST.EXPECTED_RESULTS,
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
             output_folder=output_folder,
+            logger=logger,
+            writer=writer,
+            iteration=0,
         )
         synchronize()
 

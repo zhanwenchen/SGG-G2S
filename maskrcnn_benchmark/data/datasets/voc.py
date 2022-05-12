@@ -1,20 +1,17 @@
-import os
-
-import torch
-import torch.utils.data
-from PIL import Image
+from os.path import join as os_path_join
 import sys
+from torch import tensor as torch_tensor, float32 as torch_float32
+from torch.utils.data import Dataset
+from PIL.Image import open as Image_open
 
 if sys.version_info[0] == 2:
     import xml.etree.cElementTree as ET
 else:
     import xml.etree.ElementTree as ET
-
-
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 
 
-class PascalVOCDataset(torch.utils.data.Dataset):
+class PascalVOCDataset(Dataset):
 
     CLASSES = (
         "__background__ ",
@@ -46,14 +43,14 @@ class PascalVOCDataset(torch.utils.data.Dataset):
         self.keep_difficult = use_difficult
         self.transforms = transforms
 
-        self._annopath = os.path.join(self.root, "Annotations", "%s.xml")
-        self._imgpath = os.path.join(self.root, "JPEGImages", "%s.jpg")
-        self._imgsetpath = os.path.join(self.root, "ImageSets", "Main", "%s.txt")
+        self._annopath = os_path_join(self.root, "Annotations", "%s.xml")
+        self._imgpath = os_path_join(self.root, "JPEGImages", "%s.jpg")
+        self._imgsetpath = os_path_join(self.root, "ImageSets", "Main", "%s.txt")
 
         with open(self._imgsetpath % self.image_set) as f:
             self.ids = f.readlines()
         self.ids = [x.strip("\n") for x in self.ids]
-        self.id_to_img_map = {k: v for k, v in enumerate(self.ids)}
+        self.id_to_img_map = dict(enumerate(self.ids))
 
         cls = PascalVOCDataset.CLASSES
         self.class_to_ind = dict(zip(cls, range(len(cls))))
@@ -61,7 +58,7 @@ class PascalVOCDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         img_id = self.ids[index]
-        img = Image.open(self._imgpath % img_id).convert("RGB")
+        img = Image_open(self._imgpath % img_id).convert("RGB")
 
         target = self.get_groundtruth(index)
         target = target.clip_to_image(remove_empty=True)
@@ -117,9 +114,9 @@ class PascalVOCDataset(torch.utils.data.Dataset):
         im_info = tuple(map(int, (size.find("height").text, size.find("width").text)))
 
         res = {
-            "boxes": torch.tensor(boxes, dtype=torch.float32),
-            "labels": torch.tensor(gt_classes),
-            "difficult": torch.tensor(difficult_boxes),
+            "boxes": torch_tensor(boxes, dtype=torch_float32),
+            "labels": torch_tensor(gt_classes),
+            "difficult": torch_tensor(difficult_boxes),
             "im_info": im_info,
         }
         return res

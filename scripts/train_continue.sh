@@ -3,11 +3,12 @@ if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPU=1
     echo "TRAINING Predcls"
-    MODEL_NAME="naive_inside_no_bpl_no_sa_v1a" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
-    mkdir ./checkpoints/${MODEL_NAME}/ &&
-    cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME}/ &&
-    cp -r ./scripts/ ./checkpoints/${MODEL_NAME}/ &&
-    cp -r ./maskrcnn_benchmark/ ./checkpoints/${MODEL_NAME}/ &&
+    MODEL_NAME_NEW="naive_inside_no_bpl_no_sa_v1a_continue" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    MODEL_NAME_OLD="naive_inside_no_bpl_no_sa_v1a_trained" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    mkdir ./checkpoints/${MODEL_NAME_NEW}/ &&
+    cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME_NEW}/ &&
+    cp -r ./scripts/ ./checkpoints/${MODEL_NAME_NEW}/ &&
+    cp -r ./maskrcnn_benchmark/ ./checkpoints/${MODEL_NAME_NEW}/ &&
     # cp ./maskrcnn_benchmark/data/datasets/visual_genome.py ./checkpoints/${MODEL_NAME}/
     # cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/roi_relation_predictors.py ./checkpoints/${MODEL_NAME}/
     # cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/model_transformer.py ./checkpoints/${MODEL_NAME}/
@@ -30,8 +31,8 @@ if [ $1 == "0" ]; then
     SOLVER.CHECKPOINT_PERIOD 2000 \
     GLOVE_DIR ./datasets/vg/ \
     MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-    OUTPUT_DIR ./checkpoints/${MODEL_NAME}
-    # MODEL.PRETRAINED_MODEL_CKPT /home/zhanwen/bpl_og/checkpoints/${MODEL_NAME}/model_0014000.pth \
+    OUTPUT_DIR ./checkpoints/${MODEL_NAME_NEW} \
+    MODEL.PRETRAINED_MODEL_CKPT /home/zhanwen/bpl_og/checkpoints/${MODEL_NAME_OLD}/model_final_0016000.pth \
 
 elif [ $1 == "1" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4

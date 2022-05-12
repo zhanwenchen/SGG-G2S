@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-from torch import nn
+from torch import no_grad as torch_no_grad
+from torch.nn import Module
 
 from .roi_box_feature_extractors import make_roi_box_feature_extractor
 from .roi_box_predictors import make_roi_box_predictor
@@ -15,7 +15,7 @@ def add_predict_logits(proposals, class_logits):
         proposals[i].add_field("predict_logits", class_logits[slice_idxs[i]:slice_idxs[i+1]])
     return proposals
 
-class ROIBoxHead(torch.nn.Module):
+class ROIBoxHead(Module):
     """
     Generic Box Head class.
     """
@@ -80,7 +80,7 @@ class ROIBoxHead(torch.nn.Module):
         if self.training:
             # Faster R-CNN subsamples during training the proposals with a fixed
             # positive / negative ratio
-            with torch.no_grad():
+            with torch_no_grad():
                 proposals = self.samp_processor.subsample(proposals, targets)
 
         # extract features that will be fed to the final classifier. The
@@ -88,7 +88,7 @@ class ROIBoxHead(torch.nn.Module):
         x = self.feature_extractor(features, proposals)
         # final classifier that converts the features into predictions
         class_logits, box_regression = self.predictor(x)
-        
+
         if not self.training:
             x, result = self.post_processor((x, class_logits, box_regression), proposals)
 

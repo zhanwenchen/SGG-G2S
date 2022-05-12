@@ -1,5 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
+from torch import cat as torch_cat, device as torch_device, Tensor as torch_Tensor, float32 as torch_flat32, as_tensor as torch_as_tensor, float32 as torch_float32
 
 # transpose
 FLIP_LEFT_RIGHT = 0
@@ -17,8 +17,8 @@ class BoxList(object):
     """
 
     def __init__(self, bbox, image_size, mode="xyxy"):
-        device = bbox.device if isinstance(bbox, torch.Tensor) else torch.device("cpu")
-        bbox = torch.as_tensor(bbox, dtype=torch.float32, device=device)
+        device = bbox.device if isinstance(bbox, torch_Tensor) else torch_device("cpu")
+        bbox = torch_as_tensor(bbox, dtype=torch_float32, device=device)
         if bbox.ndimension() != 2:
             raise ValueError(
                 "bbox should have 2 dimensions, got {}".format(bbox.ndimension())
@@ -66,11 +66,11 @@ class BoxList(object):
         # self.mode
         xmin, ymin, xmax, ymax = self._split_into_xyxy()
         if mode == "xyxy":
-            bbox = torch.cat((xmin, ymin, xmax, ymax), dim=-1)
+            bbox = torch_cat((xmin, ymin, xmax, ymax), dim=-1)
             bbox = BoxList(bbox, self.size, mode=mode)
         else:
             TO_REMOVE = 1
-            bbox = torch.cat(
+            bbox = torch_cat(
                 (xmin, ymin, xmax - xmin + TO_REMOVE, ymax - ymin + TO_REMOVE), dim=-1
             )
             bbox = BoxList(bbox, self.size, mode=mode)
@@ -108,7 +108,7 @@ class BoxList(object):
             bbox = BoxList(scaled_box, size, mode=self.mode)
             # bbox._copy_extra_fields(self)
             for k, v in self.extra_fields.items():
-                if not isinstance(v, torch.Tensor):
+                if not isinstance(v, torch_Tensor):
                     v = v.resize(size, *args, **kwargs)
                 if k in self.triplet_extra_fields:
                     bbox.add_field(k, v, is_triplet=True)
@@ -122,13 +122,13 @@ class BoxList(object):
         scaled_xmax = xmax * ratio_width
         scaled_ymin = ymin * ratio_height
         scaled_ymax = ymax * ratio_height
-        scaled_box = torch.cat(
+        scaled_box = torch_cat(
             (scaled_xmin, scaled_ymin, scaled_xmax, scaled_ymax), dim=-1
         )
         bbox = BoxList(scaled_box, size, mode="xyxy")
         # bbox._copy_extra_fields(self)
         for k, v in self.extra_fields.items():
-            if not isinstance(v, torch.Tensor):
+            if not isinstance(v, torch_Tensor):
                 v = v.resize(size, *args, **kwargs)
             if k in self.triplet_extra_fields:
                 bbox.add_field(k, v, is_triplet=True)
@@ -164,13 +164,13 @@ class BoxList(object):
             transposed_ymin = image_height - ymax
             transposed_ymax = image_height - ymin
 
-        transposed_boxes = torch.cat(
+        transposed_boxes = torch_cat(
             (transposed_xmin, transposed_ymin, transposed_xmax, transposed_ymax), dim=-1
         )
         bbox = BoxList(transposed_boxes, self.size, mode="xyxy")
         # bbox._copy_extra_fields(self)
         for k, v in self.extra_fields.items():
-            if not isinstance(v, torch.Tensor):
+            if not isinstance(v, torch_Tensor):
                 v = v.transpose(method)
             if k in self.triplet_extra_fields:
                 bbox.add_field(k, v, is_triplet=True)
@@ -195,13 +195,13 @@ class BoxList(object):
         if False:
             is_empty = (cropped_xmin == cropped_xmax) | (cropped_ymin == cropped_ymax)
 
-        cropped_box = torch.cat(
+        cropped_box = torch_cat(
             (cropped_xmin, cropped_ymin, cropped_xmax, cropped_ymax), dim=-1
         )
         bbox = BoxList(cropped_box, (w, h), mode="xyxy")
         # bbox._copy_extra_fields(self)
         for k, v in self.extra_fields.items():
-            if not isinstance(v, torch.Tensor):
+            if not isinstance(v, torch_Tensor):
                 v = v.crop(box)
             if k in self.triplet_extra_fields:
                 bbox.add_field(k, v, is_triplet=True)

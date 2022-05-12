@@ -1,8 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from collections import defaultdict
-from collections import deque
-
-import torch
+from collections import defaultdict, deque
+from torch import tensor as torch_tensor, Tensor as torch_Tensor
 
 
 class SmoothedValue(object):
@@ -24,13 +22,11 @@ class SmoothedValue(object):
 
     @property
     def median(self):
-        d = torch.tensor(list(self.deque))
-        return d.median().item()
+        return torch_tensor(list(self.deque)).median().item()
 
     @property
     def avg(self):
-        d = torch.tensor(list(self.deque))
-        return d.mean().item()
+        return torch_tensor(list(self.deque)).mean().item()
 
     @property
     def global_avg(self):
@@ -44,7 +40,7 @@ class MetricLogger(object):
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
-            if isinstance(v, torch.Tensor):
+            if isinstance(v, torch_Tensor):
                 v = v.item()
             assert isinstance(v, (float, int))
             self.meters[k].update(v)

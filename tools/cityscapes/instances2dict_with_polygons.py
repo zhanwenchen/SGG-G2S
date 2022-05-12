@@ -7,6 +7,7 @@ from __future__ import print_function, absolute_import, division
 import os, sys
 
 sys.path.append( os.path.normpath( os.path.join( os.path.dirname( __file__ ) , '..' , 'helpers' ) ) )
+from PIL.Image import open as Image_open
 from csHelpers import *
 
 # Cityscapes imports
@@ -28,7 +29,7 @@ def instances2dict_with_polygons(imageFileList, verbose=False):
 
     for imageFileName in imageFileList:
         # Load image
-        img = Image.open(imageFileName)
+        img = Image_open(imageFileName)
 
         # Image as numpy array
         imgNp = np.array(img)

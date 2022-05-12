@@ -1,7 +1,7 @@
 """
 Based on the implementation of https://github.com/jadore801120/attention-is-all-you-need-pytorch
 """
-from torch import bmm as torch_bmm, no_grad as torch_no_grad, arange as torch_arange, LongTensor as torch_LongTensor, cat as torch_cat
+from torch import bmm as torch_bmm, no_grad as torch_no_grad, arange as torch_arange, as_tensor as torch_as_tensor, int64 as torch_int64, cat as torch_cat
 from torch.nn import Module, ModuleList, Sequential, Dropout, Softmax, Linear, Conv1d, ReLU, LayerNorm, Embedding
 from torch.nn.functional import softmax as F_softmax, relu as F_relu
 from torch.nn.init import normal_, xavier_normal_
@@ -180,10 +180,10 @@ class TransformerEncoder(Module):
         bsz = len(num_objs)
         device = input_feats.device
         pad_len = max(num_objs)
-        num_objs_ = torch_LongTensor(num_objs).to(device).unsqueeze(1).expand(-1, pad_len)
+        num_objs_ = torch_as_tensor(num_objs, device=device, dtype=torch_int64).unsqueeze(1).expand(-1, pad_len)
         slf_attn_mask = torch_arange(pad_len, device=device).view(1, -1).expand(bsz, -1).ge(num_objs_).unsqueeze(
             1).expand(-1, pad_len, -1)  # (bsz, pad_len, pad_len)
-        non_pad_mask = torch_arange(pad_len, device=device).to(device).view(1, -1).expand(bsz, -1).lt(
+        non_pad_mask = torch_arange(pad_len, device=device).view(1, -1).expand(bsz, -1).lt(
             num_objs_).unsqueeze(-1)  # (bsz, pad_len, 1)
 
         # -- Forward

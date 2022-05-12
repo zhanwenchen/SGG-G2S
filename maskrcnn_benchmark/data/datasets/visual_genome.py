@@ -1,8 +1,8 @@
 from os.path import join as os_path_join, exists as os_path_exists
 from json import load as json_load, dump as json_dump
 from collections import defaultdict
-import random
-import h5py
+from random import random as random_random
+from h5py import File as h5py_File
 from PIL.Image import open as Image_open, FLIP_LEFT_RIGHT as Image_FLIP_LEFT_RIGHT
 from torch import from_numpy as torch_from_numpy, zeros as torch_zeros, int64 as torch_int64, LongTensor as torch_LongTensor
 from torch.utils.data import Dataset
@@ -77,15 +77,15 @@ class VGDataset(Dataset):
 
     def __getitem__(self, index):
         # if self.split == 'train':
-        #    while(random.random() > self.img_info[index]['anti_prop']):
-        #        index = int(random.random() * len(self.filenames))
+        #    while(random_random() > self.img_info[index]['anti_prop']):
+        #        index = int(random_random() * len(self.filenames))
 
         img = Image_open(self.filenames[index]).convert("RGB")
         if img.size[0] != self.img_info[index]['width'] or img.size[1] != self.img_info[index]['height']:
             print('=' * 20, ' ERROR index ', str(index), ' ', str(img.size), ' ', str(self.img_info[index]['width']),
                   ' ', str(self.img_info[index]['height']), ' ', '=' * 20)
 
-        flip_img = (random.random() > 0.5) and self.flip_aug and (self.split == 'train')
+        flip_img = (random_random() > 0.5) and self.flip_aug and (self.split == 'train')
 
         target = self.get_groundtruth(index, flip_img)
 
@@ -156,7 +156,7 @@ class VGDataset(Dataset):
         relation_map = torch_zeros((num_box, num_box), dtype=torch_int64)
         for i in range(relation.shape[0]):
             if relation_map[int(relation[i, 0]), int(relation[i, 1])] > 0:
-                if (random.random() > 0.5):
+                if (random_random() > 0.5):
                     relation_map[int(relation[i, 0]), int(relation[i, 1])] = int(relation[i, 2])
             else:
                 relation_map[int(relation[i, 0]), int(relation[i, 1])] = int(relation[i, 2])
@@ -233,9 +233,7 @@ def bbox_overlaps(boxes1, boxes2, to_move=1):
     rb = np_minimum(boxes1.reshape([num_box1, 1, -1])[:, :, 2:], boxes2.reshape([1, num_box2, -1])[:, :, 2:])  # [N,M,2]
 
     wh = (rb - lt + to_move).clip(min=0)  # [N,M,2]
-    inter = wh[:, :, 0] * wh[:, :, 1]  # [N,M]
-
-    return inter
+    return wh[:, :, 0] * wh[:, :, 1]  # [N,M]
 
 
 def correct_img_info(img_dir, image_file):
@@ -326,49 +324,49 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
         relationships: List where each element is a [num_r, 3] array of
                     (box_ind_1, box_ind_2, predicate) relationships
     """
-    roi_h5 = h5py.File(roidb_file, 'r')
-    data_split = roi_h5['split'][:]
-    split_flag = 2 if split == 'test' else 0
-    split_mask = data_split == split_flag
+    with h5py_File(roidb_file, 'r') as roi_h5:
+        data_split = roi_h5['split'][:]
+        split_flag = 2 if split == 'test' else 0
+        split_mask = data_split == split_flag
 
-    # Filter out images without bounding boxes
-    split_mask &= roi_h5['img_to_first_box'][:] >= 0
-    if filter_empty_rels:
-        split_mask &= roi_h5['img_to_first_rel'][:] >= 0
+        # Filter out images without bounding boxes
+        split_mask &= roi_h5['img_to_first_box'][:] >= 0
+        if filter_empty_rels:
+            split_mask &= roi_h5['img_to_first_rel'][:] >= 0
 
-    image_index = np_where(split_mask)[0]
-    if num_im > -1:
-        image_index = image_index[:num_im]
-    if num_val_im > 0:
-        if split == 'val':
-            image_index = image_index[:num_val_im]
-        elif split == 'train':
-            image_index = image_index[num_val_im:]
+        image_index = np_where(split_mask)[0]
+        if num_im > -1:
+            image_index = image_index[:num_im]
+        if num_val_im > 0:
+            if split == 'val':
+                image_index = image_index[:num_val_im]
+            elif split == 'train':
+                image_index = image_index[num_val_im:]
 
-    split_mask = np_zeros_like(data_split).astype(bool)
-    split_mask[image_index] = True
+        split_mask = np_zeros_like(data_split).astype(bool)
+        split_mask[image_index] = True
 
-    # Get box information
-    all_labels = roi_h5['labels'][:, 0]
-    all_attributes = roi_h5['attributes'][:, :]
-    all_boxes = roi_h5['boxes_{}'.format(BOX_SCALE)][:]  # cx,cy,w,h
-    assert np_all(all_boxes[:, :2] >= 0)  # sanity check
-    assert np_all(all_boxes[:, 2:] > 0)  # no empty box
+        # Get box information
+        all_labels = roi_h5['labels'][:, 0]
+        all_attributes = roi_h5['attributes'][:, :]
+        all_boxes = roi_h5['boxes_{}'.format(BOX_SCALE)][:]  # cx,cy,w,h
+        assert np_all(all_boxes[:, :2] >= 0)  # sanity check
+        assert np_all(all_boxes[:, 2:] > 0)  # no empty box
 
-    # convert from xc, yc, w, h to x1, y1, x2, y2
-    all_boxes[:, :2] = all_boxes[:, :2] - all_boxes[:, 2:] / 2
-    all_boxes[:, 2:] = all_boxes[:, :2] + all_boxes[:, 2:]
+        # convert from xc, yc, w, h to x1, y1, x2, y2
+        all_boxes[:, :2] = all_boxes[:, :2] - all_boxes[:, 2:] / 2
+        all_boxes[:, 2:] = all_boxes[:, :2] + all_boxes[:, 2:]
 
-    im_to_first_box = roi_h5['img_to_first_box'][split_mask]
-    im_to_last_box = roi_h5['img_to_last_box'][split_mask]
-    im_to_first_rel = roi_h5['img_to_first_rel'][split_mask]
-    im_to_last_rel = roi_h5['img_to_last_rel'][split_mask]
+        im_to_first_box = roi_h5['img_to_first_box'][split_mask]
+        im_to_last_box = roi_h5['img_to_last_box'][split_mask]
+        im_to_first_rel = roi_h5['img_to_first_rel'][split_mask]
+        im_to_last_rel = roi_h5['img_to_last_rel'][split_mask]
 
-    # load relation labels
-    _relations = roi_h5['relationships'][:]
-    _relation_predicates = roi_h5['predicates'][:, 0]
-    assert (im_to_first_rel.shape[0] == im_to_last_rel.shape[0])
-    assert (_relations.shape[0] == _relation_predicates.shape[0])  # sanity check
+        # load relation labels
+        _relations = roi_h5['relationships'][:]
+        _relation_predicates = roi_h5['predicates'][:, 0]
+        assert (im_to_first_rel.shape[0] == im_to_last_rel.shape[0])
+        assert (_relations.shape[0] == _relation_predicates.shape[0])  # sanity check
 
     # Get everything by image.
     boxes = []
