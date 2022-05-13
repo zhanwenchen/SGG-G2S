@@ -3,7 +3,7 @@ if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPU=1
     echo "TRAINING Predcls"
-    MODEL_NAME="naive_inside_no_bpl_no_sa_v1a" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    MODEL_NAME="union_only_no_bpl_no_sa_v2a" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     mkdir ./checkpoints/${MODEL_NAME}/ &&
     cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./scripts/ ./checkpoints/${MODEL_NAME}/ &&
@@ -18,12 +18,12 @@ if [ $1 == "0" ]; then
     MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
     MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
     SOLVER.IMS_PER_BATCH 16 \
-    TEST.IMS_PER_BATCH 16 \
+    TEST.IMS_PER_BATCH 1 \
     SOLVER.PRE_VAL True \
     MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
     MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
     DTYPE "float32" \
-    SOLVER.MAX_ITER 16000 SOLVER.BASE_LR 5e-4 \
+    SOLVER.MAX_ITER 16000 SOLVER.BASE_LR 7.5e-4 \
     SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
     SOLVER.STEPS "(10000, 16000)" \
     SOLVER.VAL_PERIOD 2000 \

@@ -53,16 +53,16 @@ class TransformerTransferGSCPredictor(Module):
         self.num_head = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.NUM_HEAD
         self.edge_layer = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.REL_LAYER
 
-        # New
-        self.context_gsc = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim, self.v_dim, self.pooling_dim, self.inner_dim, self.dropout_rate)
-        self.post_emb_gsc = Linear(self.pooling_dim, self.pooling_dim)
+        # New GSC
+        self.context_union = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim, self.v_dim, self.pooling_dim, self.inner_dim, self.dropout_rate)
+        self.post_emb_union = Linear(self.pooling_dim, self.pooling_dim)
         # layer_init(, 10.0 * (1.0 / self.pooling_dim) ** 0.5, normal=True)
-        layer_init_kaiming_normal(self.post_emb_gsc)
+        layer_init_kaiming_normal(self.post_emb_union)
+
         # module construct
         self.context_layer = TransformerContext(config, obj_classes, rel_classes, in_channels)
 
         # post decoding
-
         self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
         layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
         self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
@@ -76,15 +76,16 @@ class TransformerTransferGSCPredictor(Module):
             self.union_single_not_match = False
 
         # initialize layer parameters
-        self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
-        self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
-        self.gsc_compress = Linear(self.pooling_dim, self.num_rel_cls)
-        layer_init(self.rel_compress, xavier=True)
-        layer_init(self.ctx_compress, xavier=True)
-        layer_init(self.gsc_compress, xavier=True)
-        if self.use_bias:
-            # convey statistics into FrequencyBias to avoid loading again
-            self.freq_bias = FrequencyBias(config, statistics)
+        if self.with_cleanclf is False:
+            self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
+            self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
+            self.gsc_compress = Linear(self.pooling_dim, self.num_rel_cls)
+            layer_init(self.rel_compress, xavier=True)
+            layer_init(self.ctx_compress, xavier=True)
+            layer_init(self.gsc_compress, xavier=True)
+            if self.use_bias:
+                # convey statistics into FrequencyBias to avoid loading again
+                self.freq_bias = FrequencyBias(config, statistics)
 
         # the transfer classifier
         if self.with_cleanclf:
@@ -96,7 +97,8 @@ class TransformerTransferGSCPredictor(Module):
             layer_init(self.gsc_compress_clean, xavier=True)
             # self.gcns_rel_clean = GCN(self.pooling_dim, self.pooling_dim, self.dropout_rate)
             # self.gcns_ctx_clean = GCN(self.hidden_dim * 2, self.hidden_dim * 2, self.dropout_rate)
-            self.freq_bias_clean = FrequencyBias(config, statistics)
+            if self.use_bias:
+                self.freq_bias_clean = FrequencyBias(config, statistics)
         if self.with_transfer:
             #pred_adj_np = np.load('./misc/conf_mat_adj_mat.npy')
             print("Using Confusion Matrix Transfer!")
@@ -167,13 +169,11 @@ class TransformerTransferGSCPredictor(Module):
         prod_reps = []
         pair_preds = []
         pairs_culsum = 0
-        global_features_mapped = torch_empty_like(union_features, dtype=union_features.dtype, device=union_features.device)
         # new_to_old = torch_empty(union_features.size(0), dtype=int)
-        for img_idx, (pair_idx, head_rep, tail_rep, obj_pred) in enumerate(zip(rel_pair_idxs, head_reps, tail_reps, obj_preds)):
+        for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
             prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
             pair_preds.append(obj_pred[pair_idx])
             # new_to_old[pairs_culsum:pairs_culsum+len(pair_idx)] = img_idx
-            global_features_mapped[pairs_culsum:pairs_culsum+len(pair_idx)] = global_image_features[img_idx]
             pairs_culsum += len(pair_idx)
         del global_image_features
         prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536]) torch.Size([5022, 1536]) # # REVIEW: Is this some sort of stateful bug?
@@ -193,16 +193,13 @@ class TransformerTransferGSCPredictor(Module):
 
         # 1. Just the context suboutput
         # 1A. context
-        num_images = [1 for _ in range(global_features_mapped.size(0))]
-        gsc_ctx = self.context_gsc(global_features_mapped, num_images) # torch.Size([506, 4096]) =>
+        union_ctx = self.context_union(visual_rep, num_rels) # torch.Size([506, 4096]) =>
 
         # 2. Post context for the overall model
-        gsc_rep = self.post_emb_gsc(gsc_ctx) # [num_unions, 768] => [num_unions, 768]
+        union_rep = self.post_emb_union(union_ctx)
 
-
-        # rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) # A: bottlenecked edge * union features; => rels B: bottlenecked edge. torch.Size([3009, 51]) for all 3
         if not self.with_cleanclf:
-            rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) + self.gsc_compress(gsc_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            rel_dists_general = self.rel_compress(union_rep) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
@@ -210,7 +207,7 @@ class TransformerTransferGSCPredictor(Module):
             rel_dists = rel_dists_general
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists_clean = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep) + self.gsc_compress_clean(global_features_mapped)
+            rel_dists_clean = self.rel_compress_clean(union_rep) + self.ctx_compress_clean(prod_rep)
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
