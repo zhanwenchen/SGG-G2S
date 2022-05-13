@@ -1,7 +1,7 @@
 from os import makedirs as os_makedirs
 from os.path import join as os_path_join, abspath as os_path_abspath, exists as os_path_exists
 from json import dump as json_dump
-from torch import load as torch_load, save as torch_save, device as torch_device, zeros as torch_zeros, nonzero as torch_nonzero, LongTensor as torch_LongTensor
+from torch import load as torch_load, save as torch_save, device as torch_device, zeros as torch_zeros, nonzero as torch_nonzero, LongTensor as torch_LongTensor, float32 as torch_float32
 from numpy import mean as np_mean, ones as np_ones, asarray as np_asarray, column_stack as np_column_stack, concatenate as np_concatenate
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
@@ -358,7 +358,7 @@ def generate_attributes_target(attributes, num_attributes):
     num_neg = int(without_attri_idx.sum())
     assert num_pos + num_neg == num_obj
 
-    attribute_targets = torch_zeros((num_obj, num_attributes), device=attributes.device).float()
+    attribute_targets = torch_zeros((num_obj, num_attributes), device=attributes.device, dtype=torch_float32)
 
     for idx in torch_nonzero(with_attri_idx).squeeze(1).tolist():
         for k in range(max_att):

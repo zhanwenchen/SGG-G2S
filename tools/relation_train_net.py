@@ -32,7 +32,6 @@ from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.checkpoint import clip_grad_norm
 from maskrcnn_benchmark.utils.collect_env import collect_env_info
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank, all_gather
-from maskrcnn_benchmark.utils.imports import import_file
 from maskrcnn_benchmark.utils.logger import setup_logger, debug_print
 from maskrcnn_benchmark.utils.miscellaneous import mkdir, save_config
 from maskrcnn_benchmark.utils.metric_logger import MetricLogger
@@ -174,7 +173,7 @@ def train(cfg, local_rank, distributed, logger):
     debug_print(logger, 'end dataloader')
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
-    writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard'))
+    writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_train'))
     if cfg.SOLVER.PRE_VAL and val_before:
         logger.info("Validate before training")
         run_val(cfg, model, val_data_loaders, distributed, logger, writer, 0, output_dir)
@@ -211,7 +210,7 @@ def train(cfg, local_rank, distributed, logger):
         #fix_eval_modules(eval_modules)
         if clean_classifier:
             fix_eval_modules_no_classifier(model, with_grad_name='_clean')
-        else :
+        else:
             fix_eval_modules(eval_modules)
 
         images = images.to(device)
@@ -342,7 +341,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
                             device=cfg.MODEL.DEVICE,
                             expected_results=cfg.TEST.EXPECTED_RESULTS,
                             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
-                            output_folder=os_path_join(output_dir, dataset_name),
+                            output_folder=os_path_join(output_dir, 'inference_val', dataset_name),
                             logger=logger,
                             writer=writer,
                             iteration=iteration,
@@ -363,7 +362,8 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
     return val_result
 
 
-def run_test(cfg, model, distributed, logger):
+def run_test(cfg, model, distributed, logger, iteration):
+    writer = SummaryWriter(log_dir=os_path_join(cfg.OUTPUT_DIR, 'tensorboard_test'))
     if distributed:
         model = model.module
     #torch.cuda.empty_cache()
@@ -380,7 +380,7 @@ def run_test(cfg, model, distributed, logger):
     dataset_names = cfg.DATASETS.TEST
     if cfg.OUTPUT_DIR:
         for idx, dataset_name in enumerate(dataset_names):
-            output_folder = os_path_join(cfg.OUTPUT_DIR, "inference", dataset_name)
+            output_folder = os_path_join(cfg.OUTPUT_DIR, 'inference_test', dataset_name)
             mkdir(output_folder)
             output_folders[idx] = output_folder
     data_loaders_val = make_data_loader(cfg, mode='test', is_distributed=distributed)
@@ -397,8 +397,11 @@ def run_test(cfg, model, distributed, logger):
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
             output_folder=output_folder,
             logger=logger,
+            writer=writer,
+            iteration=iteration,
         )
         synchronize()
+    writer.close()
     #torch.cuda.empty_cache()
 
 
@@ -468,7 +471,7 @@ def main():
     model = train(cfg, args.local_rank, args.distributed, logger)
 
     if not args.skip_test:
-        run_test(cfg, model, args.distributed, logger)
+        run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER)
 
 
 if __name__ == "__main__":

@@ -31,4 +31,5 @@ dist/
 *.txt
 
 checkpoints/
+checkpoints_best/
 *glove*

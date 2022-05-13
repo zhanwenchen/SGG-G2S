@@ -36,16 +36,15 @@ def compute_on_dataset(model, data_loader, device, synchronize_gather=True, time
                     synchronize()
                 timer.toc()
             output = [o.to(cpu_device) for o in output]
+        result_dict = dict(zip(image_ids, output))
         if synchronize_gather:
             synchronize()
-            multi_gpu_predictions = all_gather({img_id: result for img_id, result in zip(image_ids, output)})
+            multi_gpu_predictions = all_gather(result_dict)
             if is_main_process():
                 for p in multi_gpu_predictions:
                     results_dict.update(p)
         else:
-            results_dict.update(
-                {img_id: result for img_id, result in zip(image_ids, output)}
-            )
+            results_dict.update(result_dict)
     empty_cache()
     return results_dict
 
