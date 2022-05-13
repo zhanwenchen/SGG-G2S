@@ -80,10 +80,35 @@ def train(cfg, local_rank, distributed, logger):
     model.to(device)
 
     num_batch = cfg.SOLVER.IMS_PER_BATCH
-    optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1,
-                                rl_factor=float(num_batch))
-    scheduler = make_lr_scheduler(cfg, optimizer, logger)
-    debug_print(logger, 'end optimizer and shcedule')
+
+    output_dir = cfg.OUTPUT_DIR
+
+    save_to_disk = get_rank() == 0
+
+
+    if not clean_classifier and (cfg.MODEL.PRETRAINED_MODEL_CKPT == "" or not cfg.MODEL.PRETRAINED_MODEL_CKPT):
+        optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1,
+                                    rl_factor=float(num_batch))
+        scheduler = make_lr_scheduler(cfg, optimizer, logger)
+        checkpointer = DetectronCheckpointer(
+            cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True
+        )
+
+
+    if not clean_classifier and cfg.MODEL.PRETRAINED_MODEL_CKPT != "":
+        load_mapping_classifier = {
+            "roi_heads.relation.predictor": "roi_heads.relation.predictor"
+        }
+        checkpointer = DetectronCheckpointer(
+            cfg, model, None, None, output_dir, save_to_disk, custom_scheduler=True
+        )
+        debug_print(logger, 'load PRETRAINED_MODEL_CKPT!!!!')
+        checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=True,
+                         with_optim=True, load_mapping={load_mapping_classifier})
+
+        optimizer = checkpointer.optimizer
+        scheduler = checkpointer.scheduler
+
     # Initialize mixed-precision training
     use_mixed_precision = cfg.DTYPE == "float16"
     amp_opt_level = 'O1' if use_mixed_precision else 'O0'
@@ -108,12 +133,7 @@ def train(cfg, local_rank, distributed, logger):
         load_mapping["roi_heads.relation.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
         load_mapping["roi_heads.relation.union_feature_extractor.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
 
-    output_dir = cfg.OUTPUT_DIR
 
-    save_to_disk = get_rank() == 0
-    checkpointer = DetectronCheckpointer(
-        cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True
-    )
     # if there is certain checkpoint in output_dir, load it, else load pretrained detector
     if checkpointer.has_checkpoint():
         extra_checkpoint_data = checkpointer.load(cfg.MODEL.PRETRAINED_DETECTOR_CKPT,
@@ -152,9 +172,11 @@ def train(cfg, local_rank, distributed, logger):
                 }
             #load_mapping_classifier = {}
             if cfg.MODEL.PRETRAINED_MODEL_CKPT != "" :
-                debug_print(logger, 'load PRETRAINED_MODEL_CKPT!!!!')
+                debug_print(logger, 'load PRETRAINED_MODEL_CKPT for BPL!!!!')
                 checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=False,
                                  with_optim=False, load_mapping=load_mapping_classifier)
+
+
     # debug_print(logger, 'load PRETRAINED_MODEL_CKPT!!!!')
     # checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=False,
     #                  with_optim=False)
@@ -225,7 +247,7 @@ def train(cfg, local_rank, distributed, logger):
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
         meters.update(loss=losses_reduced, **loss_dict_reduced)
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         # Note: If mixed precision is not used, this ends up doing nothing
         # Otherwise apply loss scaling for mixed-precision recipe
         with amp_scale_loss(losses, optimizer) as scaled_losses:

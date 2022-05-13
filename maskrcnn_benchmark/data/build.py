@@ -4,12 +4,12 @@ import bisect
 import copy
 import logging
 
-import torch
-import torch.utils.data
+from torch import save as torch_save, load as torch_load, device as torch_device
+from torch.utils.data import DataLoader
+from torch.utils.data.sampler import RandomSampler, SequentialSampler, BatchSampler
 from maskrcnn_benchmark.utils.comm import get_world_size
 from maskrcnn_benchmark.utils.imports import import_file
 from maskrcnn_benchmark.utils.miscellaneous import save_labels
-from maskrcnn_benchmark.utils.logger import debug_print
 
 from . import datasets as D
 from . import samplers
@@ -38,7 +38,7 @@ def get_dataset_statistics(cfg):
     if os.path.exists(save_file):
         logger.info('Loading data statistics from: ' + str(save_file))
         logger.info('-'*100)
-        return torch.load(save_file, map_location=torch.device("cpu"))
+        return torch_load(save_file, map_location=torch_device("cpu"))
 
     statistics = []
     for dataset_name in dataset_names:
@@ -59,7 +59,7 @@ def get_dataset_statistics(cfg):
     }
     logger.info('Save data statistics to: ' + str(save_file))
     logger.info('-'*100)
-    torch.save(result, save_file)
+    torch_save(result, save_file)
     return result
 
 
@@ -109,9 +109,9 @@ def make_data_sampler(dataset, shuffle, distributed):
     if distributed:
         return samplers.DistributedSampler(dataset, shuffle=shuffle)
     if shuffle:
-        sampler = torch.utils.data.sampler.RandomSampler(dataset)
+        sampler = RandomSampler(dataset)
     else:
-        sampler = torch.utils.data.sampler.SequentialSampler(dataset)
+        sampler = SequentialSampler(dataset)
     return sampler
 
 
@@ -143,7 +143,7 @@ def make_batch_data_sampler(
             sampler, group_ids, images_per_batch, drop_uneven=False
         )
     else:
-        batch_sampler = torch.utils.data.sampler.BatchSampler(
+        batch_sampler = BatchSampler(
             sampler, images_per_batch, drop_last=False
         )
     if num_iters is not None:
@@ -232,7 +232,7 @@ def make_data_loader(cfg, mode='train', is_distributed=False, start_iter=0):
         collator = BBoxAugCollator() if not is_train and cfg.TEST.BBOX_AUG.ENABLED else \
             BatchCollator(cfg.DATALOADER.SIZE_DIVISIBILITY)
         num_workers = cfg.DATALOADER.NUM_WORKERS
-        data_loader = torch.utils.data.DataLoader(
+        data_loader = DataLoader(
             dataset,
             num_workers=num_workers,
             batch_sampler=batch_sampler,
@@ -321,11 +321,12 @@ def make_data_loader_val(cfg, mode='train', is_distributed=False, start_iter=0):
         collator = BBoxAugCollator() if not is_train and cfg.TEST.BBOX_AUG.ENABLED else \
             BatchCollator(cfg.DATALOADER.SIZE_DIVISIBILITY)
         num_workers = cfg.DATALOADER.NUM_WORKERS
-        data_loader = torch.utils.data.DataLoader(
+        data_loader = DataLoader(
             dataset,
             num_workers=num_workers,
             batch_sampler=batch_sampler,
             collate_fn=collator,
+            pin_memory=True,
         )
         data_loaders.append(data_loader)
     if is_train:
