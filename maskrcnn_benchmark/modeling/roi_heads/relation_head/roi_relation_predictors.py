@@ -1,20 +1,15 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import numpy as np
-from torch import cat as torch_cat, stack as torch_stack, no_grad as torch_no_grad, from_numpy as torch_from_numpy, sigmoid as torch_sigmoid, zeros as torch_zeros, arange as torch_arange, empty_like as torch_empty_like, empty as torch_empty
-from torch.nn import Module, Sequential, Linear, ReLU
-from torch.nn.functional import dropout as F_dropout, binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits, relu as F_relu, softmax as F_softmax, cross_entropy as F_cross_entropy
+from torch import cat as torch_cat, from_numpy as torch_from_numpy, empty_like as torch_empty_like
+from torch.nn import Module, Linear
+from torch.nn.functional import dropout as F_dropout
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.modeling.utils import cat
 from maskrcnn_benchmark.data import get_dataset_statistics
-from maskrcnn_benchmark.layers import Label_Smoothing_Regression
 from maskrcnn_benchmark.layers.gcn._utils import adj_normalize
-from .model_msg_passing import IMPContext
-from .model_vtranse import VTransEFeature
-from .model_vctree import VCTreeLSTMContext
-from .model_motifs import LSTMContext, FrequencyBias
-from .model_motifs_with_attribute import AttributeLSTMContext
+from .model_motifs import FrequencyBias
 from .model_transformer import TransformerContext, TransformerEncoder
-from .utils_relation import layer_init, get_box_info, get_box_pair_info, layer_init_kaiming_normal
+from .utils_relation import layer_init, layer_init_kaiming_normal
 
 
 @registry.ROI_RELATION_PREDICTOR.register("TransformerTransferGSCPredictor")
@@ -69,7 +64,8 @@ class TransformerTransferGSCPredictor(Module):
 
         # post decoding
         self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
-        layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
+        # layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
+        layer_init_kaiming_normal(self.post_emb)
         self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
         layer_init(self.post_cat, xavier=True)
 
@@ -187,27 +183,27 @@ class TransformerTransferGSCPredictor(Module):
 
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096])
 
+        # 1. Just the context suboutput
+        # 1A. context
+        union_ctx = self.context_union(union_features, num_rels) # torch.Size([506, 4096]) =>
+
+        # 2. Post context for the overall model
+        union_rep = self.post_emb_union(union_ctx)
+
         # use union box and mask convolution
         if self.use_vision: # True
             if self.union_single_not_match: # False
-                visual_rep = ctx_gate * self.up_dim(union_features)
+                visual_rep = ctx_gate * self.up_dim(union_rep)
             else:
-                visual_rep = ctx_gate * union_features # torch.Size([3009, 4096])
+                visual_rep = ctx_gate * union_rep # torch.Size([3009, 4096])
 
         # GSC Context
         num_images = [1 for _ in range(global_features_mapped.size(0))]
         gsc_ctx = self.context_gsc(global_features_mapped, num_images) # torch.Size([506, 4096]) =>
         gsc_rep = self.post_emb_gsc(gsc_ctx)
 
-        # 1. Just the context suboutput
-        # 1A. context
-        union_ctx = self.context_union(visual_rep, num_rels) # torch.Size([506, 4096]) =>
-
-        # 2. Post context for the overall model
-        union_rep = self.post_emb_union(union_ctx)
-
         if not self.with_cleanclf:
-            rel_dists_general = self.rel_compress(union_rep) + self.ctx_compress(prod_rep) + self.gsc_compress(gsc_rep)# TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) + self.gsc_compress(gsc_rep)# TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
@@ -215,7 +211,7 @@ class TransformerTransferGSCPredictor(Module):
             rel_dists = rel_dists_general
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists_clean = self.rel_compress_clean(union_rep) + self.ctx_compress_clean(prod_rep) + self.gsc_compress_clean(gsc_rep)
+            rel_dists_clean = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep) + self.gsc_compress_clean(gsc_rep)
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
