@@ -3,20 +3,21 @@ if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0
     export NUM_GPUS=1
     echo "Testing Predcls"
-    MODEL_NAME="naive_inside_no_bpl_no_sa_v1a_trained"
+    MODEL_NAME="transformer_predcls_dist15_3k_FixPModel_lr1e3_B16_FCMat_tested"
+    MODEL_CHECKPOINT_NAME="model_0014000.pth"
     python  -u  -m torch.distributed.launch --master_port 10035 --nproc_per_node=$NUM_GPUS \
             tools/relation_test_net.py \
             --config-file "checkpoints/${MODEL_NAME}/config.yml" \
             MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
             MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False \
             MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-            TEST.IMS_PER_BATCH 1 \
-            \
+            TEST.IMS_PER_BATCH $NUM_GPUS \
+            MODEL.ROI_RELATION_HEAD.PREDICTOR TransformerTransferPredictor \
             DTYPE "float32" \
             MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
             MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
             GLOVE_DIR ./datasets/vg/ \
-            MODEL.WEIGHT ./checkpoints/${MODEL_NAME}/model_final.pth \
+            MODEL.WEIGHT ./checkpoints/${MODEL_NAME}/${MODEL_CHECKPOINT_NAME} \
             OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
             MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0 \
             TEST.ALLOW_LOAD_FROM_CACHE False TEST.VAL_FLAG False;
