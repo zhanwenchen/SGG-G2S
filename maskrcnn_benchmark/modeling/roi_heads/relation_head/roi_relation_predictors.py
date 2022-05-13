@@ -64,7 +64,8 @@ class TransformerTransferGSCPredictor(Module):
 
         # post decoding
         self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
-        layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
+        # layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
+        layer_init_kaiming_normal(self.post_emb)
         self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
         layer_init(self.post_cat, xavier=True)
 
@@ -182,24 +183,26 @@ class TransformerTransferGSCPredictor(Module):
 
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096])
 
-        # use union box and mask convolution
-        if self.use_vision: # True
-            if self.union_single_not_match: # False
-                visual_rep = ctx_gate * self.up_dim(union_features)
-            else:
-                visual_rep = ctx_gate * union_features # torch.Size([3009, 4096])
-
         # GSC Context
 
         # 1. Just the context suboutput
         # 1A. context
-        union_ctx = self.context_union(visual_rep, num_rels) # torch.Size([506, 4096]) =>
+        union_ctx = self.context_union(union_features, num_rels) # torch.Size([506, 4096]) =>
 
         # 2. Post context for the overall model
         union_rep = self.post_emb_union(union_ctx)
 
+        # use union box and mask convolution
+        if self.use_vision: # True
+            if self.union_single_not_match: # False
+                visual_rep = ctx_gate * self.up_dim(union_rep)
+            else:
+                visual_rep = ctx_gate * union_rep # torch.Size([3009, 4096])
+
+
+
         if not self.with_cleanclf:
-            rel_dists_general = self.rel_compress(union_rep) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            rel_dists_general = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
