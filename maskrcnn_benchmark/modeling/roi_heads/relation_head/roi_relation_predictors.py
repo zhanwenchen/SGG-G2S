@@ -210,7 +210,7 @@ class TransformerTransferGSCPredictor(Module):
             rel_dists = rel_dists_general
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists_clean = self.rel_compress_clean(union_rep) + self.ctx_compress_clean(prod_rep)
+            rel_dists_clean = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep)
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
