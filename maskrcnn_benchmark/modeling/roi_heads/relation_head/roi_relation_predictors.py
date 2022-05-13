@@ -54,6 +54,11 @@ class TransformerTransferGSCPredictor(Module):
         self.edge_layer = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.REL_LAYER
 
         # New GSC
+        self.context_gsc = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim, self.v_dim, self.pooling_dim, self.inner_dim, self.dropout_rate)
+        self.post_emb_gsc = Linear(self.pooling_dim, self.pooling_dim)
+        # layer_init(, 10.0 * (1.0 / self.pooling_dim) ** 0.5, normal=True)
+        layer_init_kaiming_normal(self.post_emb_gsc)
+
         self.context_union = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim, self.v_dim, self.pooling_dim, self.inner_dim, self.dropout_rate)
         self.post_emb_union = Linear(self.pooling_dim, self.pooling_dim)
         # layer_init(, 10.0 * (1.0 / self.pooling_dim) ** 0.5, normal=True)
@@ -169,11 +174,11 @@ class TransformerTransferGSCPredictor(Module):
         prod_reps = []
         pair_preds = []
         pairs_culsum = 0
-        # new_to_old = torch_empty(union_features.size(0), dtype=int)
-        for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
+        global_features_mapped = torch_empty_like(union_features, dtype=union_features.dtype, device=union_features.device)
+        for img_idx, (pair_idx, head_rep, tail_rep, obj_pred) in enumerate(zip(rel_pair_idxs, head_reps, tail_reps, obj_preds)):
             prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
             pair_preds.append(obj_pred[pair_idx])
-            # new_to_old[pairs_culsum:pairs_culsum+len(pair_idx)] = img_idx
+            global_features_mapped[pairs_culsum:pairs_culsum+len(pair_idx)] = global_image_features[img_idx]
             pairs_culsum += len(pair_idx)
         del global_image_features
         prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536]) torch.Size([5022, 1536]) # # REVIEW: Is this some sort of stateful bug?
@@ -190,6 +195,9 @@ class TransformerTransferGSCPredictor(Module):
                 visual_rep = ctx_gate * union_features # torch.Size([3009, 4096])
 
         # GSC Context
+        num_images = [1 for _ in range(global_features_mapped.size(0))]
+        gsc_ctx = self.context_gsc(global_features_mapped, num_images) # torch.Size([506, 4096]) =>
+        gsc_rep = self.post_emb_gsc(gsc_ctx)
 
         # 1. Just the context suboutput
         # 1A. context
@@ -199,7 +207,7 @@ class TransformerTransferGSCPredictor(Module):
         union_rep = self.post_emb_union(union_ctx)
 
         if not self.with_cleanclf:
-            rel_dists_general = self.rel_compress(union_rep) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            rel_dists_general = self.rel_compress(union_rep) + self.ctx_compress(prod_rep) + self.gsc_compress(gsc_rep)# TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
@@ -207,7 +215,7 @@ class TransformerTransferGSCPredictor(Module):
             rel_dists = rel_dists_general
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists_clean = self.rel_compress_clean(union_rep) + self.ctx_compress_clean(prod_rep)
+            rel_dists_clean = self.rel_compress_clean(union_rep) + self.ctx_compress_clean(prod_rep) + self.gsc_compress_clean(gsc_rep)
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
