@@ -1,21 +1,26 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-
+from torch import (
+    ones as torch_ones,
+    arange as torch_arange,
+    cat as torch_cat,
+    topk as torch_topk,
+    zeros_like as torch_zeros_like,
+    uint8 as torch_uint8,
+)
+from torch.nn import Module
 from maskrcnn_benchmark.modeling.box_coder import BoxCoder
 from maskrcnn_benchmark.structures.bounding_box import BoxList
-from maskrcnn_benchmark.structures.boxlist_ops import cat_boxlist
-from maskrcnn_benchmark.structures.boxlist_ops import boxlist_nms
-from maskrcnn_benchmark.structures.boxlist_ops import remove_small_boxes
-
-from ..utils import cat
+from maskrcnn_benchmark.structures.boxlist_ops import (
+    cat_boxlist, boxlist_nms, remove_small_boxes
+)
 from .utils import permute_and_flatten
 
-class RPNPostProcessor(torch.nn.Module):
+
+class RPNPostProcessor(Module):
     """
     Performs post-processing on the outputs of the RPN boxes, before feeding the
     proposals to the heads
     """
-
     def __init__(
         self,
         pre_nms_top_n,
@@ -66,7 +71,7 @@ class RPNPostProcessor(torch.nn.Module):
         # later cat of bbox requires all fields to be present for all bbox
         # so we need to add a dummy for objectness that's missing
         for gt_box in gt_boxes:
-            gt_box.add_field("objectness", torch.ones(len(gt_box), device=device))
+            gt_box.add_field("objectness", torch_ones(len(gt_box), device=device))
 
         proposals = [
             cat_boxlist((proposal, gt_box))
@@ -96,11 +101,11 @@ class RPNPostProcessor(torch.nn.Module):
         pre_nms_top_n = min(self.pre_nms_top_n, num_anchors)
         objectness, topk_idx = objectness.topk(pre_nms_top_n, dim=1, sorted=True)
 
-        batch_idx = torch.arange(N, device=device)[:, None]
+        batch_idx = torch_arange(N, device=device)[:, None]
         box_regression = box_regression[batch_idx, topk_idx]
 
         image_shapes = [box.size for box in anchors]
-        concat_anchors = torch.cat([a.bbox for a in anchors], dim=0)
+        concat_anchors = torch_cat([a.bbox for a in anchors], dim=0)
         concat_anchors = concat_anchors.reshape(N, -1, 4)[batch_idx, topk_idx]
 
         proposals = self.box_coder.decode(
@@ -158,16 +163,16 @@ class RPNPostProcessor(torch.nn.Module):
         # different behavior during training and during testing:
         # during training, post_nms_top_n is over *all* the proposals combined, while
         # during testing, it is over the proposals for each image
-        # NOTE: it should be per image, and not per batch. However, to be consistent 
+        # NOTE: it should be per image, and not per batch. However, to be consistent
         # with Detectron, the default is per batch (see Issue #672)
         if self.training and self.fpn_post_nms_per_batch:
-            objectness = torch.cat(
+            objectness = torch_cat(
                 [boxlist.get_field("objectness") for boxlist in boxlists], dim=0
             )
             box_sizes = [len(boxlist) for boxlist in boxlists]
             post_nms_top_n = min(self.fpn_post_nms_top_n, len(objectness))
-            _, inds_sorted = torch.topk(objectness, post_nms_top_n, dim=0, sorted=True)
-            inds_mask = torch.zeros_like(objectness, dtype=torch.uint8)
+            _, inds_sorted = torch_topk(objectness, post_nms_top_n, dim=0, sorted=True)
+            inds_mask = torch_zeros_like(objectness, dtype=torch_uint8)
             inds_mask[inds_sorted] = 1
             inds_mask = inds_mask.split(box_sizes)
             for i in range(num_images):
@@ -176,7 +181,7 @@ class RPNPostProcessor(torch.nn.Module):
             for i in range(num_images):
                 objectness = boxlists[i].get_field("objectness")
                 post_nms_top_n = min(self.fpn_post_nms_top_n, len(objectness))
-                _, inds_sorted = torch.topk(
+                _, inds_sorted = torch_topk(
                     objectness, post_nms_top_n, dim=0, sorted=True
                 )
                 boxlists[i] = boxlists[i][inds_sorted]

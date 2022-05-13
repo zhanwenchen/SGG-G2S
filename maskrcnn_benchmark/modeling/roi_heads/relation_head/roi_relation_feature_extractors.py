@@ -60,6 +60,7 @@ class RelationFeatureExtractor(nn.Module):
         device = x[0].device
         union_proposals = []
         rect_inputs = []
+        self_rect_size = self.rect_size
         for proposal, rel_pair_idx in zip(proposals, rel_pair_idxs):
             head_proposal = proposal[rel_pair_idx[:, 0]]
             tail_proposal = proposal[rel_pair_idx[:, 1]]
@@ -68,11 +69,11 @@ class RelationFeatureExtractor(nn.Module):
 
             # use range to construct rectangle, sized (rect_size, rect_size)
             num_rel = len(rel_pair_idx)
-            dummy_x_range = torch_arange(self.rect_size, device=device).view(1, 1, -1).expand(num_rel, self.rect_size, self.rect_size)
-            dummy_y_range = torch_arange(self.rect_size, device=device).view(1, -1, 1).expand(num_rel, self.rect_size, self.rect_size)
+            dummy_x_range = torch_arange(self_rect_size, device=device).view(1, 1, -1).expand(num_rel, self_rect_size, self_rect_size)
+            dummy_y_range = torch_arange(self_rect_size, device=device).view(1, -1, 1).expand(num_rel, self_rect_size, self_rect_size)
             # resize bbox to the scale rect_size
-            head_proposal = head_proposal.resize((self.rect_size, self.rect_size))
-            tail_proposal = tail_proposal.resize((self.rect_size, self.rect_size))
+            head_proposal = head_proposal.resize((self_rect_size, self_rect_size))
+            tail_proposal = tail_proposal.resize((self_rect_size, self_rect_size))
             head_rect = ((dummy_x_range >= head_proposal.bbox[:,0].floor().view(-1,1,1).long()) & \
                         (dummy_x_range <= head_proposal.bbox[:,2].ceil().view(-1,1,1).long()) & \
                         (dummy_y_range >= head_proposal.bbox[:,1].floor().view(-1,1,1).long()) & \

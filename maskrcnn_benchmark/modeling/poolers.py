@@ -1,5 +1,17 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from torch import cat as torch_cat, full as torch_full, nonzero as torch_nonzero, zeros as torch_zeros, log2 as torch_log2, tensor as torch_tensor, sqrt as torch_sqrt, floor as torch_floor, clamp as torch_clamp, float32 as torch_float32, int64 as torch_int64
+from torch import (
+    cat as torch_cat,
+    full as torch_full,
+    nonzero as torch_nonzero,
+    zeros as torch_zeros,
+    log2 as torch_log2,
+    as_tensor as torch_as_tensor,
+    sqrt as torch_sqrt,
+    floor as torch_floor,
+    clamp as torch_clamp,
+    float32 as torch_float32,
+    int64 as torch_int64
+)
 from torch.nn import Module, ModuleList
 
 from maskrcnn_benchmark.layers import ROIAlign
@@ -82,8 +94,8 @@ class Pooler(Module):
         self.cat_all_levels = cat_all_levels
         # get the levels in the feature map by leveraging the fact that the network always
         # downsamples by a factor of 2 at each level.
-        lvl_min = -torch_log2(torch_tensor(scales[0], dtype=torch_float32)).item()
-        lvl_max = -torch_log2(torch_tensor(scales[-1], dtype=torch_float32)).item()
+        lvl_min = -torch_log2(torch_as_tensor(scales[0], dtype=torch_float32)).item()
+        lvl_max = -torch_log2(torch_as_tensor(scales[-1], dtype=torch_float32)).item()
         self.map_levels = LevelMapper(lvl_min, lvl_max)
         # reduce the channels
         if self.cat_all_levels:

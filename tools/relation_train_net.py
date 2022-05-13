@@ -14,7 +14,12 @@ import datetime
 import random
 from resource import RLIMIT_NOFILE, getrlimit, setrlimit
 import numpy as np
-from torch import cat as torch_cat, tensor as torch_tensor, manual_seed as torch_manual_seed, device as torch_device
+from torch import (
+    cat as torch_cat,
+    manual_seed as torch_manual_seed,
+    device as torch_device,
+    as_tensor as torch_as_tensor,
+)
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
 from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
@@ -372,7 +377,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
         synchronize()
         val_result.append(dataset_result)
     # support for multi gpu distributed testing
-    gathered_result = all_gather(torch_tensor(dataset_result).cpu())
+    gathered_result = all_gather(torch_as_tensor(dataset_result).cpu())
     gathered_result = [t.view(-1) for t in gathered_result]
     gathered_result = torch_cat(gathered_result, dim=-1).view(-1)
     valid_result = gathered_result[gathered_result>=0]

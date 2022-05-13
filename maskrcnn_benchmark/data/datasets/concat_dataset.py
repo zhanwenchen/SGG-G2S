@@ -1,6 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import bisect
-
+from bisect import bisect_right
 from torch.utils.data.dataset import ConcatDataset as _ConcatDataset
 
 
@@ -11,7 +10,7 @@ class ConcatDataset(_ConcatDataset):
     """
 
     def get_idxs(self, idx):
-        dataset_idx = bisect.bisect_right(self.cumulative_sizes, idx)
+        dataset_idx = bisect_right(self.cumulative_sizes, idx)
         if dataset_idx == 0:
             sample_idx = idx
         else:

@@ -1,14 +1,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 from bisect import bisect_right
-from functools import wraps
-import torch
 from torch.optim import Optimizer
-
+from torch.optim.lr_scheduler import _LRScheduler
 
 # FIXME ideally this would be achieved with a CombinedLRScheduler,
 # separating MultiStepLR with WarmupLR
 # but the current LRScheduler design doesn't allow it
-class WarmupMultiStepLR(torch.optim.lr_scheduler._LRScheduler):
+class WarmupMultiStepLR(_LRScheduler):
     def __init__(
         self,
         optimizer,
@@ -131,7 +129,6 @@ class WarmupReduceLROnPlateau(object):
             elif self.warmup_method == "linear":
                 alpha = float(self.last_epoch) / self.warmup_iters
                 warmup_factor = self.warmup_factor * (1 - alpha) + alpha
-        # 
         return [
             base_lr
             * warmup_factor
@@ -154,7 +151,7 @@ class WarmupReduceLROnPlateau(object):
                 self.num_bad_epochs = 0
             else:
                 self.num_bad_epochs += 1
-            
+
             if self.under_cooldown > 0:
                 self.under_cooldown -= 1
                 self.num_bad_epochs = 0

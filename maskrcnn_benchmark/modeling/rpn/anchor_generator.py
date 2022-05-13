@@ -1,14 +1,27 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import math
-
-import numpy as np
-import torch
-from torch import nn
-
+from numpy import (
+    round as np_round,
+    sqrt as np_sqrt,
+    array as np_array,
+    float as np_float,
+    vstack as np_vstack,
+    newaxis as np_newaxis,
+    hstack as np_hstack,
+)
+from torch import (
+    arange as torch_arange,
+    float32 as torch_float32,
+    from_numpy as torch_from_numpy,
+    meshgrid as torch_meshgrid,
+    stack as torch_stack,
+    ones as torch_ones,
+    uint8 as torch_uint8,
+)
+from torch.nn import Module
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 
 
-class BufferList(nn.Module):
+class BufferList(Module):
     """
     Similar to nn.ParameterList, but for buffers
     """
@@ -31,7 +44,7 @@ class BufferList(nn.Module):
         return iter(self._buffers.values())
 
 
-class AnchorGenerator(nn.Module):
+class AnchorGenerator(Module):
     """
     For a set of image sizes and feature maps, computes a set
     of anchors
@@ -77,16 +90,16 @@ class AnchorGenerator(nn.Module):
         ):
             grid_height, grid_width = size
             device = base_anchors.device
-            shifts_x = torch.arange(
-                0, grid_width * stride, step=stride, dtype=torch.float32, device=device
+            shifts_x = torch_arange(
+                0, grid_width * stride, step=stride, dtype=torch_float32, device=device
             )
-            shifts_y = torch.arange(
-                0, grid_height * stride, step=stride, dtype=torch.float32, device=device
+            shifts_y = torch_arange(
+                0, grid_height * stride, step=stride, dtype=torch_float32, device=device
             )
-            shift_y, shift_x = torch.meshgrid(shifts_y, shifts_x)
+            shift_y, shift_x = torch_meshgrid(shifts_y, shifts_x)
             shift_x = shift_x.reshape(-1)
             shift_y = shift_y.reshape(-1)
-            shifts = torch.stack((shift_x, shift_y, shift_x, shift_y), dim=1)
+            shifts = torch_stack((shift_x, shift_y, shift_x, shift_y), dim=1)
 
             anchors.append(
                 (shifts.view(-1, 1, 4) + base_anchors.view(1, -1, 4)).reshape(-1, 4)
@@ -106,7 +119,7 @@ class AnchorGenerator(nn.Module):
             )
         else:
             device = anchors.device
-            inds_inside = torch.ones(anchors.shape[0], dtype=torch.uint8, device=device)
+            inds_inside = torch_ones(anchors.shape[0], dtype=torch_uint8, device=device)
         boxlist.add_field("visibility", inds_inside)
 
     def forward(self, image_list, feature_maps):
@@ -226,8 +239,8 @@ def generate_anchors(
     """
     return _generate_anchors(
         stride,
-        np.array(sizes, dtype=np.float) / stride,
-        np.array(aspect_ratios, dtype=np.float),
+        np_array(sizes, dtype=np_float) / stride,
+        np_array(aspect_ratios, dtype=np_float),
     )
 
 
@@ -235,12 +248,12 @@ def _generate_anchors(base_size, scales, aspect_ratios):
     """Generate anchor (reference) windows by enumerating aspect ratios X
     scales wrt a reference (0, 0, base_size - 1, base_size - 1) window.
     """
-    anchor = np.array([1, 1, base_size, base_size], dtype=np.float) - 1
+    anchor = np_array([1, 1, base_size, base_size], dtype=np_float) - 1
     anchors = _ratio_enum(anchor, aspect_ratios)
-    anchors = np.vstack(
+    anchors = np_vstack(
         [_scale_enum(anchors[i, :], scales) for i in range(anchors.shape[0])]
     )
-    return torch.from_numpy(anchors)
+    return torch_from_numpy(anchors)
 
 
 def _whctrs(anchor):
@@ -256,9 +269,9 @@ def _mkanchors(ws, hs, x_ctr, y_ctr):
     """Given a vector of widths (ws) and heights (hs) around a center
     (x_ctr, y_ctr), output a set of anchors (windows).
     """
-    ws = ws[:, np.newaxis]
-    hs = hs[:, np.newaxis]
-    anchors = np.hstack(
+    ws = ws[:, np_newaxis]
+    hs = hs[:, np_newaxis]
+    anchors = np_hstack(
         (
             x_ctr - 0.5 * (ws - 1),
             y_ctr - 0.5 * (hs - 1),
@@ -274,8 +287,8 @@ def _ratio_enum(anchor, ratios):
     w, h, x_ctr, y_ctr = _whctrs(anchor)
     size = w * h
     size_ratios = size / ratios
-    ws = np.round(np.sqrt(size_ratios))
-    hs = np.round(ws * ratios)
+    ws = np_round(np_sqrt(size_ratios))
+    hs = np_round(ws * ratios)
     anchors = _mkanchors(ws, hs, x_ctr, y_ctr)
     return anchors
 

@@ -1,5 +1,5 @@
 import logging
-import tempfile
+from tempfile import NamedTemporaryFile
 import os
 import torch
 from collections import OrderedDict
@@ -51,7 +51,7 @@ def do_coco_evaluation(
     results = COCOResults(*iou_types)
     logger.info("Evaluating predictions")
     for iou_type in iou_types:
-        with tempfile.NamedTemporaryFile() as f:
+        with NamedTemporaryFile() as f:
             file_path = f.name
             if output_folder:
                 file_path = os.path.join(output_folder, iou_type + ".json")

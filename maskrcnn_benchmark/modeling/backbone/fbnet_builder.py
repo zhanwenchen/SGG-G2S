@@ -11,6 +11,7 @@ from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+from torch.nn.functional import conv2d
 from maskrcnn_benchmark.layers import (
     BatchNorm2d,
     Conv2d,
@@ -268,7 +269,7 @@ class Shift(nn.Module):
 
     def forward(self, x):
         if x.numel() > 0:
-            return nn.functional.conv2d(
+            return conv2d(
                 x,
                 self.kernel,
                 self.bias,

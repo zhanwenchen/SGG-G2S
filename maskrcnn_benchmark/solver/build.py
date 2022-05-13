@@ -1,6 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-
+from torch.optim import SGD
 from .lr_scheduler import WarmupMultiStepLR, WarmupReduceLROnPlateau
 
 
@@ -25,11 +24,11 @@ def make_optimizer(cfg, model, logger, slow_heads=None, slow_ratio=5.0, rl_facto
             if wofinetune_params in key:
                 lr = lr
             else:
-                lr = lr / finetune_rate 
+                lr = lr / finetune_rate
         params += [{"params": [value], "lr": lr * rl_factor, "weight_decay": weight_decay}]
         logger.info("params {} lr: {}.".format(key, str(lr * rl_factor)))
 
-    optimizer = torch.optim.SGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
+    optimizer = SGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
     return optimizer
 
 
@@ -43,7 +42,7 @@ def make_lr_scheduler(cfg, optimizer, logger=None):
             warmup_iters=cfg.SOLVER.WARMUP_ITERS,
             warmup_method=cfg.SOLVER.WARMUP_METHOD,
         )
-    
+
     elif cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau":
         return WarmupReduceLROnPlateau(
             optimizer,
@@ -56,6 +55,6 @@ def make_lr_scheduler(cfg, optimizer, logger=None):
             cooldown=cfg.SOLVER.SCHEDULE.COOLDOWN,
             logger=logger,
         )
-    
+
     else:
         raise ValueError("Invalid Schedule Type")

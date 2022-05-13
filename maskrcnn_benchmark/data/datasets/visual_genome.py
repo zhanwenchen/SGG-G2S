@@ -4,7 +4,14 @@ from collections import defaultdict
 from random import random as random_random
 from h5py import File as h5py_File
 from PIL.Image import open as Image_open, FLIP_LEFT_RIGHT as Image_FLIP_LEFT_RIGHT
-from torch import from_numpy as torch_from_numpy, zeros as torch_zeros, int64 as torch_int64, LongTensor as torch_LongTensor
+from torch import (
+    as_tensor as torch_as_tensor,
+    from_numpy as torch_from_numpy,
+    zeros as torch_zeros,
+    int64 as torch_int64,
+    LongTensor as torch_LongTensor,
+    float32 as torch_float32,
+)
 from torch.utils.data import Dataset
 from numpy import all as np_all, log as np_log, where as np_where,  array as np_array, \
                   zeros as np_zeros, zeros_like as np_zeros_like, \
@@ -109,7 +116,7 @@ class VGDataset(Dataset):
 
         result = {
             'fg_matrix': torch_from_numpy(fg_matrix),
-            'pred_dist': torch_from_numpy(pred_dist).float(),
+            'pred_dist': torch_as_tensor(pred_dist, dtype=torch_float32),
             'obj_classes': self.ind_to_classes,
             'rel_classes': self.ind_to_predicates,
             'att_classes': self.ind_to_attributes,

@@ -1,7 +1,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import math
-
-import torch
+from math import log as math_log
+from torch import (
+    clamp as torch_clamp,
+    stack as torch_stack,
+    log as torch_log,
+    exp as torch_exp,
+    zeros_like as torch_zeros_like,
+)
 
 
 class BoxCoder(object):
@@ -9,8 +14,7 @@ class BoxCoder(object):
     This class encodes and decodes a set of bounding boxes into
     the representation used for training the regressors.
     """
-
-    def __init__(self, weights, bbox_xform_clip=math.log(1000. / 16)):
+    def __init__(self, weights, bbox_xform_clip=math_log(1000. / 16)):
         """
         Arguments:
             weights (4-element tuple)
@@ -43,10 +47,10 @@ class BoxCoder(object):
         wx, wy, ww, wh = self.weights
         targets_dx = wx * (gt_ctr_x - ex_ctr_x) / ex_widths
         targets_dy = wy * (gt_ctr_y - ex_ctr_y) / ex_heights
-        targets_dw = ww * torch.log(gt_widths / ex_widths)
-        targets_dh = wh * torch.log(gt_heights / ex_heights)
+        targets_dw = ww * torch_log(gt_widths / ex_widths)
+        targets_dh = wh * torch_log(gt_heights / ex_heights)
 
-        targets = torch.stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
+        targets = torch_stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
         return targets
 
     def decode(self, rel_codes, boxes):
@@ -74,15 +78,15 @@ class BoxCoder(object):
         dh = rel_codes[:, 3::4] / wh
 
         # Prevent sending too large values into torch.exp()
-        dw = torch.clamp(dw, max=self.bbox_xform_clip)
-        dh = torch.clamp(dh, max=self.bbox_xform_clip)
+        dw = torch_clamp(dw, max=self.bbox_xform_clip)
+        dh = torch_clamp(dh, max=self.bbox_xform_clip)
 
         pred_ctr_x = dx * widths[:, None] + ctr_x[:, None]
         pred_ctr_y = dy * heights[:, None] + ctr_y[:, None]
-        pred_w = torch.exp(dw) * widths[:, None]
-        pred_h = torch.exp(dh) * heights[:, None]
+        pred_w = torch_exp(dw) * widths[:, None]
+        pred_h = torch_exp(dh) * heights[:, None]
 
-        pred_boxes = torch.zeros_like(rel_codes)
+        pred_boxes = torch_zeros_like(rel_codes)
         # x1
         pred_boxes[:, 0::4] = pred_ctr_x - 0.5 * pred_w
         # y1

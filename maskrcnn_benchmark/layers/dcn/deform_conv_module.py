@@ -1,14 +1,15 @@
 import math
-
-import torch
-import torch.nn as nn
+from torch import (
+    Tensor as torch_Tensor, chunk as torch_chunk,
+    cat as torch_cat,
+    sigmoid as torch_sigmoid
+)
+from torch.nn import Module, Parameter, Conv2d
 from torch.nn.modules.utils import _pair
-
 from .deform_conv_func import deform_conv, modulated_deform_conv
 
 
-class DeformConv(nn.Module):
-
+class DeformConv(Module):
     def __init__(
         self,
         in_channels,
@@ -40,8 +41,8 @@ class DeformConv(nn.Module):
         self.groups = groups
         self.deformable_groups = deformable_groups
 
-        self.weight = nn.Parameter(
-            torch.Tensor(out_channels, in_channels // self.groups,
+        self.weight = Parameter(
+            torch_Tensor(out_channels, in_channels // self.groups,
                          *self.kernel_size))
 
         self.reset_parameters()
@@ -73,8 +74,7 @@ class DeformConv(nn.Module):
         ])
 
 
-class ModulatedDeformConv(nn.Module):
-
+class ModulatedDeformConv(Module):
     def __init__(
         self,
         in_channels,
@@ -98,13 +98,13 @@ class ModulatedDeformConv(nn.Module):
         self.deformable_groups = deformable_groups
         self.with_bias = bias
 
-        self.weight = nn.Parameter(torch.Tensor(
-            out_channels, 
+        self.weight = Parameter(torch_Tensor(
+            out_channels,
             in_channels // groups,
             *self.kernel_size
         ))
         if bias:
-            self.bias = nn.Parameter(torch.Tensor(out_channels))
+            self.bias = Parameter(torch_Tensor(out_channels))
         else:
             self.register_parameter('bias', None)
         self.reset_parameters()
@@ -137,8 +137,8 @@ class ModulatedDeformConv(nn.Module):
             "bias={})".format(self.with_bias),
         ])
 
-class ModulatedDeformConvPack(ModulatedDeformConv):
 
+class ModulatedDeformConvPack(ModulatedDeformConv):
     def __init__(self,
                  in_channels,
                  out_channels,
@@ -153,7 +153,7 @@ class ModulatedDeformConvPack(ModulatedDeformConv):
             in_channels, out_channels, kernel_size, stride, padding, dilation,
             groups, deformable_groups, bias)
 
-        self.conv_offset_mask = nn.Conv2d(
+        self.conv_offset_mask = Conv2d(
             self.in_channels // self.groups,
             self.deformable_groups * 3 * self.kernel_size[0] *
             self.kernel_size[1],
@@ -169,9 +169,9 @@ class ModulatedDeformConvPack(ModulatedDeformConv):
 
     def forward(self, input):
         out = self.conv_offset_mask(input)
-        o1, o2, mask = torch.chunk(out, 3, dim=1)
-        offset = torch.cat((o1, o2), dim=1)
-        mask = torch.sigmoid(mask)
+        o1, o2, mask = torch_chunk(out, 3, dim=1)
+        offset = torch_cat((o1, o2), dim=1)
+        mask = torch_sigmoid(mask)
         return modulated_deform_conv(
             input, offset, mask, self.weight, self.bias, self.stride,
             self.padding, self.dilation, self.groups, self.deformable_groups)

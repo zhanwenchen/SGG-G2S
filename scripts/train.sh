@@ -5,7 +5,7 @@ if [ $1 == "0" ]; then
     echo "TRAINING Predcls"
     MODEL_NAME="union_only_no_bpl_no_sa_v2a" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     mkdir ./checkpoints/${MODEL_NAME}/ &&
-    cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME}/ &&
+    cp -r ./tools/ ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./scripts/ ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./maskrcnn_benchmark/ ./checkpoints/${MODEL_NAME}/ &&
     # cp ./maskrcnn_benchmark/data/datasets/visual_genome.py ./checkpoints/${MODEL_NAME}/
@@ -23,7 +23,7 @@ if [ $1 == "0" ]; then
     MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
     MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
     DTYPE "float32" \
-    SOLVER.MAX_ITER 16000 SOLVER.BASE_LR 5e-4 \
+    SOLVER.MAX_ITER 16000 SOLVER.BASE_LR 1e-3 \
     SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
     SOLVER.STEPS "(10000, 16000)" \
     SOLVER.VAL_PERIOD 2000 \

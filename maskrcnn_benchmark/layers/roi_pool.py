@@ -1,13 +1,15 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import torch
-from torch import nn
+from torch.nn import Module
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
 from torch.nn.modules.utils import _pair
+from maskrcnn_benchmark._C import (
+    roi_pool_forward as _C_roi_pool_forward,
+    roi_pool_backward as _C_roi_pool_backward
+)
+from apex.amp import float_function as amp_float_function
 
-from maskrcnn_benchmark import _C
-
-from apex import amp
 
 class _ROIPool(Function):
     @staticmethod
@@ -15,7 +17,7 @@ class _ROIPool(Function):
         ctx.output_size = _pair(output_size)
         ctx.spatial_scale = spatial_scale
         ctx.input_shape = input.size()
-        output, argmax = _C.roi_pool_forward(
+        output, argmax = _C_roi_pool_forward(
             input, roi, spatial_scale, output_size[0], output_size[1]
         )
         ctx.save_for_backward(input, roi, argmax)
@@ -28,7 +30,7 @@ class _ROIPool(Function):
         output_size = ctx.output_size
         spatial_scale = ctx.spatial_scale
         bs, ch, h, w = ctx.input_shape
-        grad_input = _C.roi_pool_backward(
+        grad_input = _C_roi_pool_backward(
             grad_output,
             input,
             rois,
@@ -47,13 +49,13 @@ class _ROIPool(Function):
 roi_pool = _ROIPool.apply
 
 
-class ROIPool(nn.Module):
+class ROIPool(Module):
     def __init__(self, output_size, spatial_scale):
         super(ROIPool, self).__init__()
         self.output_size = output_size
         self.spatial_scale = spatial_scale
 
-    @amp.float_function
+    @amp_float_function
     def forward(self, input, rois):
         return roi_pool(input, rois, self.output_size, self.spatial_scale)
 

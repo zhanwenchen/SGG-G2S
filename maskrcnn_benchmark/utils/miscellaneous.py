@@ -2,16 +2,21 @@
 import errno
 import json
 import logging
-import os
+from os import makedirs as os_makedirs
+from os.path import join as os_path_join
 from .comm import is_main_process
-import numpy as np
-
+from numpy import (
+    column_stack as np_column_stack,
+    unravel_index as np_unravel_index,
+    argsort as np_argsort
+)
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
 
+
 def mkdir(path):
     try:
-        os.makedirs(path)
+        os_makedirs(path)
     except OSError as e:
         if e.errno != errno.EEXIST:
             raise
@@ -30,7 +35,7 @@ def save_labels(dataset_list, output_dir):
                     dataset.__class__.__name__))
 
         if ids_to_labels:
-            labels_file = os.path.join(output_dir, 'labels.json')
+            labels_file = os_path_join(output_dir, 'labels.json')
             logger.info("Saving labels mapping into {}".format(labels_file))
             with open(labels_file, 'w') as f:
                 json.dump(ids_to_labels, f, indent=2)
@@ -58,6 +63,7 @@ def intersect_2d(x1, x2):
     res = (x1[..., None] == x2.T[None, ...]).all(1)
     return res
 
+
 def argsort_desc(scores):
     """
     Returns the indices that sort scores descending in a smart way
@@ -65,7 +71,8 @@ def argsort_desc(scores):
     :return: an array of size [numel(scores), dim(scores)] where each row is the index you'd
              need to get the score.
     """
-    return np.column_stack(np.unravel_index(np.argsort(-scores.ravel()), scores.shape))
+    return np_column_stack(np_unravel_index(np_argsort(-scores.ravel()), scores.shape))
+
 
 def bbox_overlaps(boxes1, boxes2):
     """

@@ -1,15 +1,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-from torch.nn import functional as F
-
+from torch import as_tensor as torch_as_tensor, int64 as torch_int64, nonzero as torch_nonzero
+from torch.nn.functional import cross_entropy as F_cross_entropy
 from maskrcnn_benchmark.layers import smooth_l1_loss
-from maskrcnn_benchmark.modeling.box_coder import BoxCoder
-from maskrcnn_benchmark.modeling.matcher import Matcher
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
-from maskrcnn_benchmark.modeling.balanced_positive_negative_sampler import (
-    BalancedPositiveNegativeSampler
-)
 from maskrcnn_benchmark.modeling.utils import cat
+# from maskrcnn_benchmark.modeling.balanced_positive_negative_sampler import (
+#     BalancedPositiveNegativeSampler
+# )
 
 
 class FastRCNNLossComputation(object):
@@ -28,12 +25,13 @@ class FastRCNNLossComputation(object):
             # Fast RCNN only need "labels" field for selecting the targets
             target = target.copy_with_fields(["labels", "attributes"])
             matched_targets = target[matched_idxs.clamp(min=0)]
-            
-            labels_per_image = matched_targets.get_field("labels").to(dtype=torch.int64)
-            attris_per_image = matched_targets.get_field("attributes").to(dtype=torch.int64)
 
-            labels_per_image[matched_idxs < 0] = 0
-            attris_per_image[matched_idxs < 0, :] = 0
+            labels_per_image = matched_targets.get_field("labels").to(dtype=torch_int64)
+            attris_per_image = matched_targets.get_field("attributes").to(dtype=torch_int64)
+
+            matched_idxs_lt_0 = matched_idxs < 0
+            labels_per_image[matched_idxs_lt_0] = 0
+            attris_per_image[matched_idxs_lt_0, :] = 0
             proposals[img_idx].add_field("labels", labels_per_image)
             proposals[img_idx].add_field("attributes", attris_per_image)
         return proposals
@@ -61,17 +59,17 @@ class FastRCNNLossComputation(object):
         labels = cat([proposal.get_field("labels") for proposal in proposals], dim=0)
         regression_targets = cat([proposal.get_field("regression_targets") for proposal in proposals], dim=0)
 
-        classification_loss = F.cross_entropy(class_logits, labels.long())
+        classification_loss = F_cross_entropy(class_logits, labels.long())
 
         # get indices that correspond to the regression targets for
         # the corresponding ground truth labels, to be used with
         # advanced indexing
-        sampled_pos_inds_subset = torch.nonzero(labels > 0).squeeze(1)
+        sampled_pos_inds_subset = torch_nonzero(labels > 0).squeeze(1)
         labels_pos = labels[sampled_pos_inds_subset]
         if self.cls_agnostic_bbox_reg:
-            map_inds = torch.tensor([4, 5, 6, 7], device=device)
+            map_inds = torch_as_tensor([4, 5, 6, 7], device=device)
         else:
-            map_inds = 4 * labels_pos[:, None] + torch.tensor([0, 1, 2, 3], device=device)
+            map_inds = 4 * labels_pos[:, None] + torch_as_tensor([0, 1, 2, 3], device=device)
 
         box_loss = smooth_l1_loss(
             box_regression[sampled_pos_inds_subset[:, None], map_inds],
@@ -79,7 +77,7 @@ class FastRCNNLossComputation(object):
             size_average=False,
             beta=1,
         )
-        box_loss = box_loss / labels.numel()
+        box_loss /= labels.numel()
 
         return classification_loss, box_loss
 

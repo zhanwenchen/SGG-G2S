@@ -1,5 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
+from torch import (
+    nonzero as torch_nonzero,
+    randperm as torch_randperm,
+    zeros_like as torch_zeros_like,
+    uint8 as torch_uint8,
+)
 
 
 class BalancedPositiveNegativeSampler(object):
@@ -35,8 +40,8 @@ class BalancedPositiveNegativeSampler(object):
         pos_idx = []
         neg_idx = []
         for matched_idxs_per_image in matched_idxs:
-            positive = torch.nonzero(matched_idxs_per_image >= 1).squeeze(1)
-            negative = torch.nonzero(matched_idxs_per_image == 0).squeeze(1)
+            positive = torch_nonzero(matched_idxs_per_image >= 1).squeeze(1)
+            negative = torch_nonzero(matched_idxs_per_image == 0).squeeze(1)
 
             num_pos = int(self.batch_size_per_image * self.positive_fraction)
             # protect against not enough positive examples
@@ -46,18 +51,18 @@ class BalancedPositiveNegativeSampler(object):
             num_neg = min(negative.numel(), num_neg)
 
             # randomly select positive and negative examples
-            perm1 = torch.randperm(positive.numel(), device=positive.device)[:num_pos]
-            perm2 = torch.randperm(negative.numel(), device=negative.device)[:num_neg]
+            perm1 = torch_randperm(positive.numel(), device=positive.device)[:num_pos]
+            perm2 = torch_randperm(negative.numel(), device=negative.device)[:num_neg]
 
             pos_idx_per_image = positive[perm1]
             neg_idx_per_image = negative[perm2]
 
             # create binary mask from indices
-            pos_idx_per_image_mask = torch.zeros_like(
-                matched_idxs_per_image, dtype=torch.uint8
+            pos_idx_per_image_mask = torch_zeros_like(
+                matched_idxs_per_image, dtype=torch_uint8
             )
-            neg_idx_per_image_mask = torch.zeros_like(
-                matched_idxs_per_image, dtype=torch.uint8
+            neg_idx_per_image_mask = torch_zeros_like(
+                matched_idxs_per_image, dtype=torch_uint8
             )
             pos_idx_per_image_mask[pos_idx_per_image] = 1
             neg_idx_per_image_mask[neg_idx_per_image] = 1

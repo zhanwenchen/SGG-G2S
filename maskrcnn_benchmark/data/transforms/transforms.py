@@ -1,9 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import random
-
-import torch
-import torchvision
-from torchvision.transforms import functional as F
+from random import random as random_random, choice as random_choice
+from torchvision.transforms import ColorJitter as torch_ColorJitter
+from torchvision.transforms.functional import (
+    resize as F_resize,
+    to_tensor as F_to_tensor,
+    normalize as F_normalize,
+    hflip as F_hflip,
+    vflip as F_vflip,
+)
 
 
 class Compose(object):
@@ -34,7 +38,7 @@ class Resize(object):
     # modified from torchvision to add support for max size
     def get_size(self, image_size):
         w, h = image_size
-        size = random.choice(self.min_size)
+        size = random_choice(self.min_size)
         max_size = self.max_size
         if max_size is not None:
             min_original_size = float(min((w, h)))
@@ -56,7 +60,7 @@ class Resize(object):
 
     def __call__(self, image, target=None):
         size = self.get_size(image.size)
-        image = F.resize(image, size)
+        image = F_resize(image, size)
         if target is None:
             return image
         target = target.resize(image.size)
@@ -68,20 +72,22 @@ class RandomHorizontalFlip(object):
         self.prob = prob
 
     def __call__(self, image, target):
-        if random.random() < self.prob:
-            image = F.hflip(image)
+        if random_random() < self.prob:
+            image = F_hflip(image)
             target = target.transpose(0)
         return image, target
+
 
 class RandomVerticalFlip(object):
     def __init__(self, prob=0.5):
         self.prob = prob
 
     def __call__(self, image, target):
-        if random.random() < self.prob:
-            image = F.vflip(image)
+        if random_random() < self.prob:
+            image = F_vflip(image)
             target = target.transpose(1)
         return image, target
+
 
 class ColorJitter(object):
     def __init__(self,
@@ -90,7 +96,7 @@ class ColorJitter(object):
                  saturation=None,
                  hue=None,
                  ):
-        self.color_jitter = torchvision.transforms.ColorJitter(
+        self.color_jitter = torch_ColorJitter(
             brightness=brightness,
             contrast=contrast,
             saturation=saturation,
@@ -103,7 +109,7 @@ class ColorJitter(object):
 
 class ToTensor(object):
     def __call__(self, image, target):
-        return F.to_tensor(image), target
+        return F_to_tensor(image), target
 
 
 class Normalize(object):
@@ -115,7 +121,7 @@ class Normalize(object):
     def __call__(self, image, target=None):
         if self.to_bgr255:
             image = image[[2, 1, 0]] * 255
-        image = F.normalize(image, mean=self.mean, std=self.std)
+        image = F_normalize(image, mean=self.mean, std=self.std)
         if target is None:
             return image
         return image, target

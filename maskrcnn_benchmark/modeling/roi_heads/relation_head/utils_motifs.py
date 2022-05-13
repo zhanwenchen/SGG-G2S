@@ -98,28 +98,29 @@ def to_onehot(vec, num_classes, fill=1000):
     :param fill: value that we want + and - things to be.
     :return:
     """
-    onehot_result = vec.new(vec.size(0), num_classes).float().fill_(-fill)
-    arange_inds = vec.new(vec.size(0)).long()
-    torch_arange(0, vec.size(0), out=arange_inds)
+    vec_size_0 = vec.size(0)
+    onehot_result = vec.new_full((vec_size_0, num_classes), -fill, dtype=torch_float32)
+    arange_inds = torch_arange(0, vec_size_0, dtype=torch_int64, device=vec.device)
 
     onehot_result.view(-1)[vec.long() + num_classes*arange_inds] = fill
     return onehot_result
-
 
 
 def get_dropout_mask(dropout_probability, tensor_shape, device):
     """
     once get, it is fixed all the time
     """
-    binary_mask = (torch_rand(tensor_shape) > dropout_probability)
+    binary_mask = (torch_rand(tensor_shape, device=device, dtype=torch_float32) > dropout_probability)
     # Scale mask by 1/keep_prob to preserve output statistics.
     return binary_mask.to(device, dtype=torch_float32).div(1.0 - dropout_probability)
+
 
 def center_x(proposals):
     assert proposals[0].mode == 'xyxy'
     boxes = cat([p.bbox for p in proposals], dim=0)
     c_x = 0.5 * (boxes[:, 0] + boxes[:, 2])
     return c_x.view(-1)
+
 
 def encode_box_info(proposals):
     """

@@ -185,15 +185,17 @@ class BoxList(object):
         coordinate.
         """
         xmin, ymin, xmax, ymax = self._split_into_xyxy()
-        w, h = box[2] - box[0], box[3] - box[1]
-        cropped_xmin = (xmin - box[0]).clamp(min=0, max=w)
-        cropped_ymin = (ymin - box[1]).clamp(min=0, max=h)
-        cropped_xmax = (xmax - box[0]).clamp(min=0, max=w)
-        cropped_ymax = (ymax - box[1]).clamp(min=0, max=h)
+        box_0 = box[0]
+        box_1 = box[1]
+        w, h = box[2] - box_0, box[3] - box_1
+        cropped_xmin = (xmin - box_0).clamp(min=0, max=w)
+        cropped_ymin = (ymin - box_1).clamp(min=0, max=h)
+        cropped_xmax = (xmax - box_0).clamp(min=0, max=w)
+        cropped_ymax = (ymax - box_1).clamp(min=0, max=h)
 
         # TODO should I filter empty boxes here?
-        if False:
-            is_empty = (cropped_xmin == cropped_xmax) | (cropped_ymin == cropped_ymax)
+        # if False:
+            # is_empty = (cropped_xmin == cropped_xmax) | (cropped_ymin == cropped_ymax)
 
         cropped_box = torch_cat(
             (cropped_xmin, cropped_ymin, cropped_xmax, cropped_ymax), dim=-1
@@ -236,10 +238,10 @@ class BoxList(object):
 
     def clip_to_image(self, remove_empty=True):
         TO_REMOVE = 1
-        self.bbox[:, 0].clamp_(min=0, max=self.size[0] - TO_REMOVE)
-        self.bbox[:, 1].clamp_(min=0, max=self.size[1] - TO_REMOVE)
-        self.bbox[:, 2].clamp_(min=0, max=self.size[0] - TO_REMOVE)
-        self.bbox[:, 3].clamp_(min=0, max=self.size[1] - TO_REMOVE)
+        max_x = self.size[0] - TO_REMOVE
+        max_y = self.size[1] - TO_REMOVE
+        self.bbox[:, [0, 2]].clamp_(min=0, max=max_x)
+        self.bbox[:, [1, 3]].clamp_(min=0, max=max_y)
         if remove_empty:
             box = self.bbox
             keep = (box[:, 3] > box[:, 1]) & (box[:, 2] > box[:, 0])
