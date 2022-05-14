@@ -1,8 +1,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 # Code is copy-pasted exactly as in torch.utils.data.distributed.
 # FIXME remove this once c10d fixes the bug it has
-import math
-import torch
+from math import ceil as math_ceil
+from torch import (
+    randperm as torch_randperm,
+    arange as torch_arange,
+    Generator as torch_Generator,
+)
 import torch.distributed as dist
 from torch.utils.data.sampler import Sampler
 
@@ -35,18 +39,18 @@ class DistributedSampler(Sampler):
         self.num_replicas = num_replicas
         self.rank = rank
         self.epoch = 0
-        self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
+        self.num_samples = int(math_ceil(len(self.dataset) * 1.0 / self.num_replicas))
         self.total_size = self.num_samples * self.num_replicas
         self.shuffle = shuffle
 
     def __iter__(self):
         if self.shuffle:
             # deterministically shuffle based on epoch
-            g = torch.Generator()
+            g = torch_Generator()
             g.manual_seed(self.epoch)
-            indices = torch.randperm(len(self.dataset), generator=g).tolist()
+            indices = torch_randperm(len(self.dataset), generator=g).tolist()
         else:
-            indices = torch.arange(len(self.dataset)).tolist()
+            indices = torch_arange(len(self.dataset)).tolist()
 
         # add extra samples to make it evenly divisible
         indices += indices[: (self.total_size - len(indices))]

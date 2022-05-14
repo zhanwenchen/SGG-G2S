@@ -1,7 +1,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-
-
 def entropy_loss(input, e=1e-9, reduction='sum'):
     assert len(input.shape) == 2
     loss = - (input * (input + e).log())

@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 from collections import defaultdict, deque
-from torch import tensor as torch_tensor, Tensor as torch_Tensor
+from torch import as_tensor as torch_as_tensor, Tensor as torch_Tensor
 
 
 class SmoothedValue(object):
@@ -22,11 +22,11 @@ class SmoothedValue(object):
 
     @property
     def median(self):
-        return torch_tensor(list(self.deque)).median().item()
+        return torch_as_tensor(list(self.deque)).median().item()
 
     @property
     def avg(self):
-        return torch_tensor(list(self.deque)).mean().item()
+        return torch_as_tensor(list(self.deque)).mean().item()
 
     @property
     def global_avg(self):

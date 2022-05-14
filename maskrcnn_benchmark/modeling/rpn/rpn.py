@@ -1,7 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-import torch.nn.functional as F
-from torch import nn
+from torch import no_grad as torch_no_grad
+from torch.nn.functional import relu as F_relu
+from torch.nn import Module, Conv2d
+from torch.nn.init import normal_, constant_
 
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.modeling.box_coder import BoxCoder
@@ -11,7 +12,7 @@ from .anchor_generator import make_anchor_generator
 from .inference import make_rpn_postprocessor
 
 
-class RPNHeadConvRegressor(nn.Module):
+class RPNHeadConvRegressor(Module):
     """
     A simple RPN Head for classification and bbox regression
     """
@@ -24,14 +25,14 @@ class RPNHeadConvRegressor(nn.Module):
             num_anchors (int): number of anchors to be predicted
         """
         super(RPNHeadConvRegressor, self).__init__()
-        self.cls_logits = nn.Conv2d(in_channels, num_anchors, kernel_size=1, stride=1)
-        self.bbox_pred = nn.Conv2d(
+        self.cls_logits = Conv2d(in_channels, num_anchors, kernel_size=1, stride=1)
+        self.bbox_pred = Conv2d(
             in_channels, num_anchors * 4, kernel_size=1, stride=1
         )
 
         for l in [self.cls_logits, self.bbox_pred]:
-            torch.nn.init.normal_(l.weight, std=0.01)
-            torch.nn.init.constant_(l.bias, 0)
+            normal_(l.weight, std=0.01)
+            constant_(l.bias, 0)
 
     def forward(self, x):
         assert isinstance(x, (list, tuple))
@@ -41,7 +42,7 @@ class RPNHeadConvRegressor(nn.Module):
         return logits, bbox_reg
 
 
-class RPNHeadFeatureSingleConv(nn.Module):
+class RPNHeadFeatureSingleConv(Module):
     """
     Adds a simple RPN Head with one conv to extract the feature
     """
@@ -53,25 +54,25 @@ class RPNHeadFeatureSingleConv(nn.Module):
             in_channels (int): number of channels of the input feature
         """
         super(RPNHeadFeatureSingleConv, self).__init__()
-        self.conv = nn.Conv2d(
+        self.conv = Conv2d(
             in_channels, in_channels, kernel_size=3, stride=1, padding=1
         )
 
         for l in [self.conv]:
-            torch.nn.init.normal_(l.weight, std=0.01)
-            torch.nn.init.constant_(l.bias, 0)
+            normal_(l.weight, std=0.01)
+            constant_(l.bias, 0)
 
         self.out_channels = in_channels
 
     def forward(self, x):
         assert isinstance(x, (list, tuple))
-        x = [F.relu(self.conv(z)) for z in x]
+        x = [F_relu(self.conv(z)) for z in x]
 
         return x
 
 
 @registry.RPN_HEADS.register("SingleConvRPNHead")
-class RPNHead(nn.Module):
+class RPNHead(Module):
     """
     Adds a simple RPN Head with classification and regression heads
     """
@@ -84,29 +85,29 @@ class RPNHead(nn.Module):
             num_anchors (int): number of anchors to be predicted
         """
         super(RPNHead, self).__init__()
-        self.conv = nn.Conv2d(
+        self.conv = Conv2d(
             in_channels, mid_channels, kernel_size=3, stride=1, padding=1
         )
-        self.cls_logits = nn.Conv2d(in_channels, num_anchors, kernel_size=1, stride=1)
-        self.bbox_pred = nn.Conv2d(
+        self.cls_logits = Conv2d(in_channels, num_anchors, kernel_size=1, stride=1)
+        self.bbox_pred = Conv2d(
             in_channels, num_anchors * 4, kernel_size=1, stride=1
         )
 
         for l in [self.conv, self.cls_logits, self.bbox_pred]:
-            torch.nn.init.normal_(l.weight, std=0.01)
-            torch.nn.init.constant_(l.bias, 0)
+            normal_(l.weight, std=0.01)
+            constant_(l.bias, 0)
 
     def forward(self, x):
         logits = []
         bbox_reg = []
         for feature in x:
-            t = F.relu(self.conv(feature))
+            t = F_relu(self.conv(feature))
             logits.append(self.cls_logits(t))
             bbox_reg.append(self.bbox_pred(t))
         return logits, bbox_reg
 
 
-class RPNModule(torch.nn.Module):
+class RPNModule(Module):
     """
     Module for RPN computation. Takes feature maps from the backbone and RPN
     proposals and losses. Works for both FPN and non-FPN.
@@ -170,7 +171,7 @@ class RPNModule(torch.nn.Module):
         else:
             # For end-to-end models, anchors must be transformed into boxes and
             # sampled into a training batch.
-            with torch.no_grad():
+            with torch_no_grad():
                 boxes = self.box_selector_train(
                     anchors, objectness, rpn_box_regression, targets
                 )

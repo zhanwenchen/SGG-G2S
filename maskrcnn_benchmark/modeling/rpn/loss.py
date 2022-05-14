@@ -3,15 +3,14 @@
 This file contains specific functions for computing losses on the RPN
 file
 """
-
-import torch
-from torch.nn import functional as F
-
+from torch import (
+    float32 as torch_float32, nonzero as torch_nonzero, cat as torch_cat
+)
+from torch.nn.functional import (
+    binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits
+)
 from .utils import concat_box_prediction_layers
-
 from ..balanced_positive_negative_sampler import BalancedPositiveNegativeSampler
-from ..utils import cat
-
 from maskrcnn_benchmark.layers import smooth_l1_loss
 from maskrcnn_benchmark.modeling.matcher import Matcher
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
@@ -63,7 +62,7 @@ class RPNLossComputation(object):
 
             matched_idxs = matched_targets.get_field("matched_idxs")
             labels_per_image = self.generate_labels_func(matched_targets)
-            labels_per_image = labels_per_image.to(dtype=torch.float32)
+            labels_per_image = labels_per_image.to(dtype=torch_float32)
 
             # Background (negative examples)
             bg_indices = matched_idxs == Matcher.BELOW_LOW_THRESHOLD
@@ -104,18 +103,18 @@ class RPNLossComputation(object):
         anchors = [cat_boxlist(anchors_per_image) for anchors_per_image in anchors]
         labels, regression_targets = self.prepare_targets(anchors, targets)
         sampled_pos_inds, sampled_neg_inds = self.fg_bg_sampler(labels)
-        sampled_pos_inds = torch.nonzero(torch.cat(sampled_pos_inds, dim=0)).squeeze(1)
-        sampled_neg_inds = torch.nonzero(torch.cat(sampled_neg_inds, dim=0)).squeeze(1)
+        sampled_pos_inds = torch_nonzero(torch_cat(sampled_pos_inds, dim=0)).squeeze(1)
+        sampled_neg_inds = torch_nonzero(torch_cat(sampled_neg_inds, dim=0)).squeeze(1)
 
-        sampled_inds = torch.cat([sampled_pos_inds, sampled_neg_inds], dim=0)
+        sampled_inds = torch_cat([sampled_pos_inds, sampled_neg_inds], dim=0)
 
         objectness, box_regression = \
                 concat_box_prediction_layers(objectness, box_regression)
 
         objectness = objectness.squeeze()
 
-        labels = torch.cat(labels, dim=0)
-        regression_targets = torch.cat(regression_targets, dim=0)
+        labels = torch_cat(labels, dim=0)
+        regression_targets = torch_cat(regression_targets, dim=0)
 
         box_loss = smooth_l1_loss(
             box_regression[sampled_pos_inds],
@@ -124,7 +123,7 @@ class RPNLossComputation(object):
             size_average=False,
         ) / (sampled_inds.numel())
 
-        objectness_loss = F.binary_cross_entropy_with_logits(
+        objectness_loss = F_binary_cross_entropy_with_logits(
             objectness[sampled_inds], labels[sampled_inds]
         )
 

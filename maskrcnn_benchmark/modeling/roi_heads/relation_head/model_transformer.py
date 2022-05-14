@@ -4,11 +4,12 @@ Based on the implementation of https://github.com/jadore801120/attention-is-all-
 from torch import bmm as torch_bmm, no_grad as torch_no_grad, arange as torch_arange, as_tensor as torch_as_tensor, int64 as torch_int64, cat as torch_cat
 from torch.nn import Module, ModuleList, Sequential, Dropout, Softmax, Linear, Conv1d, ReLU, LayerNorm, Embedding
 from torch.nn.functional import softmax as F_softmax, relu as F_relu
-from torch.nn.init import normal_, xavier_normal_
+from torch.nn.init import normal_, xavier_normal_, kaiming_normal_
 from torch.nn.utils.rnn import pad_sequence
 from numpy import inf as np_inf, sqrt as np_sqrt, power as np_power, unravel_index as np_unravel_index
 from maskrcnn_benchmark.modeling.utils import cat
-from .utils_motifs import obj_edge_vectors, to_onehot, nms_overlaps, encode_box_info
+from .utils_motifs import obj_edge_vectors, to_onehot, encode_box_info
+from .utils_relation import nms_overlaps
 
 
 class ScaledDotProductAttention(Module):

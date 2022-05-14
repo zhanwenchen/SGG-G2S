@@ -18,8 +18,7 @@ Custom implementations may be written in user code and hooked in via the
 """
 from collections import namedtuple
 
-import torch
-import torch.nn.functional as F
+from torch.nn.functional import relu_ as F_relu_, max_pool2d as F_max_pool2d
 from torch import nn
 
 from maskrcnn_benchmark.layers import FrozenBatchNorm2d
@@ -326,11 +325,11 @@ class Bottleneck(nn.Module):
 
         out = self.conv1(x)
         out = self.bn1(out)
-        out = F.relu_(out)
+        out = F_relu_(out)
 
         out = self.conv2(out)
         out = self.bn2(out)
-        out = F.relu_(out)
+        out = F_relu_(out)
 
         out = self.conv3(out)
         out = self.bn3(out)
@@ -339,7 +338,7 @@ class Bottleneck(nn.Module):
             identity = self.downsample(x)
 
         out += identity
-        out = F.relu_(out)
+        out = F_relu_(out)
 
         return out
 
@@ -361,8 +360,8 @@ class BaseStem(nn.Module):
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
-        x = F.relu_(x)
-        x = F.max_pool2d(x, kernel_size=3, stride=2, padding=1)
+        x = F_relu_(x)
+        x = F_max_pool2d(x, kernel_size=3, stride=2, padding=1)
         return x
 
 

@@ -14,7 +14,12 @@ import datetime
 import random
 from resource import RLIMIT_NOFILE, getrlimit, setrlimit
 import numpy as np
-from torch import cat as torch_cat, tensor as torch_tensor, manual_seed as torch_manual_seed, device as torch_device
+from torch import (
+    cat as torch_cat,
+    manual_seed as torch_manual_seed,
+    device as torch_device,
+    as_tensor as torch_as_tensor,
+)
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
 from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
@@ -80,10 +85,35 @@ def train(cfg, local_rank, distributed, logger):
     model.to(device)
 
     num_batch = cfg.SOLVER.IMS_PER_BATCH
-    optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1,
-                                rl_factor=float(num_batch))
-    scheduler = make_lr_scheduler(cfg, optimizer, logger)
-    debug_print(logger, 'end optimizer and shcedule')
+
+    output_dir = cfg.OUTPUT_DIR
+
+    save_to_disk = get_rank() == 0
+
+
+    if not clean_classifier and (cfg.MODEL.PRETRAINED_MODEL_CKPT == "" or not cfg.MODEL.PRETRAINED_MODEL_CKPT):
+        optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1,
+                                    rl_factor=float(num_batch))
+        scheduler = make_lr_scheduler(cfg, optimizer, logger)
+        checkpointer = DetectronCheckpointer(
+            cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True
+        )
+
+
+    if not clean_classifier and cfg.MODEL.PRETRAINED_MODEL_CKPT != "":
+        load_mapping_classifier = {
+            "roi_heads.relation.predictor": "roi_heads.relation.predictor"
+        }
+        checkpointer = DetectronCheckpointer(
+            cfg, model, None, None, output_dir, save_to_disk, custom_scheduler=True
+        )
+        debug_print(logger, 'load PRETRAINED_MODEL_CKPT!!!!')
+        checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=True,
+                         with_optim=True, load_mapping={load_mapping_classifier})
+
+        optimizer = checkpointer.optimizer
+        scheduler = checkpointer.scheduler
+
     # Initialize mixed-precision training
     use_mixed_precision = cfg.DTYPE == "float16"
     amp_opt_level = 'O1' if use_mixed_precision else 'O0'
@@ -108,12 +138,7 @@ def train(cfg, local_rank, distributed, logger):
         load_mapping["roi_heads.relation.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
         load_mapping["roi_heads.relation.union_feature_extractor.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
 
-    output_dir = cfg.OUTPUT_DIR
 
-    save_to_disk = get_rank() == 0
-    checkpointer = DetectronCheckpointer(
-        cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True
-    )
     # if there is certain checkpoint in output_dir, load it, else load pretrained detector
     if checkpointer.has_checkpoint():
         extra_checkpoint_data = checkpointer.load(cfg.MODEL.PRETRAINED_DETECTOR_CKPT,
@@ -152,9 +177,11 @@ def train(cfg, local_rank, distributed, logger):
                 }
             #load_mapping_classifier = {}
             if cfg.MODEL.PRETRAINED_MODEL_CKPT != "" :
-                debug_print(logger, 'load PRETRAINED_MODEL_CKPT!!!!')
+                debug_print(logger, 'load PRETRAINED_MODEL_CKPT for BPL!!!!')
                 checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=False,
                                  with_optim=False, load_mapping=load_mapping_classifier)
+
+
     # debug_print(logger, 'load PRETRAINED_MODEL_CKPT!!!!')
     # checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=False,
     #                  with_optim=False)
@@ -225,7 +252,7 @@ def train(cfg, local_rank, distributed, logger):
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
         meters.update(loss=losses_reduced, **loss_dict_reduced)
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         # Note: If mixed precision is not used, this ends up doing nothing
         # Otherwise apply loss scaling for mixed-precision recipe
         with amp_scale_loss(losses, optimizer) as scaled_losses:
@@ -350,7 +377,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
         synchronize()
         val_result.append(dataset_result)
     # support for multi gpu distributed testing
-    gathered_result = all_gather(torch_tensor(dataset_result).cpu())
+    gathered_result = all_gather(torch_as_tensor(dataset_result).cpu())
     gathered_result = [t.view(-1) for t in gathered_result]
     gathered_result = torch_cat(gathered_result, dim=-1).view(-1)
     valid_result = gathered_result[gathered_result>=0]

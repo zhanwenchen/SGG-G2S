@@ -1,10 +1,8 @@
-from torch import nn
-
+from torch.nn import Module, Linear, ReLU, Sequential, Sigmoid
 from .deform_pool_func import deform_roi_pooling
 
 
-class DeformRoIPooling(nn.Module):
-
+class DeformRoIPooling(Module):
     def __init__(self,
                  spatial_scale,
                  out_size,
@@ -34,7 +32,6 @@ class DeformRoIPooling(nn.Module):
 
 
 class DeformRoIPoolingPack(DeformRoIPooling):
-
     def __init__(self,
                  spatial_scale,
                  out_size,
@@ -52,13 +49,13 @@ class DeformRoIPoolingPack(DeformRoIPooling):
         self.deform_fc_channels = deform_fc_channels
 
         if not no_trans:
-            self.offset_fc = nn.Sequential(
-                nn.Linear(self.out_size * self.out_size * self.out_channels,
+            self.offset_fc = Sequential(
+                Linear(self.out_size * self.out_size * self.out_channels,
                           self.deform_fc_channels),
-                nn.ReLU(inplace=True),
-                nn.Linear(self.deform_fc_channels, self.deform_fc_channels),
-                nn.ReLU(inplace=True),
-                nn.Linear(self.deform_fc_channels,
+                ReLU(inplace=True),
+                Linear(self.deform_fc_channels, self.deform_fc_channels),
+                ReLU(inplace=True),
+                Linear(self.deform_fc_channels,
                           self.out_size * self.out_size * 2))
             self.offset_fc[-1].weight.data.zero_()
             self.offset_fc[-1].bias.data.zero_()
@@ -87,7 +84,6 @@ class DeformRoIPoolingPack(DeformRoIPooling):
 
 
 class ModulatedDeformRoIPoolingPack(DeformRoIPooling):
-
     def __init__(self,
                  spatial_scale,
                  out_size,
@@ -105,23 +101,23 @@ class ModulatedDeformRoIPoolingPack(DeformRoIPooling):
         self.deform_fc_channels = deform_fc_channels
 
         if not no_trans:
-            self.offset_fc = nn.Sequential(
-                nn.Linear(self.out_size * self.out_size * self.out_channels,
+            self.offset_fc = Sequential(
+                Linear(self.out_size * self.out_size * self.out_channels,
                           self.deform_fc_channels),
-                nn.ReLU(inplace=True),
-                nn.Linear(self.deform_fc_channels, self.deform_fc_channels),
-                nn.ReLU(inplace=True),
-                nn.Linear(self.deform_fc_channels,
+                ReLU(inplace=True),
+                Linear(self.deform_fc_channels, self.deform_fc_channels),
+                ReLU(inplace=True),
+                Linear(self.deform_fc_channels,
                           self.out_size * self.out_size * 2))
             self.offset_fc[-1].weight.data.zero_()
             self.offset_fc[-1].bias.data.zero_()
-            self.mask_fc = nn.Sequential(
-                nn.Linear(self.out_size * self.out_size * self.out_channels,
+            self.mask_fc = Sequential(
+                Linear(self.out_size * self.out_size * self.out_channels,
                           self.deform_fc_channels),
-                nn.ReLU(inplace=True),
-                nn.Linear(self.deform_fc_channels,
+                ReLU(inplace=True),
+                Linear(self.deform_fc_channels,
                           self.out_size * self.out_size * 1),
-                nn.Sigmoid())
+                Sigmoid())
             self.mask_fc[2].weight.data.zero_()
             self.mask_fc[2].bias.data.zero_()
 

@@ -10,6 +10,7 @@ import json
 import random
 
 import torch
+from torch import save as torch_save, load as torch_load
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
@@ -64,9 +65,9 @@ output_path = model_path+model_name+'/sentence2graph/sentence_retrieval_model'+'
 print("sg_train_path: ",sg_train_path)
 print("sg_test_path: ",sg_test_path)
 print("output_path: ",output_path)
-train_data = torch.load(sg_train_path)
-test_data = torch.load(sg_test_path)
-sg_data = torch.load(sg_train_path)
+train_data = torch_load(sg_train_path)
+test_data = torch_load(sg_test_path)
+sg_data = torch_load(sg_train_path)
 sg_data.update(test_data)
 
 train_ids = list(train_data.keys())
@@ -111,7 +112,7 @@ def train(cfg, local_rank, distributed, logger):
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
     if os.path.exists(cfg.MODEL.PRETRAINED_DETECTOR_CKPT):
-        checkpoint = torch.load(cfg.MODEL.PRETRAINED_DETECTOR_CKPT, map_location=torch.device("cpu"))
+        checkpoint = torch_load(cfg.MODEL.PRETRAINED_DETECTOR_CKPT, map_location=torch.device("cpu"))
         model.load_state_dict(checkpoint)
 
     # if cfg.SOLVER.PRE_VAL:
@@ -125,7 +126,7 @@ def train(cfg, local_rank, distributed, logger):
 
     # test_result = run_test(cfg, model, test_data_loader, distributed, logger)
     # evaluator(logger, test_result)
-    # torch.save(test_result, output_path % ('test', 0))
+    # torch_save(test_result, output_path % ('test', 0))
 
     print_first_grad = True
     for epoch in range(cfg.SOLVER.MAX_ITER):
@@ -185,20 +186,20 @@ def train(cfg, local_rank, distributed, logger):
                                                                           lr=optimizer.param_groups[-1]["lr"]))
 
         if epoch % checkpoint_period == 0:
-            torch.save(model.state_dict(), os.path.join(cfg.OUTPUT_DIR, "model_{}.pytorch".format(str(epoch))))
+            torch_save(model.state_dict(), os.path.join(cfg.OUTPUT_DIR, "model_{}.pytorch".format(str(epoch))))
         if epoch == max_iter:
-            torch.save(model.state_dict(), os.path.join(cfg.OUTPUT_DIR, "model_final.pytorch"))
+            torch_save(model.state_dict(), os.path.join(cfg.OUTPUT_DIR, "model_final.pytorch"))
 
         val_result = None  # used for scheduler updating
         if cfg.SOLVER.TO_VAL and epoch % cfg.SOLVER.VAL_PERIOD == 0:
             logger.info("Start testing")
             test_result = run_test(cfg, model, test_data_loader, distributed, logger)
             test_similarity = evaluator(logger, test_result)
-            torch.save({'result' : test_result, 'similarity' : test_similarity}, output_path % ('test', epoch))
+            torch_save({'result' : test_result, 'similarity' : test_similarity}, output_path % ('test', epoch))
             logger.info("Start validating")
             val_result = run_test(cfg, model, val_data_loader, distributed, logger)
             val_similarity = evaluator(logger, val_result)
-            torch.save({'result' : val_result, 'similarity' : val_similarity}, output_path % ('val', epoch))
+            torch_save({'result' : val_result, 'similarity' : val_similarity}, output_path % ('val', epoch))
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # assert cfg.SOLVER.SCHEDULE.TYPE != "WarmupReduceLROnPlateau"

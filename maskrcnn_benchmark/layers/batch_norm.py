@@ -1,9 +1,9 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-from torch import nn
+from torch import zeros as torch_zeros, ones as torch_ones, float16 as torch_float16
+from torch.nn import Module
 
 
-class FrozenBatchNorm2d(nn.Module):
+class FrozenBatchNorm2d(Module):
     """
     BatchNorm2d where the batch statistics and the affine parameters
     are fixed
@@ -11,14 +11,14 @@ class FrozenBatchNorm2d(nn.Module):
 
     def __init__(self, n):
         super(FrozenBatchNorm2d, self).__init__()
-        self.register_buffer("weight", torch.ones(n))
-        self.register_buffer("bias", torch.zeros(n))
-        self.register_buffer("running_mean", torch.zeros(n))
-        self.register_buffer("running_var", torch.ones(n))
+        self.register_buffer("weight", torch_ones(n))
+        self.register_buffer("bias", torch_zeros(n))
+        self.register_buffer("running_mean", torch_zeros(n))
+        self.register_buffer("running_var", torch_ones(n))
 
     def forward(self, x):
         # Cast all fixed parameters to half() if necessary
-        if x.dtype == torch.float16:
+        if x.dtype == torch_float16:
             self.weight = self.weight.half()
             self.bias = self.bias.half()
             self.running_mean = self.running_mean.half()

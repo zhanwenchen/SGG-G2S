@@ -1,8 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 
 
-import time
-import datetime
+from time import time as time_time
+from datetime import timedelta as datetime_timedelta
 
 
 class Timer(object):
@@ -16,10 +16,10 @@ class Timer(object):
     def tic(self):
         # using time.time instead of time.clock because time time.clock
         # does not normalize for multithreading
-        self.start_time = time.time()
+        self.start_time = time_time()
 
     def toc(self, average=True):
-        self.add(time.time() - self.start_time)
+        self.add(time_time() - self.start_time)
         if average:
             return self.average_time
         else:
@@ -37,10 +37,10 @@ class Timer(object):
         self.diff = 0.0
 
     def avg_time_str(self):
-        time_str = str(datetime.timedelta(seconds=self.average_time))
+        time_str = str(datetime_timedelta(seconds=self.average_time))
         return time_str
 
 
 def get_time_str(time_diff):
-    time_str = str(datetime.timedelta(seconds=time_diff))
+    time_str = str(datetime_timedelta(seconds=time_diff))
     return time_str
