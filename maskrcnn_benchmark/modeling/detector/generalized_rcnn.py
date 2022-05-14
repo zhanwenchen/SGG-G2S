@@ -65,9 +65,12 @@ class GeneralizedRCNN(nn.Module):
         # torch.Size([16, 256, 16, 10])
 
         proposals, proposal_losses = self.rpn(images, features, targets)
+        del images
+
         # boxlist
         if self.roi_heads:
             _, result, detector_losses = self.roi_heads(features, proposals, targets, logger, boxes_global=boxes_global)
+            del boxes_global
         else:
             # RPN-only models don't have roi_heads
             result = proposals

@@ -7,8 +7,8 @@ Basic training script for PyTorch
 # NOTE: this should be the first import (no not reorder)
 
 import argparse
+from os import environ as os_environ
 from os.path import join as os_path_join
-import os
 from time import time as time_time
 import datetime
 import random
@@ -459,7 +459,7 @@ def main():
 
     args = parser.parse_args()
 
-    num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
+    num_gpus = int(os_environ["WORLD_SIZE"]) if "WORLD_SIZE" in os_environ else 1
     args.distributed = num_gpus > 1
 
     if args.distributed:

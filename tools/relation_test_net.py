@@ -5,7 +5,7 @@ from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:sk
 
 import argparse
 from os import environ as os_environ
-from os.path import join as os_path_join
+from os.path import join as os_path_join, basename as os_path_basename
 from resource import RLIMIT_NOFILE, getrlimit, setrlimit
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -62,8 +62,8 @@ def main():
     output_dir = cfg.OUTPUT_DIR
     if output_dir:
         mkdir(output_dir)
-    model_name = os_environ['MODEL_NAME']
-    logger = setup_logger("maskrcnn_benchmark", output_dir, get_rank(), filename=f'log_test_{model_name}.txt')
+    model_checkpoint_name = os_path_basename(cfg.MODEL.WEIGHT)
+    logger = setup_logger("maskrcnn_benchmark", output_dir, get_rank(), filename=f'log_test_{model_checkpoint_name}.txt')
     logger.info("Using {} GPUs".format(num_gpus))
     logger.info(cfg)
 

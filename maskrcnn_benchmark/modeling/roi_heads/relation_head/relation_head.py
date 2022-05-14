@@ -74,6 +74,7 @@ class ROIRelationHead(Module):
         # torch.Size([1280, 4096])
         with torch_no_grad():
             global_image_features = self.box_feature_extractor(features, boxes_global) # torch.Size([16, 4096]) # TODO: if this works, then I won't need to implement the features 5=>1 reduction myself and then can move on to the linear? layers design and feature concat.
+        del boxes_global
 
         if self.cfg.MODEL.ATTRIBUTE_ON:
             att_features = self.att_feature_extractor(features, proposals)
@@ -87,13 +88,15 @@ class ROIRelationHead(Module):
         # final classifier that converts the features into predictions
         # should corresponding to all the functions and layers after the self.context class
         refine_logits, relation_logits, add_losses = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=logger, global_image_features=global_image_features)
-
+        del global_image_features, union_features, rel_binarys
         # for test
         if not self.training:
             result = self.post_processor((relation_logits, refine_logits), rel_pair_idxs, proposals)
             return roi_features, result, {}
+        del rel_pair_idxs
 
         loss_relation, loss_refine = self.loss_evaluator(proposals, rel_labels, relation_logits, refine_logits)
+        del rel_labels
 
         if self.cfg.MODEL.ATTRIBUTE_ON and isinstance(loss_refine, (list, tuple)):
             output_losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine[0], loss_refine_att=loss_refine[1])

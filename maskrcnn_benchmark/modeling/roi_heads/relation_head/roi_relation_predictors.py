@@ -161,12 +161,14 @@ class TransformerTransferGSCPredictor(Module):
         # (Pdb) edge_ctx.size()
         # torch.Size([1280, 768])
         edge_rep = self.post_emb(edge_ctx)
+        del edge_ctx
         # (Pdb) edge_ctx.size()
         # torch.Size([1280, 1536])
         edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim) # torch.Size([1280, 2, 768])
 
         head_rep = edge_rep[:, 0].contiguous().view(-1, self.hidden_dim) # torch.Size([1280, 768])
         tail_rep = edge_rep[:, 1].contiguous().view(-1, self.hidden_dim) # torch.Size([1280, 768])
+        del edge_rep
 
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [len(b) for b in proposals]
@@ -175,59 +177,64 @@ class TransformerTransferGSCPredictor(Module):
         head_reps = head_rep.split(num_objs, dim=0) # 16 * torch.Size([80, 768])
         tail_reps = tail_rep.split(num_objs, dim=0) # 16 * torch.Size([80, 768])
         obj_preds = obj_preds.split(num_objs, dim=0) # 16 * torch.Size([80])
-
+        del head_rep, tail_rep
         # from object level feature to pairwise relation level feature
         prod_reps = []
         pair_preds = []
-        # pairs_culsum = 0
-        # new_to_old = torch_empty(union_features.size(0), dtype=int)
-        for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
+        pairs_culsum = 0
+        global_features_mapped = torch_empty_like(union_features, dtype=union_features.dtype, device=union_features.device)
+        for img_idx, (pair_idx, head_rep, tail_rep, obj_pred) in enumerate(zip(rel_pair_idxs, head_reps, tail_reps, obj_preds)):
             prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
             pair_preds.append(obj_pred[pair_idx])
-            # new_to_old[pairs_culsum:pairs_culsum+len(pair_idx)] = img_idx
-            # pairs_culsum += len(pair_idx)
-        del global_image_features
+            global_features_mapped[pairs_culsum:pairs_culsum+len(pair_idx)] = global_image_features[img_idx]
+            pairs_culsum += len(pair_idx)
+        del global_image_features, head_reps, tail_reps, obj_preds
         prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536]) torch.Size([5022, 1536]) # # REVIEW: Is this some sort of stateful bug?
+        del prod_reps
         pair_pred = cat(pair_preds, dim=0) # torch.Size([3009, 2])
+        del pair_preds
         # global_features_mapped[new_to_old] = global_image_features
 
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096])
 
-        # 1. Just the context suboutput
-        # 1A. context
-        union_ctx = self.context_union(union_features, num_rels) # torch.Size([506, 4096]) =>
-
-        # 2. Post context for the overall model
-        union_rep = self.post_emb_union(union_ctx)
-
         # use union box and mask convolution
         if self.use_vision: # True
             if self.union_single_not_match: # False
-                visual_rep = ctx_gate * self.up_dim(union_rep)
+                visual_rep = ctx_gate * self.up_dim(union_features)
             else:
-                visual_rep = ctx_gate * union_rep # torch.Size([3009, 4096])
+                visual_rep = ctx_gate * union_features # torch.Size([3009, 4096])
 
+        del ctx_gate
         # GSC Context
+        gsc_ctx = self.context_union(global_features_mapped, num_rels) # torch.Size([506, 4096]) =>
+        gsc_rep = self.post_emb_union(gsc_ctx)
+        del gsc_ctx
+        # Union Context
         # 1. Just the context suboutput
         # 1A. context
         union_ctx = self.context_union(union_features, num_rels) # torch.Size([506, 4096]) =>
-
+        del union_features
         # 2. Post context for the overall model
         union_rep = self.post_emb_union(union_ctx)
+        del union_ctx
 
         if not self.with_cleanclf:
-            rel_dists = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) + self.union_att_compress(union_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            rel_dists = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) + self.union_att_compress(union_rep) + self.gsc_compress(gsc_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            del visual_rep, prod_rep, union_rep, gsc_rep
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
+                del pair_pred
                 freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
-                rel_dists = rel_dists + freq_dists_bias # torch.Size([3009, 51])
+                rel_dists += freq_dists_bias # torch.Size([3009, 51])
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep) + self.union_att_compress_clean(union_rep)
+            rel_dists = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep) + self.union_att_compress_clean(union_rep) + self.gsc_compress_clean(gsc_rep)
+            del visual_rep, prod_rep, union_rep, gsc_rep
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
+                del pair_pred
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
-                rel_dists = rel_dists + freq_dists_bias_clean
+                rel_dists += freq_dists_bias_clean
 
         if self.with_transfer:
             rel_dists = (self.pred_adj_nor @ rel_dists.T).T

@@ -66,9 +66,7 @@ class RPNHeadFeatureSingleConv(Module):
 
     def forward(self, x):
         assert isinstance(x, (list, tuple))
-        x = [F_relu(self.conv(z)) for z in x]
-
-        return x
+        return [F_relu(self.conv(z)) for z in x]
 
 
 @registry.RPN_HEADS.register("SingleConvRPNHead")

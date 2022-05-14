@@ -144,6 +144,7 @@ class Pooler(Module):
             return self.poolers[0](x[0], rois)
 
         levels = self.map_levels(boxes)
+        del boxes
 
         num_rois = len(rois)
         num_channels = x[0].shape[1]
@@ -163,6 +164,8 @@ class Pooler(Module):
                 idx_in_level = torch_nonzero(levels == level).squeeze(1)
                 rois_per_level = rois[idx_in_level]
                 result[idx_in_level] = pooler(per_level_feature, rois_per_level).to(dtype)
+                del rois_per_level
+        del rois, levels, level, per_level_feature, pooler
         if self.cat_all_levels: # False
             return self.reduce_channel(result)
         return result

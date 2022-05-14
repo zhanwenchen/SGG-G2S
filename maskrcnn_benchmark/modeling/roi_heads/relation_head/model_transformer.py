@@ -1,7 +1,15 @@
 """
 Based on the implementation of https://github.com/jadore801120/attention-is-all-you-need-pytorch
 """
-from torch import bmm as torch_bmm, no_grad as torch_no_grad, arange as torch_arange, as_tensor as torch_as_tensor, int64 as torch_int64, cat as torch_cat
+from torch import (
+    bmm as torch_bmm,
+    no_grad as torch_no_grad,
+    arange as torch_arange,
+    as_tensor as torch_as_tensor,
+    int64 as torch_int64,
+    cat as torch_cat,
+    float32 as torch_float32,
+)
 from torch.nn import Module, ModuleList, Sequential, Dropout, Softmax, Linear, Conv1d, ReLU, LayerNorm, Embedding
 from torch.nn.functional import softmax as F_softmax, relu as F_relu
 from torch.nn.init import normal_, xavier_normal_, kaiming_normal_
@@ -98,13 +106,14 @@ class MultiHeadAttention(Module):
         if mask is not None:
             mask = mask.repeat(n_head, 1, 1)  # (n*b) x .. x ..
         output, attn = self.attention(q, k, v, mask=mask)
+        del q, k, v, mask
 
         output = output.view(n_head, sz_b, len_q, d_v)
         output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_q, -1)  # b x lq x (n*dv)
 
         output = self.dropout(self.fc(output))
         output = self.layer_norm(output + residual)
-
+        del residual
         return output, attn
 
 
@@ -128,11 +137,11 @@ class PositionwiseFeedForward(Module):
         """
         residual = x
         output = x.transpose(1, 2)
+        del x
         output = self.w_2(F_relu(self.w_1(output)))
         output = output.transpose(1, 2)
         output = self.dropout(output)
-        output = self.layer_norm(output + residual)
-        return output
+        return self.layer_norm(output + residual)
 
 
 class EncoderLayer(Module):
@@ -147,10 +156,10 @@ class EncoderLayer(Module):
     def forward(self, enc_input, non_pad_mask=None, slf_attn_mask=None):
         enc_output, enc_slf_attn = self.slf_attn(
             enc_input, enc_input, enc_input, mask=slf_attn_mask)
-        enc_output *= non_pad_mask.float()
+        enc_output *= non_pad_mask
 
         enc_output = self.pos_ffn(enc_output)
-        enc_output *= non_pad_mask.float()
+        enc_output *= non_pad_mask
 
         return enc_output, enc_slf_attn
 
@@ -184,19 +193,21 @@ class TransformerEncoder(Module):
         num_objs_ = torch_as_tensor(num_objs, device=device, dtype=torch_int64).unsqueeze(1).expand(-1, pad_len)
         slf_attn_mask = torch_arange(pad_len, device=device).view(1, -1).expand(bsz, -1).ge(num_objs_).unsqueeze(
             1).expand(-1, pad_len, -1)  # (bsz, pad_len, pad_len)
-        non_pad_mask = torch_arange(pad_len, device=device).view(1, -1).expand(bsz, -1).lt(
+        non_pad_mask = torch_arange(pad_len, device=device, dtype=torch_float32).view(1, -1).expand(bsz, -1).lt(
             num_objs_).unsqueeze(-1)  # (bsz, pad_len, 1)
 
+        del num_objs_
         # -- Forward
         enc_output = input_feats
+        del input_feats
         for enc_layer in self.layer_stack:
             enc_output, _ = enc_layer(
                 enc_output,
                 non_pad_mask=non_pad_mask,
                 slf_attn_mask=slf_attn_mask)
 
-        enc_output = enc_output[non_pad_mask.squeeze(-1)]
-        return enc_output
+        del slf_attn_mask
+        return enc_output[non_pad_mask.squeeze(-1)]
 
 
 class TransformerContext(Module):
@@ -248,7 +259,7 @@ class TransformerContext(Module):
         self.context_edge = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim,
                                                self.v_dim, self.hidden_dim, self.inner_dim, self.dropout_rate)
 
-    def forward(self, roi_features, proposals, logger=None, features=None):
+    def forward(self, roi_features, proposals, logger=None):
         '''
         Args:
             roi_features:
@@ -290,6 +301,7 @@ class TransformerContext(Module):
         else:
             obj_logits = cat([proposal.get_field("predict_logits") for proposal in proposals], dim=0).detach()
             obj_embed = F_softmax(obj_logits, dim=1) @ self.obj_embed1.weight
+            del obj_logits
 
         # (Pdb) obj_embed.size()
         # torch.Size([1280, 200])
@@ -302,16 +314,19 @@ class TransformerContext(Module):
 
         # encode objects with transformer
         obj_pre_rep = cat((roi_features, obj_embed, pos_embed), -1)
+        del obj_embed, pos_embed
         num_objs = [len(p) for p in proposals]
         obj_pre_rep = self.lin_obj(obj_pre_rep)
         # (Pdb) obj_pre_rep.size()
         # torch.Size([1280, 768])
         obj_feats = self.context_obj(obj_pre_rep, num_objs)
+        del obj_pre_rep
         # (Pdb) obj_feats.size()
         # torch.Size([1280, 768])
 
         # predict obj_dists and obj_preds
         if self.mode == 'predcls':
+            del proposals
             obj_preds = obj_labels
             obj_dists = to_onehot(obj_preds, self.num_obj_cls)
             # (Pdb) obj_dists.size()
@@ -325,8 +340,10 @@ class TransformerContext(Module):
             use_decoder_nms = self.mode == 'sgdet' and not self.training
             if use_decoder_nms:
                 boxes_per_cls = [proposal.get_field('boxes_per_cls') for proposal in proposals]
+                del proposals
                 obj_preds = self.nms_per_cls(obj_dists, boxes_per_cls, num_objs)
             else:
+                del proposals
                 obj_preds = obj_dists[:, 1:].max(1)[1] + 1
                 # obj_preds are object predictions.
                 # (Pdb) obj_preds.size()
@@ -335,7 +352,7 @@ class TransformerContext(Module):
 
             # edge_pre_rep = cat((roi_features, obj_feats, features, self.obj_embed2(obj_preds)), dim=-1)
             edge_pre_rep = cat((roi_features, obj_feats, self.obj_embed2(obj_preds)), dim=-1)
-
+        del roi_features, obj_feats, obj_labels
         # edge context
         # (Pdb) edge_pre_rep.size()
         # torch.Size([1280, 5064])
@@ -344,6 +361,7 @@ class TransformerContext(Module):
         # torch.Size([1280, 768])
 
         edge_ctx = self.context_edge(edge_pre_rep, num_objs)
+        del edge_pre_rep, num_objs
         # (Pdb) edge_ctx.size()
         # torch.Size([1280, 768])
 

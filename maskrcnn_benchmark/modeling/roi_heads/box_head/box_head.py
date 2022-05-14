@@ -51,7 +51,9 @@ class ROIBoxHead(Module):
             if self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
                 # use ground truth box as proposals
                 proposals = [target.copy_with_fields(["labels", "attributes"]) for target in targets]
+                del targets
                 x = self.feature_extractor(features, proposals)
+                del features
                 if self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL:
                     # mode==predcls
                     # return gt proposals and no loss even during training
@@ -61,6 +63,7 @@ class ROIBoxHead(Module):
                     # add field:class_logits into gt proposals, note field:labels is still gt
                     class_logits, _ = self.predictor(x)
                     proposals = add_predict_logits(proposals, class_logits)
+                    del class_logits
                     return x, proposals, {}
             else:
                 # mode==sgdet

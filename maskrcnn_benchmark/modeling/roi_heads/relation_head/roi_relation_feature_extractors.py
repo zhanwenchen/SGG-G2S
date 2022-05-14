@@ -64,11 +64,13 @@ class RelationFeatureExtractor(nn.Module):
         for proposal, rel_pair_idx in zip(proposals, rel_pair_idxs):
             head_proposal = proposal[rel_pair_idx[:, 0]]
             tail_proposal = proposal[rel_pair_idx[:, 1]]
+            num_rel = len(rel_pair_idx)
+            del proposal, rel_pair_idx
             union_proposal = boxlist_union(head_proposal, tail_proposal)
             union_proposals.append(union_proposal)
+            del union_proposal
 
             # use range to construct rectangle, sized (rect_size, rect_size)
-            num_rel = len(rel_pair_idx)
             dummy_x_range = torch_arange(self_rect_size, device=device).view(1, 1, -1).expand(num_rel, self_rect_size, self_rect_size)
             dummy_y_range = torch_arange(self_rect_size, device=device).view(1, -1, 1).expand(num_rel, self_rect_size, self_rect_size)
             # resize bbox to the scale rect_size
@@ -83,15 +85,20 @@ class RelationFeatureExtractor(nn.Module):
                         (dummy_y_range >= tail_proposal.bbox[:,1].floor().view(-1,1,1).long()) & \
                         (dummy_y_range <= tail_proposal.bbox[:,3].ceil().view(-1,1,1).long())).float()
 
+            del head_proposal, tail_proposal, dummy_x_range, dummy_y_range
             rect_input = torch_stack((head_rect, tail_rect), dim=1) # (num_rel, 4, rect_size, rect_size) # torch.Size([651, 2, 27, 27]), torch.Size([110, 2, 27, 27])
+            del head_rect, tail_rect
             rect_inputs.append(rect_input)
-
+            del rect_input
+        del rel_pair_idxs
         # rectangle feature. size (total_num_rel, in_channels, POOLER_RESOLUTION, POOLER_RESOLUTION)
         rect_inputs = torch_cat(rect_inputs, dim=0) # original: rect_inputs = 16 * torch.Size([651, 2, 27, 27]), [650, ...], [110, ...], ... => torch.Size([5049, 2, 27, 27])
         rect_features = self.rect_conv(rect_inputs) # torch.Size([5049, 256, 7, 7])
-
+        del rect_inputs
         # union visual feature. size (total_num_rel, in_channels, POOLER_RESOLUTION, POOLER_RESOLUTION)
         union_vis_features = self.feature_extractor.pooler(x, union_proposals) # union_proposals: 16 * [651..., 650..., 110...] # union_vis_features: torch.Size([5049, 256, 7, 7]) # TODO: need to borrow pooler's 5 layers to 1 reduction. so have a global union feature pooler
+        if not self.cfg.MODEL.ATTRIBUTE_ON:
+            del x, union_proposals
         # like GLCNet: Yong Liu, Ruiping Wang, S. Shan, and Xilin Chen. Structure inference net: . Zellers (MotifNET) models global context (between boxes) by LSTM (but as a state, not from visual features). I can do it by a Linear from visual features.
         # merge two parts
         if self.separate_spatial: # False
@@ -100,6 +107,7 @@ class RelationFeatureExtractor(nn.Module):
             union_features = (region_features, spatial_features)
         else:
             union_features = union_vis_features + rect_features
+            if not self.cfg.MODEL.ATTRIBUTE_ON: del union_vis_features, rect_features
             union_features = self.feature_extractor.forward_without_pool(union_features) # (total_num_rel, out_channels) torch.Size([5049, 4096])
 
         if self.cfg.MODEL.ATTRIBUTE_ON:

@@ -83,6 +83,7 @@ class FPN2MLPFeatureExtractor(nn.Module):
         # torch.Size([1280, 256, 7, 7])
 
         x = self.pooler(x, proposals)
+        del proposals
         # (Pdb) x.size()
         # torch.Size([16196, 256, 7, 7])
         # (Pdb) x.size()
@@ -103,18 +104,15 @@ class FPN2MLPFeatureExtractor(nn.Module):
         # (Pdb) x.size()
         # torch.Size([1280, 4096])
 
-        x = F_relu(self.fc7(x))
+        return F_relu(self.fc7(x))
         # (Pdb) torch.Size([16196, 4096])
         # (Pdb) x.size()
         # torch.Size([1280, 4096])
 
-        return x
-
     def forward_without_pool(self, x):
         x = x.view(x.size(0), -1)
         x = F_relu(self.fc6(x))
-        x = F_relu(self.fc7(x))
-        return x
+        return F_relu(self.fc7(x))
 
 
 @registry.ROI_BOX_FEATURE_EXTRACTORS.register("FPNXconv1fcFeatureExtractor")

@@ -67,6 +67,7 @@ class CombinedROIHeads(ModuleDict):
             # During training, self.box() will return the unaltered proposals as "detections"
             # this makes the API consistent during training and testing
             x, detections, loss_relation = self.relation(features, detections, targets, logger, boxes_global=boxes_global)
+            del features, targets, boxes_global
             losses.update(loss_relation)
 
         return x, detections, losses

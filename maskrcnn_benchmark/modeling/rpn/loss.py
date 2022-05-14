@@ -41,6 +41,7 @@ class RPNLossComputation(object):
     def match_targets_to_anchors(self, anchor, target, copied_fields=[]):
         match_quality_matrix = boxlist_iou(target, anchor)
         matched_idxs = self.proposal_matcher(match_quality_matrix)
+        del match_quality_matrix
         # RPN doesn't need any fields from target
         # for creating the labels, so clear them all
         target = target.copy_with_fields(copied_fields)
@@ -49,7 +50,9 @@ class RPNLossComputation(object):
         # GT in the image, and matched_idxs can be -2, which goes
         # out of bounds
         matched_targets = target[matched_idxs.clamp(min=0)]
+        del target
         matched_targets.add_field("matched_idxs", matched_idxs)
+        del matched_idxs
         return matched_targets
 
     def prepare_targets(self, anchors, targets):
