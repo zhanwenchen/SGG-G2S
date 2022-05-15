@@ -84,12 +84,10 @@ class TransformerTransferGSCPredictor(Module):
 
         # initialize layer parameters
         if self.with_cleanclf is False:
-            self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
-            self.union_att_compress = Linear(self.pooling_dim, self.num_rel_cls)
+            self.rel_compress = Linear(self.pooling_dim * 2, self.num_rel_cls)
             self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
             self.gsc_compress = Linear(self.pooling_dim, self.num_rel_cls)
             layer_init_kaiming_normal(self.rel_compress)
-            layer_init_kaiming_normal(self.union_att_compress)
             layer_init_kaiming_normal(self.ctx_compress)
             layer_init_kaiming_normal(self.gsc_compress)
             if self.use_bias:
@@ -98,12 +96,10 @@ class TransformerTransferGSCPredictor(Module):
 
         # the transfer classifier
         if self.with_cleanclf:
-            self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
-            self.union_att_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
+            self.rel_compress_clean = Linear(self.pooling_dim * 2, self.num_rel_cls)
             self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
             self.gsc_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
             layer_init_kaiming_normal(self.rel_compress_clean)
-            layer_init_kaiming_normal(self.union_att_compress_clean)
             layer_init_kaiming_normal(self.ctx_compress_clean)
             layer_init_kaiming_normal(self.gsc_compress_clean)
             # self.gcns_rel_clean = GCN(self.pooling_dim, self.pooling_dim, self.dropout_rate)
@@ -218,23 +214,28 @@ class TransformerTransferGSCPredictor(Module):
         union_rep = self.post_emb_union(union_ctx)
         del union_ctx
 
+        union_reps_cat = torch_cat([visual_rep, union_rep], dim=1) # Should be [506, 8192]
+        del visual_rep, union_rep
+
         if not self.with_cleanclf:
-            rel_dists = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) + self.union_att_compress(union_rep) + self.gsc_compress(gsc_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
-            del visual_rep, prod_rep, union_rep, gsc_rep
+            rel_dists = self.rel_compress(union_reps_cat) + self.ctx_compress(prod_rep) + self.gsc_compress(gsc_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            del union_reps_cat
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 del pair_pred
                 freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
                 rel_dists += freq_dists_bias # torch.Size([3009, 51])
+                del freq_dists_bias
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep) + self.union_att_compress_clean(union_rep) + self.gsc_compress_clean(gsc_rep)
-            del visual_rep, prod_rep, union_rep, gsc_rep
+            rel_dists = self.rel_compress_clean(union_reps_cat) + self.ctx_compress_clean(prod_rep) + self.gsc_compress_clean(gsc_rep)
+            del union_reps_cat
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
                 del pair_pred
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
                 rel_dists += freq_dists_bias_clean
+                del freq_dists_bias_clean
 
         if self.with_transfer:
             rel_dists = (self.pred_adj_nor @ rel_dists.T).T
