@@ -54,12 +54,6 @@ class TransformerTransferGSCPredictor(Module):
         self.num_head = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.NUM_HEAD
         self.edge_layer = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.REL_LAYER
 
-        # New GSC
-        self.context_gsc = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim, self.v_dim, self.pooling_dim, self.inner_dim, self.dropout_rate)
-        self.post_emb_gsc = Linear(self.pooling_dim, self.pooling_dim)
-        # layer_init(, 10.0 * (1.0 / self.pooling_dim) ** 0.5, normal=True)
-        layer_init_kaiming_normal(self.post_emb_gsc)
-
         self.context_union = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim, self.v_dim, self.pooling_dim, self.inner_dim, self.dropout_rate)
         self.post_emb_union = Linear(self.pooling_dim, self.pooling_dim)
         # layer_init(, 10.0 * (1.0 / self.pooling_dim) ** 0.5, normal=True)
@@ -86,10 +80,8 @@ class TransformerTransferGSCPredictor(Module):
         if self.with_cleanclf is False:
             self.rel_compress = Linear(self.pooling_dim * 2, self.num_rel_cls)
             self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
-            self.gsc_compress = Linear(self.pooling_dim, self.num_rel_cls)
             layer_init_kaiming_normal(self.rel_compress)
             layer_init_kaiming_normal(self.ctx_compress)
-            layer_init_kaiming_normal(self.gsc_compress)
             if self.use_bias:
                 # convey statistics into FrequencyBias to avoid loading again
                 self.freq_bias = FrequencyBias(config, statistics)
@@ -98,10 +90,8 @@ class TransformerTransferGSCPredictor(Module):
         if self.with_cleanclf:
             self.rel_compress_clean = Linear(self.pooling_dim * 2, self.num_rel_cls)
             self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
-            self.gsc_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
             layer_init_kaiming_normal(self.rel_compress_clean)
             layer_init_kaiming_normal(self.ctx_compress_clean)
-            layer_init_kaiming_normal(self.gsc_compress_clean)
             # self.gcns_rel_clean = GCN(self.pooling_dim, self.pooling_dim, self.dropout_rate)
             # self.gcns_ctx_clean = GCN(self.hidden_dim * 2, self.hidden_dim * 2, self.dropout_rate)
             if self.use_bias:
@@ -177,19 +167,14 @@ class TransformerTransferGSCPredictor(Module):
         # from object level feature to pairwise relation level feature
         prod_reps = []
         pair_preds = []
-        pairs_culsum = 0
-        global_features_mapped = torch_empty_like(union_features, dtype=union_features.dtype, device=union_features.device)
-        for img_idx, (pair_idx, head_rep, tail_rep, obj_pred) in enumerate(zip(rel_pair_idxs, head_reps, tail_reps, obj_preds)):
+        for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
             prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
             pair_preds.append(obj_pred[pair_idx])
-            global_features_mapped[pairs_culsum:pairs_culsum+len(pair_idx)] = global_image_features[img_idx]
-            pairs_culsum += len(pair_idx)
         del global_image_features, head_reps, tail_reps, obj_preds
         prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536]) torch.Size([5022, 1536]) # # REVIEW: Is this some sort of stateful bug?
         del prod_reps
         pair_pred = cat(pair_preds, dim=0) # torch.Size([3009, 2])
         del pair_preds
-        # global_features_mapped[new_to_old] = global_image_features
 
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096])
 
@@ -201,10 +186,6 @@ class TransformerTransferGSCPredictor(Module):
                 visual_rep = ctx_gate * union_features # torch.Size([3009, 4096])
 
         del ctx_gate
-        # GSC Context
-        gsc_ctx = self.context_union(global_features_mapped, num_rels) # torch.Size([506, 4096]) =>
-        gsc_rep = self.post_emb_union(gsc_ctx)
-        del gsc_ctx
         # Union Context
         # 1. Just the context suboutput
         # 1A. context
@@ -218,24 +199,21 @@ class TransformerTransferGSCPredictor(Module):
         del visual_rep, union_rep
 
         if not self.with_cleanclf:
-            rel_dists = self.rel_compress(union_reps_cat) + self.ctx_compress(prod_rep) + self.gsc_compress(gsc_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            rel_dists = self.rel_compress(union_reps_cat) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
             del union_reps_cat
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 del pair_pred
-                freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
-                rel_dists += freq_dists_bias # torch.Size([3009, 51])
-                del freq_dists_bias
+                rel_dists += F_dropout(freq_dists_bias, 0.3, training=self.training) # torch.Size([3009, 51])
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists = self.rel_compress_clean(union_reps_cat) + self.ctx_compress_clean(prod_rep) + self.gsc_compress_clean(gsc_rep)
+            rel_dists = self.rel_compress_clean(union_reps_cat) + self.ctx_compress_clean(prod_rep)
             del union_reps_cat
             if self.use_bias:
-                freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred)
+                freq_dists_bias = self.freq_bias_clean.index_with_labels(pair_pred)
                 del pair_pred
-                freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
-                rel_dists += freq_dists_bias_clean
-                del freq_dists_bias_clean
+                rel_dists += F_dropout(freq_dists_bias, 0.3, training=self.training)
+        del freq_dists_bias
 
         if self.with_transfer:
             rel_dists = (self.pred_adj_nor @ rel_dists.T).T
