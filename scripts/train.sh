@@ -3,7 +3,7 @@ if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1
     echo "TRAINING Predcls"
-    MODEL_NAME="union_gsc_v3a" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    MODEL_NAME="union_gsc_v3a1" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     mkdir ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./tools/ ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./scripts/ ./checkpoints/${MODEL_NAME}/ &&
