@@ -66,8 +66,6 @@ class TransformerTransferGSCPredictor(Module):
         self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
         # layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
         layer_init_kaiming_normal(self.post_emb)
-        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
-        layer_init_kaiming_normal(self.post_cat)
 
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
@@ -78,7 +76,7 @@ class TransformerTransferGSCPredictor(Module):
 
         # initialize layer parameters
         if self.with_cleanclf is False:
-            self.rel_compress = Linear(self.pooling_dim * 2, self.num_rel_cls)
+            self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
             self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
             layer_init_kaiming_normal(self.rel_compress)
             layer_init_kaiming_normal(self.ctx_compress)
@@ -88,7 +86,7 @@ class TransformerTransferGSCPredictor(Module):
 
         # the transfer classifier
         if self.with_cleanclf:
-            self.rel_compress_clean = Linear(self.pooling_dim * 2, self.num_rel_cls)
+            self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
             self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
             layer_init_kaiming_normal(self.rel_compress_clean)
             layer_init_kaiming_normal(self.ctx_compress_clean)
@@ -176,16 +174,6 @@ class TransformerTransferGSCPredictor(Module):
         pair_pred = cat(pair_preds, dim=0) # torch.Size([3009, 2])
         del pair_preds
 
-        ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096])
-
-        # use union box and mask convolution
-        if self.use_vision: # True
-            if self.union_single_not_match: # False
-                visual_rep = ctx_gate * self.up_dim(union_features)
-            else:
-                visual_rep = ctx_gate * union_features # torch.Size([3009, 4096])
-
-        del ctx_gate
         # Union Context
         # 1. Just the context suboutput
         # 1A. context
@@ -195,20 +183,17 @@ class TransformerTransferGSCPredictor(Module):
         union_rep = self.post_emb_union(union_ctx)
         del union_ctx
 
-        union_reps_cat = torch_cat([visual_rep, union_rep], dim=1) # Should be [506, 8192]
-        del visual_rep, union_rep
-
         if not self.with_cleanclf:
-            rel_dists = self.rel_compress(union_reps_cat) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
-            del union_reps_cat
+            rel_dists = self.rel_compress(union_rep) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            del union_rep
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 del pair_pred
                 rel_dists += F_dropout(freq_dists_bias, 0.3, training=self.training) # torch.Size([3009, 51])
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists = self.rel_compress_clean(union_reps_cat) + self.ctx_compress_clean(prod_rep)
-            del union_reps_cat
+            rel_dists = self.rel_compress_clean(union_rep) + self.ctx_compress_clean(prod_rep)
+            del union_rep
             if self.use_bias:
                 freq_dists_bias = self.freq_bias_clean.index_with_labels(pair_pred)
                 del pair_pred
