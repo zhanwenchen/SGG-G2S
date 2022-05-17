@@ -4,9 +4,9 @@ conda activate sgb
 # The only way 1.10.1 works is if you install it first before anything else.
 # Verify with import torch; torch.cuda.is_available(). Should be true.
 conda install pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 cudatoolkit=11.3 -c pytorch -c conda-forge
-conda install -c conda-forge overrides
+conda install -c conda-forge overrides tensorboard
 conda install ipython scipy h5py ninja yacs cython matplotlib tqdm
-pip install opencv-python
+pip install opencv-python setuptools==59.5.0
 
 mkdir ~/sgb && cd ~/sgb
 export INSTALL_DIR=$(pwd)
