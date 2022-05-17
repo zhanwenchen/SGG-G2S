@@ -7,8 +7,8 @@ from torch import (
     empty_like as torch_empty_like, empty as torch_empty,
     float32 as torch_float32,
 )
-from torch.nn import Module, Linear
-from torch.nn.functional import dropout as F_dropout
+from torch.nn import Module, Linear, ModuleList, Sequential, GroupNorm, ReLU
+from torch.nn.functional import dropout as F_dropout, relu as F_relu
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.modeling.utils import cat
 from maskrcnn_benchmark.data import get_dataset_statistics
@@ -16,6 +16,7 @@ from maskrcnn_benchmark.layers.gcn._utils import adj_normalize
 from .model_motifs import FrequencyBias
 from .model_transformer import TransformerContext, TransformerEncoder
 from .utils_relation import layer_init_kaiming_normal
+from .lrga import LowRankAttention
 
 
 @registry.ROI_RELATION_PREDICTOR.register("TransformerTransferGSCPredictor")
@@ -54,11 +55,6 @@ class TransformerTransferGSCPredictor(Module):
         self.num_head = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.NUM_HEAD
         self.edge_layer = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.REL_LAYER
 
-        self.context_union = TransformerEncoder(self.edge_layer, self.num_head, self.k_dim, self.v_dim, self.pooling_dim, self.inner_dim, self.dropout_rate)
-        self.post_emb_union = Linear(self.pooling_dim, self.pooling_dim)
-        # layer_init(, 10.0 * (1.0 / self.pooling_dim) ** 0.5, normal=True)
-        layer_init_kaiming_normal(self.post_emb_union)
-
         # module construct
         self.context_layer = TransformerContext(config, obj_classes, rel_classes, in_channels)
 
@@ -73,6 +69,28 @@ class TransformerTransferGSCPredictor(Module):
             layer_init_kaiming_normal(self.up_dim)
         else:
             self.union_single_not_match = False
+
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
+        layer_init_kaiming_normal(self.post_cat)
+
+        # LRGA stuff
+        self.time_step_num = config.MODEL.ROI_RELATION_HEAD.LRGA.TIME_STEP_NUM
+        self.k = config.MODEL.ROI_RELATION_HEAD.LRGA.K
+        self.num_groups = config.MODEL.ROI_RELATION_HEAD.LRGA.NUM_GROUPS
+        self.dropout = config.MODEL.ROI_RELATION_HEAD.LRGA.DROPOUT
+        self.in_channels = self.pooling_dim
+        self.hidden_channels = self.pooling_dim
+        self.out_channels = self.pooling_dim
+
+        self.attention = ModuleList()
+        self.dimension_reduce = ModuleList()
+        self.attention.append(LowRankAttention(self.k, self.in_channels, self.dropout))
+        self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels), ReLU()))
+        for _ in range(self.time_step_num):
+            self.attention.append(LowRankAttention(self.k, self.hidden_channels, self.dropout))
+            self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels)))
+        self.dimension_reduce[-1] = Sequential(Linear(2*self.k + self.hidden_channels, self.out_channels))
+        self.gn = ModuleList([GroupNorm(self.num_groups, self.hidden_channels) for _ in range(self.time_step_num-1)])
 
         # initialize layer parameters
         if self.with_cleanclf is False:
@@ -177,23 +195,33 @@ class TransformerTransferGSCPredictor(Module):
         # Union Context
         # 1. Just the context suboutput
         # 1A. context
-        union_ctx = self.context_union(union_features, num_rels) # torch.Size([506, 4096]) =>
+        # union_ctx = self.context_union(union_features, num_rels) # torch.Size([506, 4096]) =>
+        # del union_features
+        # # 2. Post context for the overall model
+        # union_rep = self.post_emb_union(union_ctxself.pooling_dim
+        # del union_ctx
+        visual_rep = union_features
+        for t in range(self.time_step_num):
+            ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096]) # TODO: Use F_sigmoid?
+            visual_rep *= ctx_gate # torch.Size([3009, 4096])
+            del ctx_gate
+            visual_rep = self.dimension_reduce[t](torch_cat((self.attention[t](union_features), visual_rep), dim=1))
+            if t != self.time_step_num - 1:
+                # No ReLU nor batchnorm for last layer
+                visual_rep = self.gn[t](F_relu(visual_rep))
         del union_features
-        # 2. Post context for the overall model
-        union_rep = self.post_emb_union(union_ctx)
-        del union_ctx
 
         if not self.with_cleanclf:
-            rel_dists = self.rel_compress(union_rep) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
-            del union_rep
+            rel_dists = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            del visual_rep, prod_rep
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 del pair_pred
                 rel_dists += F_dropout(freq_dists_bias, 0.3, training=self.training) # torch.Size([3009, 51])
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists = self.rel_compress_clean(union_rep) + self.ctx_compress_clean(prod_rep)
-            del union_rep
+            rel_dists = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep)
+            del visual_rep, prod_rep
             if self.use_bias:
                 freq_dists_bias = self.freq_bias_clean.index_with_labels(pair_pred)
                 del pair_pred
