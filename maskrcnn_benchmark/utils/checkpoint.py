@@ -42,7 +42,7 @@ class Checkpointer(object):
         data["model"] = self.model.state_dict()
         if self.optimizer is not None:
             data["optimizer"] = self.optimizer.state_dict()
-        if self.scheduler is not None and not self.custom_scheduler:
+        if self.scheduler is not None:
             data["scheduler"] = self.scheduler.state_dict()
         data.update(kwargs)
 
@@ -72,6 +72,9 @@ class Checkpointer(object):
                     self.scheduler.last_epoch = checkpoint["iteration"]
                 else:
                     self.scheduler.load_state_dict(checkpoint.pop("scheduler"))
+            if 'scheduler' not in checkpoint and 'iteration' in checkpoint and self.scheduler:
+                self.logger.info("Loading scheduler from {}".format(f))
+                self.scheduler.last_epoch = checkpoint["iteration"]
 
         # return any further checkpoint data
         return checkpoint
