@@ -28,8 +28,8 @@ pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp
 
 # install PyTorch Detection
 cd $INSTALL_DIR
-git clone https://github.com/KaihuaTang/Scene-Graph-Benchmark.pytorch.git scene-graph-benchmark
-cd scene-graph-benchmark
+git clone git@github.com:zhanwenchen/SGG-G2S.git gsc
+cd gsc
 
 # the following will install the lib with
 # symbolic links, so that you can modify
