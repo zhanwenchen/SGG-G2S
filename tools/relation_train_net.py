@@ -94,15 +94,19 @@ def train(cfg, local_rank, distributed, logger):
 
     optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1, rl_factor=float(num_batch))
     scheduler = make_lr_scheduler(cfg, optimizer, logger)
-    checkpointer = DetectronCheckpointer(cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True)
+    debug_print(logger, 'instantiating checkpointer')
 
-    if cfg.MODEL.WEIGHT != '':
+    checkpointer = DetectronCheckpointer(cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True)
+    debug_print(logger, 'finished instantiating checkpointer')
+
+    if not cfg.MODEL.WEIGHT.startswith('catalog://') and cfg.MODEL.PRETRAINED_DETECTOR_CKPT != '':
+        debug_print(logger, f'{__file__}.train: CONTINUE Learning with {cfg.MODEL.WEIGHT}')
         checkpointer.load(cfg.MODEL.WEIGHT)
         arguments["iteration"] = scheduler.last_epoch
         assert cfg.SOLVER.MAX_ITER != arguments["iteration"]
         debug_print(logger, f'{__file__}.train: CONTINUE Learning with {cfg.MODEL.WEIGHT} from iteration {arguments["iteration"]}')
     else:
-        debug_print(logger, f'{__file__}.train: Learning FROM SCRATCH')
+        debug_print(logger, f'{__file__}.train: Learning FROM SCRATCH with pretrained detector {cfg.MODEL.PRETRAINED_DETECTOR_CKPT}')
 
         arguments["iteration"] = 0
 
