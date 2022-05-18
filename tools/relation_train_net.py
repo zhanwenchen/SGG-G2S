@@ -141,6 +141,8 @@ def train(cfg, local_rank, distributed, logger):
                         "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
                         "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
                     }
+                    if cfg.MODEL.USING_GSC:
+                        load_mapping_classifier["roi_heads.relation.predictor.gsc_compress_clean"] = "roi_heads.relation.predictor.gsc_compress",
                 if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "VCTreePredictor":
                     load_mapping_classifier = {
                         "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
