@@ -3,7 +3,7 @@ if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1
     echo "TRAINING Predcls"
-    MODEL_NAME="union_gsc_v3a1" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    MODEL_NAME="union_only_v2b_1" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     mkdir ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./tools/ ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./scripts/ ./checkpoints/${MODEL_NAME}/ &&
@@ -17,7 +17,7 @@ if [ $1 == "0" ]; then
     --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
     MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
     MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
-    SOLVER.IMS_PER_BATCH 8 \
+    SOLVER.IMS_PER_BATCH 16 \
     TEST.IMS_PER_BATCH ${NUM_GPUS} \
     SOLVER.PRE_VAL True \
     MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
@@ -32,7 +32,6 @@ if [ $1 == "0" ]; then
     MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
     OUTPUT_DIR ./checkpoints/${MODEL_NAME}
     # MODEL.PRETRAINED_MODEL_CKPT /home/zhanwen/bpl_og/checkpoints/${MODEL_NAME}/model_0014000.pth \
-
 elif [ $1 == "1" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1

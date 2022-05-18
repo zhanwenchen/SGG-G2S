@@ -189,6 +189,7 @@ def train(cfg, local_rank, distributed, logger):
     if cfg.SOLVER.PRE_VAL and val_before:
         logger.info("Validate before training")
         run_val(cfg, model, val_data_loaders, distributed, logger, writer, 0, output_dir)
+        logger.info("Finished validation before training")
 
     logger.info("Start training")
     meters = MetricLogger(delimiter="  ")
@@ -487,10 +488,13 @@ def main():
     save_config(cfg, output_config_path)
 
     model = train(cfg, args.local_rank, args.distributed, logger)
+    model_name = os_environ.get('MODEL_NAME')
 
     if not args.skip_test:
         run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER)
+        logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
 
+    logger.info(f'Finished training model {model_name} at a total of {cfg.SOLVER.MAX_ITER} iterations')
 
 if __name__ == "__main__":
     main()

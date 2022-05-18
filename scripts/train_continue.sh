@@ -33,8 +33,7 @@ if [ $1 == "0" ]; then
     SOLVER.CHECKPOINT_PERIOD 2000 \
     GLOVE_DIR ./datasets/vg/ \
     MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-    OUTPUT_DIR ./checkpoints/${MODEL_NAME_NEW}
-
+    OUTPUT_DIR ./checkpoints/${MODEL_NAME_NEW};
 elif [ $1 == "1" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1
