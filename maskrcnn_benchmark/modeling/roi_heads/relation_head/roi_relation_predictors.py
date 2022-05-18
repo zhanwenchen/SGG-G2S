@@ -82,15 +82,15 @@ class TransformerTransferGSCPredictor(Module):
         self.hidden_channels = self.pooling_dim
         self.out_channels = self.pooling_dim
 
-        self.attention = ModuleList()
-        self.dimension_reduce = ModuleList()
-        self.attention.append(LowRankAttention(self.k, self.in_channels, self.dropout))
-        self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels), ReLU()))
-        for _ in range(self.time_step_num):
-            self.attention.append(LowRankAttention(self.k, self.hidden_channels, self.dropout))
-            self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels)))
-        self.dimension_reduce[-1] = Sequential(Linear(2*self.k + self.hidden_channels, self.out_channels))
-        self.gn = ModuleList([GroupNorm(self.num_groups, self.hidden_channels) for _ in range(self.time_step_num-1)])
+        # self.attention = ModuleList()
+        # self.dimension_reduce = ModuleList()
+        self.attention = LowRankAttention(self.k, self.in_channels, self.dropout)
+        # self.dimension_reduce = Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels), ReLU())
+        self.dimension_reduce = Sequential(Linear(2*self.k + self.hidden_channels, self.out_channels))
+        self.gn = GroupNorm(self.num_groups, self.hidden_channels)
+        # for _ in range(self.time_step_num):
+        #     self.attention.append(LowRankAttention(self.k, self.hidden_channels, self.dropout))
+        #     self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels)))
 
         # initialize layer parameters
         if self.with_cleanclf is False:
@@ -200,15 +200,13 @@ class TransformerTransferGSCPredictor(Module):
         # # 2. Post context for the overall model
         # union_rep = self.post_emb_union(union_ctxself.pooling_dim
         # del union_ctx
-        visual_rep = union_features
-        for t in range(self.time_step_num):
-            ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096]) # TODO: Use F_sigmoid?
-            visual_rep *= ctx_gate # torch.Size([3009, 4096])
-            del ctx_gate
-            visual_rep = self.dimension_reduce[t](torch_cat((self.attention[t](union_features), visual_rep), dim=1))
-            if t != self.time_step_num - 1:
-                # No ReLU nor batchnorm for last layer
-                visual_rep = self.gn[t](F_relu(visual_rep))
+        ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096]) # TODO: Use F_sigmoid?
+        visual_rep = union_features * ctx_gate
+        del ctx_gate
+        visual_rep = torch_cat((self.attention(union_features), visual_rep), dim=1)
+        visual_rep = self.dimension_reduce(visual_rep)
+            # No ReLU nor batchnorm for last layer
+        visual_rep = self.gn(visual_rep)
         del union_features
 
         if not self.with_cleanclf:
