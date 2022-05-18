@@ -367,7 +367,10 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
     return val_result
 
 
-def run_test(cfg, model, distributed, logger):
+def run_test(cfg, model, distributed, logger, iteration):
+    model_name = os.environ.get('MODEL_NAME')
+    debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
+    writer = SummaryWriter(log_dir=os_path_join(cfg.OUTPUT_DIR, 'tensorboard_test'))
     if distributed:
         model = model.module
     #torch.cuda.empty_cache()
@@ -384,7 +387,7 @@ def run_test(cfg, model, distributed, logger):
     dataset_names = cfg.DATASETS.TEST
     if cfg.OUTPUT_DIR:
         for idx, dataset_name in enumerate(dataset_names):
-            output_folder = os_path_join(cfg.OUTPUT_DIR, "inference", dataset_name)
+            output_folder = os_path_join(cfg.OUTPUT_DIR, 'inference_test', dataset_name)
             mkdir(output_folder)
             output_folders[idx] = output_folder
     data_loaders_val = make_data_loader(cfg, mode='test', is_distributed=distributed)
@@ -401,9 +404,11 @@ def run_test(cfg, model, distributed, logger):
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
             output_folder=output_folder,
             logger=logger,
+            writer=writer,
+            iteration=iteration,
         )
         synchronize()
-    #torch.cuda.empty_cache()
+    writer.close()
 
 
 def main():
@@ -470,9 +475,12 @@ def main():
     save_config(cfg, output_config_path)
 
     model = train(cfg, args.local_rank, args.distributed, logger)
-
+    model_name = os.environ.get('MODEL_NAME')
     if not args.skip_test:
-        run_test(cfg, model, args.distributed, logger)
+        run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER)
+        logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
+
+    logger.info(f'Finished training model {model_name} at a total of {cfg.SOLVER.MAX_ITER} iterations')
 
 
 if __name__ == "__main__":
