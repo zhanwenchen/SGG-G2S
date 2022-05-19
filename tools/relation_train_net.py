@@ -7,14 +7,19 @@ Basic training script for PyTorch
 # NOTE: this should be the first import (no not reorder)
 
 import argparse
+from os import environ as os_environ
 from os.path import join as os_path_join
-import os
 from time import time as time_time
 import datetime
 import random
 from resource import RLIMIT_NOFILE, getrlimit, setrlimit
 import numpy as np
-from torch import cat as torch_cat, tensor as torch_tensor, manual_seed as torch_manual_seed, device as torch_device
+from torch import (
+    cat as torch_cat,
+    manual_seed as torch_manual_seed,
+    device as torch_device,
+    as_tensor as torch_as_tensor,
+)
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
 from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
@@ -32,7 +37,6 @@ from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.checkpoint import clip_grad_norm
 from maskrcnn_benchmark.utils.collect_env import collect_env_info
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank, all_gather
-from maskrcnn_benchmark.utils.imports import import_file
 from maskrcnn_benchmark.utils.logger import setup_logger, debug_print
 from maskrcnn_benchmark.utils.miscellaneous import mkdir, save_config
 from maskrcnn_benchmark.utils.metric_logger import MetricLogger
@@ -55,9 +59,9 @@ def setup_seed(seed):
 def train(cfg, local_rank, distributed, logger):
     val_before = True # True False
     print_etari = 200 # 3   200
-    debug_print(logger, 'prepare training')
+    # debug_print(logger, 'prepare training')
     model = build_detection_model(cfg)
-    debug_print(logger, 'end model construction')
+    # debug_print(logger, 'end model construction')
 
     clean_classifier = cfg.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER
     # modules that should be always set in eval mode
@@ -81,10 +85,85 @@ def train(cfg, local_rank, distributed, logger):
     model.to(device)
 
     num_batch = cfg.SOLVER.IMS_PER_BATCH
-    optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1,
-                                rl_factor=float(num_batch))
+
+    output_dir = cfg.OUTPUT_DIR
+
+    save_to_disk = get_rank() == 0
+
+    arguments = {}
+
+    optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1, rl_factor=float(num_batch))
     scheduler = make_lr_scheduler(cfg, optimizer, logger)
-    debug_print(logger, 'end optimizer and shcedule')
+    debug_print(logger, 'instantiating checkpointer')
+
+    checkpointer = DetectronCheckpointer(cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True)
+    debug_print(logger, 'finished instantiating checkpointer')
+
+    if not cfg.MODEL.WEIGHT.startswith('catalog://') and cfg.MODEL.PRETRAINED_DETECTOR_CKPT != '':
+        debug_print(logger, f'{__file__}.train: CONTINUE Learning with {cfg.MODEL.WEIGHT}')
+        checkpointer.load(cfg.MODEL.WEIGHT)
+        arguments["iteration"] = scheduler.last_epoch
+        assert cfg.SOLVER.MAX_ITER != arguments["iteration"]
+        debug_print(logger, f'{__file__}.train: CONTINUE Learning with {cfg.MODEL.WEIGHT} from iteration {arguments["iteration"]}')
+    else:
+        debug_print(logger, f'{__file__}.train: Learning FROM SCRATCH with pretrained detector {cfg.MODEL.PRETRAINED_DETECTOR_CKPT}')
+
+        arguments["iteration"] = 0
+
+        load_mapping = {
+            "roi_heads.relation.box_feature_extractor" : "roi_heads.box.feature_extractor",
+            "roi_heads.relation.union_feature_extractor.feature_extractor" : "roi_heads.box.feature_extractor",
+        }
+
+        if cfg.MODEL.ATTRIBUTE_ON:
+            load_mapping["roi_heads.relation.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
+            load_mapping["roi_heads.relation.union_feature_extractor.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
+
+        if checkpointer.has_checkpoint():
+            extra_checkpoint_data = checkpointer.load(cfg.MODEL.PRETRAINED_DETECTOR_CKPT, update_schedule=cfg.SOLVER.UPDATE_SCHEDULE_DURING_LOAD)
+            arguments.update(extra_checkpoint_data)
+        else:
+            checkpointer.load(cfg.MODEL.PRETRAINED_DETECTOR_CKPT, with_optim=False, load_mapping=load_mapping)
+            # load_mapping is only used when we init current model from detection model.
+            # load base model
+            if clean_classifier:
+                debug_print(logger, 'end load checkpointer')
+
+                # load_mapping_classifier = {
+                #     "roi_heads.relation.predictor.rel_compress_clean":"roi_heads.relation.predictor.rel_compress",
+                #     "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
+                #     "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
+                #     "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
+                # }
+                if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR.startswith("TransformerTransfer"):
+                    load_mapping_classifier = {
+                        "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
+                        "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
+                        "roi_heads.relation.predictor.gsc_compress_clean": "roi_heads.relation.predictor.gsc_compress",
+                        "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
+                    }
+                    if cfg.MODEL.USING_GSC:
+                        load_mapping_classifier["roi_heads.relation.predictor.gsc_compress_clean"] = "roi_heads.relation.predictor.gsc_compress",
+                if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "VCTreePredictor":
+                    load_mapping_classifier = {
+                        "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
+                        "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
+                        "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
+                    }
+                if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "MotifPredictor":
+                    load_mapping_classifier = {
+                        "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
+                        "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
+                        "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
+                    }
+                #load_mapping_classifier = {}
+                if cfg.MODEL.PRETRAINED_MODEL_CKPT != "" :
+                    debug_print(logger, 'load PRETRAINED_MODEL_CKPT!!!!')
+                    checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=False,
+                                     with_optim=False, load_mapping=load_mapping_classifier)
+        # debug_print(logger, 'end optimizer and shcedule')
+    model.to(device)
+
     # Initialize mixed-precision training
     use_mixed_precision = cfg.DTYPE == "float16"
     amp_opt_level = 'O1' if use_mixed_precision else 'O0'
@@ -98,68 +177,7 @@ def train(cfg, local_rank, distributed, logger):
             find_unused_parameters=True,
         )
     debug_print(logger, 'end distributed')
-    arguments = {}
-    arguments["iteration"] = 0
 
-    # load pretrain layers to new layers
-    load_mapping = {"roi_heads.relation.box_feature_extractor" : "roi_heads.box.feature_extractor",
-                    "roi_heads.relation.union_feature_extractor.feature_extractor" : "roi_heads.box.feature_extractor"}
-
-    if cfg.MODEL.ATTRIBUTE_ON:
-        load_mapping["roi_heads.relation.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
-        load_mapping["roi_heads.relation.union_feature_extractor.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
-
-    output_dir = cfg.OUTPUT_DIR
-
-    save_to_disk = get_rank() == 0
-    checkpointer = DetectronCheckpointer(
-        cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True
-    )
-    # if there is certain checkpoint in output_dir, load it, else load pretrained detector
-    if checkpointer.has_checkpoint():
-        extra_checkpoint_data = checkpointer.load(cfg.MODEL.PRETRAINED_DETECTOR_CKPT,
-                                       update_schedule=cfg.SOLVER.UPDATE_SCHEDULE_DURING_LOAD)
-        arguments.update(extra_checkpoint_data)
-    else:
-        checkpointer.load(cfg.MODEL.PRETRAINED_DETECTOR_CKPT, with_optim=False, load_mapping=load_mapping)
-        # load_mapping is only used when we init current model from detection model.
-        # load base model
-        if clean_classifier:
-            debug_print(logger, 'end load checkpointer')
-
-            # load_mapping_classifier = {
-            #     "roi_heads.relation.predictor.rel_compress_clean":"roi_heads.relation.predictor.rel_compress",
-            #     "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
-            #     "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
-            #     "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
-            # }
-            if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "TransformerTransferPredictor":
-                load_mapping_classifier = {
-                    "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
-                    "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
-                    "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
-                }
-            if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "VCTreePredictor":
-                load_mapping_classifier = {
-                    "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
-                    "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
-                    "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
-                }
-            if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "MotifPredictor":
-                load_mapping_classifier = {
-                    "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
-                    "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
-                    "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
-                }
-            #load_mapping_classifier = {}
-            if cfg.MODEL.PRETRAINED_MODEL_CKPT != "" :
-                debug_print(logger, 'load PRETRAINED_MODEL_CKPT!!!!')
-                checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=False,
-                                 with_optim=False, load_mapping=load_mapping_classifier)
-    # debug_print(logger, 'load PRETRAINED_MODEL_CKPT!!!!')
-    # checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=False,
-    #                  with_optim=False)
-    debug_print(logger, 'end load checkpointer')
     train_data_loader = make_data_loader(
         cfg,
         mode='train',
@@ -174,10 +192,11 @@ def train(cfg, local_rank, distributed, logger):
     debug_print(logger, 'end dataloader')
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
-    writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard'))
+    writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_train'))
     if cfg.SOLVER.PRE_VAL and val_before:
         logger.info("Validate before training")
         run_val(cfg, model, val_data_loaders, distributed, logger, writer, 0, output_dir)
+        logger.info("Finished validation before training")
 
     logger.info("Start training")
     meters = MetricLogger(delimiter="  ")
@@ -198,6 +217,7 @@ def train(cfg, local_rank, distributed, logger):
         mode = 'sgdet'
     if mode is None:
         raise ValueError(f'mode is None given use_gt_box={use_gt_box} and use_gt_object_label={use_gt_object_label}')
+    val_results = []
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         # if iteration % 1000 == 0:
         #     haaa=0
@@ -211,7 +231,7 @@ def train(cfg, local_rank, distributed, logger):
         #fix_eval_modules(eval_modules)
         if clean_classifier:
             fix_eval_modules_no_classifier(model, with_grad_name='_clean')
-        else :
+        else:
             fix_eval_modules(eval_modules)
 
         images = images.to(device)
@@ -226,7 +246,7 @@ def train(cfg, local_rank, distributed, logger):
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
         meters.update(loss=losses_reduced, **loss_dict_reduced)
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         # Note: If mixed precision is not used, this ends up doing nothing
         # Otherwise apply loss scaling for mixed-precision recipe
         with amp_scale_loss(losses, optimizer) as scaled_losses:
@@ -272,13 +292,14 @@ def train(cfg, local_rank, distributed, logger):
         if iteration % checkpoint_period == 0 and iteration != max_iter:
             checkpointer.save("model_{:07d}".format(iteration), **arguments)
         if iteration == max_iter:
-            checkpointer.save("model_final", **arguments)
+            checkpointer.save("model_{:07d}_final".format(iteration), **arguments)
 
         val_result = None # used for scheduler updating
         if cfg.SOLVER.TO_VAL and iteration % cfg.SOLVER.VAL_PERIOD == 0:
             logger.info("Start validating")
             val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir)
             logger.info("Validation Result: %.4f" % val_result)
+            val_results.append(val_result)
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
@@ -316,6 +337,8 @@ def fix_eval_modules_no_classifier(module, with_grad_name='_clean'):
         # DO NOT use module.eval(), otherwise the module will be in the test mode, i.e., all self.training condition is set to False
 
 def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir):
+    model_name = os_environ.get('MODEL_NAME')
+    debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
     if distributed:
         model = model.module
     #torch.cuda.empty_cache()
@@ -342,7 +365,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
                             device=cfg.MODEL.DEVICE,
                             expected_results=cfg.TEST.EXPECTED_RESULTS,
                             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
-                            output_folder=os_path_join(output_dir, dataset_name),
+                            output_folder=os_path_join(output_dir, 'inference_val', dataset_name),
                             logger=logger,
                             writer=writer,
                             iteration=iteration,
@@ -351,7 +374,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
         synchronize()
         val_result.append(dataset_result)
     # support for multi gpu distributed testing
-    gathered_result = all_gather(torch_tensor(dataset_result).cpu())
+    gathered_result = all_gather(torch_as_tensor(dataset_result).cpu())
     gathered_result = [t.view(-1) for t in gathered_result]
     gathered_result = torch_cat(gathered_result, dim=-1).view(-1)
     valid_result = gathered_result[gathered_result>=0]
@@ -363,7 +386,10 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
     return val_result
 
 
-def run_test(cfg, model, distributed, logger):
+def run_test(cfg, model, distributed, logger, iteration):
+    model_name = os_environ.get('MODEL_NAME')
+    debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
+    writer = SummaryWriter(log_dir=os_path_join(cfg.OUTPUT_DIR, 'tensorboard_test'))
     if distributed:
         model = model.module
     #torch.cuda.empty_cache()
@@ -380,7 +406,7 @@ def run_test(cfg, model, distributed, logger):
     dataset_names = cfg.DATASETS.TEST
     if cfg.OUTPUT_DIR:
         for idx, dataset_name in enumerate(dataset_names):
-            output_folder = os_path_join(cfg.OUTPUT_DIR, "inference", dataset_name)
+            output_folder = os_path_join(cfg.OUTPUT_DIR, 'inference_test', dataset_name)
             mkdir(output_folder)
             output_folders[idx] = output_folder
     data_loaders_val = make_data_loader(cfg, mode='test', is_distributed=distributed)
@@ -397,8 +423,11 @@ def run_test(cfg, model, distributed, logger):
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
             output_folder=output_folder,
             logger=logger,
+            writer=writer,
+            iteration=iteration,
         )
         synchronize()
+    writer.close()
     #torch.cuda.empty_cache()
 
 
@@ -429,7 +458,7 @@ def main():
 
     args = parser.parse_args()
 
-    num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
+    num_gpus = int(os_environ["WORLD_SIZE"]) if "WORLD_SIZE" in os_environ else 1
     args.distributed = num_gpus > 1
 
     if args.distributed:
@@ -466,10 +495,13 @@ def main():
     save_config(cfg, output_config_path)
 
     model = train(cfg, args.local_rank, args.distributed, logger)
+    model_name = os_environ.get('MODEL_NAME')
 
     if not args.skip_test:
-        run_test(cfg, model, args.distributed, logger)
+        run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER)
+        logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
 
+    logger.info(f'Finished training model {model_name} at a total of {cfg.SOLVER.MAX_ITER} iterations')
 
 if __name__ == "__main__":
     main()
