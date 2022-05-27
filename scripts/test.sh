@@ -2,99 +2,65 @@
 if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0
     export NUM_GPUS=1
-    echo "Testing Predcls"
-    MODEL_NAME="naive_inside_no_bpl_no_sa_v1a_trained"
+    MODEL_NAME="union_only_v2b1_1"
+    MODEL_CHECKPOINT_NAME="model_0016000.pth"
+    echo "Testing Predcls model ${MODEL_NAME} at ${MODEL_CHECKPOINT_NAME}"
     python  -u  -m torch.distributed.launch --master_port 10035 --nproc_per_node=$NUM_GPUS \
-            tools/relation_test_net.py \
-            --config-file "checkpoints/${MODEL_NAME}/config.yml" \
-            MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
-            MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False \
-            MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-            TEST.IMS_PER_BATCH 1 \
-            \
-            DTYPE "float32" \
-            MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
-            MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
-            GLOVE_DIR ./datasets/vg/ \
-            MODEL.WEIGHT ./checkpoints/${MODEL_NAME}/model_final.pth \
-            OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
-            MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0 \
-            TEST.ALLOW_LOAD_FROM_CACHE False TEST.VAL_FLAG False;
-            # MODEL.ROI_RELATION_HEAD.PREDICTOR TransformerTransferGSCPredictor \
-
+        tools/relation_test_net.py \
+        --config-file "checkpoints/${MODEL_NAME}/config.yml" \
+        MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
+        MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False \
+        MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
+        TEST.IMS_PER_BATCH $NUM_GPUS \
+        DTYPE "float32" \
+        MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
+        MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
+        GLOVE_DIR ./datasets/vg/ \
+        MODEL.WEIGHT ./checkpoints/${MODEL_NAME}/${MODEL_CHECKPOINT_NAME} \
+        OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
+        MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0 \
+        TEST.ALLOW_LOAD_FROM_CACHE False TEST.VAL_FLAG False;
+    echo "Testing Predcls model ${MODEL_NAME} at ${MODEL_CHECKPOINT_NAME}";
 elif [ $1 == "1" ]; then
-    export CUDA_VISIBLE_DEVICES=2,3
+    export CUDA_VISIBLE_DEVICES=3,5
     export NUM_GPUS=2
-    echo "Testing Predcls"
-    MODEL_NAME="transformer_predcls_dist20_2k_FixPModel_lr1e3_B16_FixCMatDot"
-    python  -u  -m torch.distributed.launch --master_port 10036 --nproc_per_node=$NUM_GPUS \
-            tools/relation_test_net.py \
-            --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
-            MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
-            MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
-            MODEL.ROI_RELATION_HEAD.PREDICTOR TransformerTransferPredictor \
-            TEST.IMS_PER_BATCH $NUM_GPUS DTYPE "float32" \
-            GLOVE_DIR ./datasets/vg/ \
-            MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-            MODEL.WEIGHT ./checkpoints_best/${MODEL_NAME}/model_final.pth \
-            OUTPUT_DIR ./checkpoints_best/${MODEL_NAME} \
-            MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER True \
-            MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER True  \
-            MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0 \
-            TEST.ALLOW_LOAD_FROM_CACHE True TEST.VAL_FLAG False;
-#    echo "Testing SGCls"
-#    MODEL_NAME="transformer_sgdet_dist15_2k_FixPModel_CleanH_Lr1e3_B16"
-#    python  -u  -m torch.distributed.launch --master_port 10036 --nproc_per_node=$NUM_GPUS \
-#            tools/relation_test_net.py \
-#            --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
-#            MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
-#            MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
-#            MODEL.ROI_RELATION_HEAD.PREDICTOR TransformerSuperPredictor \
-#            TEST.IMS_PER_BATCH $NUM_GPUS DTYPE "float32" \
-#            GLOVE_DIR ./datasets/vg/ \
-#            MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-#            MODEL.WEIGHT ./checkpoints/${MODEL_NAME}/model_0002000.pth \
-#            OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
-#            TEST.ALLOW_LOAD_FROM_CACHE False TEST.VAL_FLAG False \
-#            MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0;
+    MODEL_NAME="union_gsc_v1a_sgcls_1"
+    MODEL_CHECKPOINT_NAME="model_0004000.pth"
+    echo "Testing SGCls model ${MODEL_NAME} at ${MODEL_CHECKPOINT_NAME}"
+    python  -u  -m torch.distributed.launch --master_port 10041 --nproc_per_node=$NUM_GPUS \
+        tools/relation_test_net.py \
+        --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
+        MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
+        MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
+        TEST.IMS_PER_BATCH $NUM_GPUS DTYPE "float32" \
+        GLOVE_DIR ./datasets/vg/ \
+        MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
+        MODEL.WEIGHT ./checkpoints/${MODEL_NAME}/${MODEL_CHECKPOINT_NAME} \
+        OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
+        MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
+        MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False \
+        MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0 \
+        TEST.ALLOW_LOAD_FROM_CACHE True TEST.VAL_FLAG False;
+    echo "Finished testing SGCls model ${MODEL_NAME} at ${MODEL_CHECKPOINT_NAME}";
 elif [ $1 == "2" ]; then
-    export CUDA_VISIBLE_DEVICES=2,3
+    export CUDA_VISIBLE_DEVICES=0,1
     export NUM_GPUS=2
-    echo "Testing SGDet"
-    MODEL_NAME="transformer_sgdet_dist20_2k_FixPModel_lr1e3_B16_FixCMatDot"
-    python  -u  -m torch.distributed.launch --master_port 10036 --nproc_per_node=$NUM_GPUS \
-            tools/relation_test_net.py \
-            --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
-            MODEL.ROI_RELATION_HEAD.USE_GT_BOX False \
-            MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
-            MODEL.ROI_RELATION_HEAD.PREDICTOR TransformerTransferPredictor \
-            TEST.IMS_PER_BATCH $NUM_GPUS DTYPE "float32" \
-            GLOVE_DIR ./datasets/vg/ \
-            MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-            MODEL.WEIGHT ./checkpoints_best/${MODEL_NAME}/model_final.pth \
-            OUTPUT_DIR ./checkpoints_best/${MODEL_NAME} \
-            TEST.ALLOW_LOAD_FROM_CACHE False TEST.VAL_FLAG False \
-            MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0 \
-            MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER True \
-            MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER True;
-elif [ $1 == "3" ]; then
-    export CUDA_VISIBLE_DEVICES=4
-    export NUM_GPUS=1
-    echo "Testing SGDet"
-    MODEL_NAME="transformer_sgdet_Lr1e3_B16_It16"
-    python  -u  -m torch.distributed.launch --master_port 10037 --nproc_per_node=$NUM_GPUS \
-            tools/relation_test_net.py \
-            --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
-            MODEL.ROI_RELATION_HEAD.USE_GT_BOX False \
-            MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
-            MODEL.ROI_RELATION_HEAD.PREDICTOR TransformerTransferPredictor \
-            TEST.IMS_PER_BATCH $NUM_GPUS DTYPE "float32" \
-            GLOVE_DIR ./datasets/vg/ \
-            MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-            MODEL.WEIGHT ./checkpoints_best/${MODEL_NAME}/model_final.pth \
-            OUTPUT_DIR ./checkpoints_best/${MODEL_NAME} \
-            TEST.ALLOW_LOAD_FROM_CACHE False TEST.VAL_FLAG False \
-            MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0 \
-            MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
-            MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False;
+    MODEL_NAME="union_gsc_v1a_sgdet_1"
+    MODEL_CHECKPOINT_NAME="model_0004000.pth"
+    echo "Testing SGDet model ${MODEL_NAME} at ${MODEL_CHECKPOINT_NAME}"
+    python  -u  -m torch.distributed.launch --master_port 10040 --nproc_per_node=$NUM_GPUS \
+        tools/relation_test_net.py \
+        --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
+        MODEL.WEIGHT ./checkpoints/${MODEL_NAME}/${MODEL_CHECKPOINT_NAME} \
+        MODEL.ROI_RELATION_HEAD.USE_GT_BOX False \
+        MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
+        TEST.IMS_PER_BATCH $NUM_GPUS DTYPE "float32" \
+        GLOVE_DIR ./datasets/vg/ \
+        MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
+        OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
+        TEST.ALLOW_LOAD_FROM_CACHE False TEST.VAL_FLAG False \
+        MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0 \
+        MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
+        MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False;
+    echo "Finished testing SGDet model ${MODEL_NAME} at ${MODEL_CHECKPOINT_NAME}";
 fi
