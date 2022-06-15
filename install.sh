@@ -7,7 +7,7 @@ conda install pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 cudatoolkit
 conda install ipython ninja yacs cython matplotlib tqdm
 # TODO: build h5py with parallel support
 
-pip install opencv-python setuptools==59.5.0 scipy
+pip install opencv-python setuptools==59.5.0 scipy tensorboard
 
 mkdir ~/sgb && cd ~/sgb
 export INSTALL_DIR=$(pwd)
@@ -39,7 +39,7 @@ python setup.py build develop
 
 unset INSTALL_DIR
 
-# conda install -c conda-forge overrides tensorboard --no-deps
+# conda install -c conda-forge overrides --no-deps
 conda uninstall --force pillow pil jpeg libtiff libjpeg-turbo
 pip   uninstall -y         pillow pil jpeg libtiff libjpeg-turbo
 conda install -c conda-forge libjpeg-turbo --no-deps
