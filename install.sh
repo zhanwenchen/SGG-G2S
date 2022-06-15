@@ -4,9 +4,10 @@ conda activate sgb
 # The only way 1.10.1 works is if you install it first before anything else.
 # Verify with import torch; torch.cuda.is_available(). Should be true.
 conda install pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 cudatoolkit=11.3 -c pytorch -c conda-forge
-conda install -c conda-forge overrides tensorboard
-conda install ipython scipy h5py ninja yacs cython matplotlib tqdm
-pip install opencv-python setuptools==59.5.0
+conda install ipython ninja yacs cython matplotlib tqdm
+# TODO: build h5py with parallel support
+
+pip install opencv-python setuptools==59.5.0 scipy
 
 mkdir ~/sgb && cd ~/sgb
 export INSTALL_DIR=$(pwd)
@@ -22,7 +23,6 @@ python setup.py build_ext install
 cd $INSTALL_DIR
 git clone https://github.com/NVIDIA/apex.git
 cd apex
-# python setup.py install --cuda_ext --cpp_ext
 pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
 # TODO: Edit out the raise RuntimeError in setup.py if there's a minor version mismatch.
 
@@ -38,3 +38,14 @@ cd gsc
 python setup.py build develop
 
 unset INSTALL_DIR
+
+# conda install -c conda-forge overrides tensorboard --no-deps
+conda uninstall --force pillow pil jpeg libtiff libjpeg-turbo
+pip   uninstall -y         pillow pil jpeg libtiff libjpeg-turbo
+conda install -c conda-forge libjpeg-turbo --no-deps
+wget https://github.com/uploadcare/pillow-simd/archive/refs/tags/9.0.1.zip
+cd pillow-simd-9.0.1/
+CC="cc -mavx2" python setup.py install
+conda install -c conda-forge --no-deps jpeg libtiff overrides tensorboard
+python -c 'import PIL; print(PIL.__version__)'
+python -c 'import PIL.features; print(PIL.features.check_feature("libjpeg_turbo"))'
