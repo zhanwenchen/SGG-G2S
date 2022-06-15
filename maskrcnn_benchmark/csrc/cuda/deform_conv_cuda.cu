@@ -4,15 +4,12 @@
 #define AT_CHECK TORCH_CHECK
 #endif
 
-#include <ATen/ATen.h>
-#include <ATen/cuda/CUDAContext.h>
-
-#include <THC/THC.h>
-#include <THC/THCDeviceUtils.cuh>
-
 #include <vector>
 #include <iostream>
 #include <cmath>
+#include <ATen/ATen.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <THC/THCAtomics.cuh>
 
 
 void deformable_im2col(const at::Tensor data_im, const at::Tensor data_offset,
