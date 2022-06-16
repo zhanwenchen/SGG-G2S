@@ -78,9 +78,9 @@ class VGDataset(Dataset):
             with_clean_classifier=with_clean_classifier,
             get_state =get_state,
         )
-
-        self.filenames = [self.filenames[i] for i in np_where(self.split_mask)[0]]
-        self.img_info = [self.img_info[i] for i in np_where(self.split_mask)[0]]
+        indices = np_where(self.split_mask)[0]
+        self.filenames = [self.filenames[i] for i in indices]
+        self.img_info = [self.img_info[i] for i in indices]
 
     def __getitem__(self, index):
         # if self.split == 'train':
@@ -191,9 +191,9 @@ def get_VG_statistics(img_dir, roidb_file, dict_file, image_file, must_overlap=T
     bg_matrix = np_zeros((num_obj_classes, num_obj_classes), dtype=np_int64)
 
     for ex_ind in tqdm(range(len(train_data))):
-        gt_classes = train_data.gt_classes[ex_ind].copy()
-        gt_relations = train_data.relationships[ex_ind].copy()
-        gt_boxes = train_data.gt_boxes[ex_ind].copy()
+        gt_classes = train_data.gt_classes[ex_ind]
+        gt_relations = train_data.relationships[ex_ind]
+        gt_boxes = train_data.gt_boxes[ex_ind]
 
         # For the foreground, we'll just look at everything
         o1o2 = gt_classes[gt_relations[:, :2]]
@@ -350,7 +350,7 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
             elif split == 'train':
                 image_index = image_index[num_val_im:]
 
-        split_mask = np_zeros_like(data_split).astype(bool)
+        split_mask = np_zeros_like(data_split, dtype=bool)
         split_mask[image_index] = True
 
         # Get box information
@@ -361,8 +361,12 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
         assert np_all(all_boxes[:, 2:] > 0)  # no empty box
 
         # convert from xc, yc, w, h to x1, y1, x2, y2
-        all_boxes[:, :2] = all_boxes[:, :2] - all_boxes[:, 2:] / 2
-        all_boxes[:, 2:] = all_boxes[:, :2] + all_boxes[:, 2:]
+        all_boxes_2plus = all_boxes[:, 2:]
+        all_boxes[:, :2] = all_boxes[:, :2] - all_boxes_2plus / 2
+        all_boxes[:, 2:] = all_boxes[:, :2] + all_boxes_2plus
+        del all_boxes_2plus
+        # all_boxes[:, :2] = all_boxes[:, 2:] - all_boxes[:, 2:] / 2
+        # all_boxes[:, 2:] += all_boxes[:, :2]
 
         im_to_first_box = roi_h5['img_to_first_box'][split_mask]
         im_to_last_box = roi_h5['img_to_last_box'][split_mask]
@@ -372,8 +376,9 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
         # load relation labels
         _relations = roi_h5['relationships'][:]
         _relation_predicates = roi_h5['predicates'][:, 0]
-        assert (im_to_first_rel.shape[0] == im_to_last_rel.shape[0])
-        assert (_relations.shape[0] == _relation_predicates.shape[0])  # sanity check
+    del roi_h5
+    assert (im_to_first_rel.shape[0] == im_to_last_rel.shape[0])
+    assert (_relations.shape[0] == _relation_predicates.shape[0])  # sanity check
 
     # Get everything by image.
     boxes = []
@@ -488,18 +493,16 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
         relationships.append(rels)
     print('split: ',split)
     print('root_classes_count: ', root_classes_count)
-    count_list = [0,]
-    for i in root_classes_count:
-        count_list.append(root_classes_count[i])
-    print('mean root class number: ', np_array(count_list).mean())
-    print('sum root class number: ', np_array(count_list).sum())
+    count_list = [0,] + list(root_classes_count.values())
+    count_list_np = np_array(count_list)
+    print('mean root class number: ', count_list_np.mean())
+    print('sum root class number: ', count_list_np.sum())
 
     print('leaf_classes_count: ', leaf_classes_count)
-    count_list = [0,]
-    for i in leaf_classes_count:
-        count_list.append(leaf_classes_count[i])
-    print('mean leaf class number: ', np_array(count_list).mean())
-    print('sum leaf class number: ', np_array(count_list).sum())
+    count_list = [0,] + list(leaf_classes_count.values())
+    count_list_np = np_array(count_list)
+    print('mean leaf class number: ', count_list_np.mean())
+    print('sum leaf class number: ', count_list_np.sum())
     # clean_classes_count = {}
     # clean_classes_count = root_classes_count.copy()
     # clean_classes_count.update(leaf_classes_count)
@@ -507,15 +510,14 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
     #     print('save clean_classes_count')
     #     json.dump(clean_classes_count, dump_f)
     print('all_classes_count: ', all_classes_count)
-    count_list = [0,]
-    for i in all_classes_count:
-        count_list.append(all_classes_count[i])
+    count_list = [0,] + list(all_classes_count.values())
     # if split == 'train':
     #     with open("./misc/all_predicate_count.json", "w") as dump_f:
     #         print('save all_classes_count')
     #         json.dump(all_classes_count, dump_f)
     #     os._exit(0)
-    print('mean all class number: ', np_array(count_list).mean())
-    print('sum all class number: ', np_array(count_list).sum())
+    count_list_np = np_array(count_list)
+    print('mean all class number: ', count_list_np.mean())
+    print('sum all class number: ', count_list_np.sum())
     print('number images: ', split_mask.sum())
     return split_mask, boxes, gt_classes, gt_attributes, relationships

@@ -75,24 +75,31 @@ class TransformerTransferGSCPredictor(Module):
         layer_init_kaiming_normal(self.post_cat)
 
         # LRGA stuff
+        # TODO: put LRGA in its own class
         self.time_step_num = config.MODEL.ROI_RELATION_HEAD.LRGA.TIME_STEP_NUM
         self.k = config.MODEL.ROI_RELATION_HEAD.LRGA.K
         self.num_groups = config.MODEL.ROI_RELATION_HEAD.LRGA.NUM_GROUPS
         self.dropout = config.MODEL.ROI_RELATION_HEAD.LRGA.DROPOUT
         self.in_channels = self.pooling_dim
-        self.hidden_channels = self.pooling_dim
-        self.out_channels = self.pooling_dim
 
-        # self.attention = ModuleList()
-        # self.dimension_reduce = ModuleList()
-        self.attention_1 = LowRankAttention(self.k, self.in_channels, self.dropout)
-        self.dimension_reduce_1 = Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels), ReLU())
-        self.attention_2 = LowRankAttention(self.k, self.hidden_channels, self.dropout)
-        self.dimension_reduce_2 = Sequential(Linear(2*self.k + self.hidden_channels, self.out_channels))
-        self.gn = GroupNorm(self.num_groups, self.hidden_channels)
-        # for _ in range(self.time_step_num):
-        #     self.attention.append(LowRankAttention(self.k, self.hidden_channels, self.dropout))
-        #     self.dimension_reduce.append(Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels)))
+        self.use_gsc = config.MODEL.ROI_RELATION_HEAD.USE_GSC
+        if self.use_gsc:
+            self.gsc_classify_dim_1 = 64
+            self.gsc_classify_1 = Linear(self.pooling_dim, self.gsc_classify_dim_1)
+            layer_init_kaiming_normal(self.gsc_classify_1)
+            self.gsc_classify_dim_2 = 1024
+            self.gsc_classify_2 = Linear(self.gsc_classify_dim_1, self.gsc_classify_dim_2)
+            layer_init_kaiming_normal(self.gsc_classify_2)
+            self.attention_1 = LowRankAttention(self.k, self.in_channels, self.dropout)
+            self.dimension_reduce_1 = Sequential(Linear(2*self.k + self.gsc_classify_dim_1, self.gsc_classify_dim_1), ReLU())
+
+            self.gn = GroupNorm(self.num_groups, self.gsc_classify_dim_1)
+
+            self.attention_2 = LowRankAttention(self.k, self.gsc_classify_dim_1, self.dropout)
+            self.dimension_reduce_2 = Sequential(Linear(2*self.k + self.gsc_classify_dim_1, self.gsc_classify_dim_2))
+
+            self.gsc_compress = Linear(self.gsc_classify_dim_2, self.num_rel_cls)
+            layer_init_kaiming_normal(self.gsc_compress)
 
         # initialize layer parameters
         if self.with_cleanclf is False:
@@ -107,9 +114,12 @@ class TransformerTransferGSCPredictor(Module):
         # the transfer classifier
         if self.with_cleanclf:
             self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
-            self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
             layer_init_kaiming_normal(self.rel_compress_clean)
+            self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
             layer_init_kaiming_normal(self.ctx_compress_clean)
+            if self.use_gsc:
+                self.gsc_compress_clean = Linear(self.gsc_classify_dim_2, self.num_rel_cls)
+                layer_init_kaiming_normal(self.gsc_compress_clean)
             # self.gcns_rel_clean = GCN(self.pooling_dim, self.pooling_dim, self.dropout_rate)
             # self.gcns_ctx_clean = GCN(self.hidden_dim * 2, self.hidden_dim * 2, self.dropout_rate)
             if self.use_bias:
@@ -185,55 +195,82 @@ class TransformerTransferGSCPredictor(Module):
         # from object level feature to pairwise relation level feature
         prod_reps = []
         pair_preds = []
-        for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
+        device = union_features.device
+        if self.use_gsc:
+            pairs_culsum = 0
+            new_to_old = torch_empty(union_features.size(0), dtype=int, device=device) # [3298]
+        for img_idx, (pair_idx, head_rep, tail_rep, obj_pred) in enumerate(zip(rel_pair_idxs, head_reps, tail_reps, obj_preds)):
             prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
             pair_preds.append(obj_pred[pair_idx])
-        del global_image_features, head_reps, tail_reps, obj_preds
+            if self.use_gsc:
+                new_to_old[pairs_culsum:pairs_culsum+len(pair_idx)] = img_idx
+                pairs_culsum += len(pair_idx)
+        del rel_pair_idxs, head_reps, tail_reps, obj_preds, img_idx, pair_idx, head_rep, tail_rep, obj_pred,
+        if self.use_gsc:
+            del pairs_culsum
         prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536]) torch.Size([5022, 1536]) # # REVIEW: Is this some sort of stateful bug?
         del prod_reps
         pair_pred = cat(pair_preds, dim=0) # torch.Size([3009, 2])
         del pair_preds
+        if self.use_gsc:
+            global_features_mapped = global_image_features[new_to_old].to(device)
+            del global_image_features, new_to_old, device
 
-        # Union Context
-        # 1. Just the context suboutput
-        # 1A. context
-        # union_ctx = self.context_union(union_features, num_rels) # torch.Size([506, 4096]) =>
-        # del union_features
-        # # 2. Post context for the overall model
-        # union_rep = self.post_emb_union(union_ctxself.pooling_dim
-        # del union_ctx
+        if self.use_gsc:
+            # GSC Context
+
+            # 1. Just the context suboutput
+            # 1A. context
+            # num_images = [1 for _ in range(global_features_mapped.size(0))]
+            # gsc_ctx = self.context_gsc(global_features_mapped, num_images) # torch.Size([506, 4096]) =>
+
+            # 2. Post context for the overall model
+            # gsc_rep = self.post_emb_gsc(gsc_ctx) # [num_unions, 768] => [num_unions, 768]
+
+            # First pass
+            # TODO: Which kind of op? Let's start off with a simple linear
+            # But linear to what?
+            # 1. arbitarily large (like 1024)
+            # 2. arbitarily bottlenecked (like 64)
+            # 3. same (4096)
+            x_local = self.gsc_classify_1(global_features_mapped) # [506, 4096] => [506, 64]
+            x_local = F_relu(x_local) # TODO: need some sort of layers for repr learn?
+            x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+            x_global = self.attention_1(global_features_mapped) # torch.Size([506, 100])
+            del global_features_mapped
+            x = self.dimension_reduce_1(torch_cat((x_global, x_local), dim=1)) # torch.Size([506, 64])
+            x = self.gn(x) # torch.Size([506, 64])
+
+            # Second/last pass
+            x_local = self.gsc_classify_2(x)
+            x_local = F_relu(x)
+            x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+            x_global = self.attention_2(x) # TOOD: or union_features?
+            del x
+            gsc_rep = self.dimension_reduce_2(torch_cat((x_global, x_local), dim=1))
+            del x_local, x_global
+
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096]) # TODO: Use F_sigmoid?
         visual_rep = union_features * ctx_gate
         del ctx_gate
 
-        # First pass
-        x_local = F_relu(visual_rep)
-        x_local = F_dropout(x_local, p=self.dropout, training=self.training)
-        x_global = self.attention_1(union_features)
-        del union_features
-        x = self.dimension_reduce_1(torch_cat((x_global, x_local), dim=1))
-        x = F_relu(x)
-        x = self.gn(x)
-
-        # Second/last pass
-        x_local = F_relu(x)
-        x_local = F_dropout(x_local, p=self.dropout, training=self.training)
-        x_global = self.attention_2(x) # TOOD: or union_features?
-        del x
-        visual_rep = self.dimension_reduce_2(torch_cat((x_global, x_local), dim=1))
-        del x_local, x_global
-
         if not self.with_cleanclf:
-            rel_dists = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            rel_dists = self.ctx_compress(prod_rep) + self.rel_compress(visual_rep)  # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
             del visual_rep, prod_rep
+            if self.use_gsc:
+                rel_dists += self.gsc_compress(gsc_rep)
+                del gsc_rep
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 del pair_pred
                 rel_dists += F_dropout(freq_dists_bias, 0.3, training=self.training) # torch.Size([3009, 51])
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists = self.rel_compress_clean(visual_rep) + self.ctx_compress_clean(prod_rep)
+            rel_dists = self.ctx_compress_clean(prod_rep) + self.rel_compress_clean(visual_rep)
             del visual_rep, prod_rep
+            if self.use_gsc:
+                rel_dists += self.gsc_compress_clean(gsc_rep)
+                del gsc_rep
             if self.use_bias:
                 freq_dists_bias = self.freq_bias_clean.index_with_labels(pair_pred)
                 del pair_pred

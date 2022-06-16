@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import os
-import bisect
+from os.path import exists as os_path_exists, join as os_path_join
+from bisect import bisect_right
 import copy
 import logging
 
@@ -33,15 +33,16 @@ def get_dataset_statistics(cfg):
     dataset_names = cfg.DATASETS.TRAIN
 
     data_statistics_name = ''.join(dataset_names) + '_statistics'
-    save_file = os.path.join(cfg.OUTPUT_DIR, "{}.cache".format(data_statistics_name))
+    save_file = os_path_join(cfg.OUTPUT_DIR, "{}.cache".format(data_statistics_name))
 
-    if os.path.exists(save_file):
+    if os_path_exists(save_file):
         logger.info('Loading data statistics from: ' + str(save_file))
         logger.info('-'*100)
         return torch_load(save_file, map_location=torch_device("cpu"))
 
     statistics = []
     for dataset_name in dataset_names:
+        print(f'dataset_name={dataset_name}')
         data = DatasetCatalog.get(dataset_name, cfg)
         factory = getattr(D, data["factory"])
         args = data["args"]
@@ -50,12 +51,13 @@ def get_dataset_statistics(cfg):
     logger.info('finish')
 
     assert len(statistics) == 1
+    statistics_0 = statistics[0]
     result = {
-        'fg_matrix': statistics[0]['fg_matrix'],
-        'pred_dist': statistics[0]['pred_dist'],
-        'obj_classes': statistics[0]['obj_classes'], # must be exactly same for multiple datasets
-        'rel_classes': statistics[0]['rel_classes'],
-        'att_classes': statistics[0]['att_classes'],
+        'fg_matrix': statistics_0['fg_matrix'],
+        'pred_dist': statistics_0['pred_dist'],
+        'obj_classes': statistics_0['obj_classes'], # must be exactly same for multiple datasets
+        'rel_classes': statistics_0['rel_classes'],
+        'att_classes': statistics_0['att_classes'],
     }
     logger.info('Save data statistics to: ' + str(save_file))
     logger.info('-'*100)
@@ -84,9 +86,10 @@ def build_dataset(cfg, dataset_list, transforms, dataset_catalog, is_train=True)
         args = data["args"]
         # for COCODataset, we want to remove images without annotations
         # during training
-        if data["factory"] == "COCODataset":
+        data_factory = data["factory"]
+        if data_factory == "COCODataset":
             args["remove_images_without_annotations"] = is_train
-        if data["factory"] == "PascalVOCDataset":
+        if data_factory == "PascalVOCDataset":
             args["use_difficult"] = not is_train
         args["transforms"] = transforms
         # make dataset from factory
@@ -118,7 +121,7 @@ def make_data_sampler(dataset, shuffle, distributed):
 def _quantize(x, bins):
     bins = copy.copy(bins)
     bins = sorted(bins)
-    quantized = list(map(lambda y: bisect.bisect_right(bins, y), x))
+    quantized = list(map(lambda y: bisect_right(bins, y), x))
     return quantized
 
 
@@ -177,102 +180,12 @@ def make_data_loader(cfg, mode='train', is_distributed=False, start_iter=0):
         ), "TEST.IMS_PER_BATCH ({}) must be divisible by the number of GPUs ({}) used.".format(
             images_per_batch, num_gpus)
         images_per_gpu = images_per_batch // num_gpus
-        shuffle = False if not is_distributed else True
+        shuffle = False
         print(f'is_distributed={is_distributed}, shuffle={shuffle}')
         num_iters = None
         start_iter = 0
 
     if images_per_gpu > 1:
-
-        logger.warning(
-            "When using more than one image per GPU you may encounter "
-            "an out-of-memory (OOM) error if your GPU does not have "
-            "sufficient memory. If this happens, you can reduce "
-            "SOLVER.IMS_PER_BATCH (for training) or "
-            "TEST.IMS_PER_BATCH (for inference). For training, you must "
-            "also adjust the learning rate and schedule length according "
-            "to the linear scaling rule. See for example: "
-            "https://github.com/facebookresearch/Detectron/blob/master/configs/getting_started/tutorial_1gpu_e2e_faster_rcnn_R-50-FPN.yaml#L14"
-        )
-
-    # group images which have similar aspect ratio. In this case, we only
-    # group in two cases: those with width / height > 1, and the other way around,
-    # but the code supports more general grouping strategy
-    aspect_grouping = [1] if cfg.DATALOADER.ASPECT_RATIO_GROUPING else []
-
-    paths_catalog = import_file(
-        "maskrcnn_benchmark.config.paths_catalog", cfg.PATHS_CATALOG, True
-    )
-    DatasetCatalog = paths_catalog.DatasetCatalog
-    if mode == 'train':
-        dataset_list = cfg.DATASETS.TRAIN
-    elif mode == 'val':
-        dataset_list = cfg.DATASETS.VAL
-    else:
-        dataset_list = cfg.DATASETS.TEST
-
-    # If bbox aug is enabled in testing, simply set transforms to None and we will apply transforms later
-    transforms = None if not is_train and cfg.TEST.BBOX_AUG.ENABLED else build_transforms(cfg, is_train)
-    datasets = build_dataset(cfg, dataset_list, transforms, DatasetCatalog, is_train)
-
-    if is_train:
-        # save category_id to label name mapping
-        save_labels(datasets, cfg.OUTPUT_DIR)
-
-    data_loaders = []
-    for dataset in datasets:
-        # print('============')
-        # print(len(dataset))
-        # print(images_per_gpu)
-        # print('============')
-        sampler = make_data_sampler(dataset, shuffle, is_distributed)
-        batch_sampler = make_batch_data_sampler(
-            dataset, sampler, aspect_grouping, images_per_gpu, num_iters, start_iter
-        )
-        collator = BBoxAugCollator() if not is_train and cfg.TEST.BBOX_AUG.ENABLED else \
-            BatchCollator(cfg.DATALOADER.SIZE_DIVISIBILITY)
-        num_workers = cfg.DATALOADER.NUM_WORKERS
-        data_loader = DataLoader(
-            dataset,
-            num_workers=num_workers,
-            batch_sampler=batch_sampler,
-            collate_fn=collator,
-            pin_memory=True,
-        )
-        data_loaders.append(data_loader)
-    if is_train:
-        # during training, a single (possibly concatenated) data_loader is returned
-        assert len(data_loaders) == 1
-        return data_loaders[0]
-    return data_loaders
-
-def make_data_loader_val(cfg, mode='train', is_distributed=False, start_iter=0):
-    assert mode in {'train', 'val', 'test'}
-    num_gpus = get_world_size()
-    is_train = mode == 'train'
-    is_train = False
-    if is_train:
-        images_per_batch = cfg.SOLVER.IMS_PER_BATCH
-        assert (
-            images_per_batch % num_gpus == 0
-        ), "SOLVER.IMS_PER_BATCH ({}) must be divisible by the number of GPUs ({}) used.".format(
-            images_per_batch, num_gpus)
-        images_per_gpu = images_per_batch // num_gpus
-        shuffle = True
-        num_iters = cfg.SOLVER.MAX_ITER
-    else:
-        images_per_batch = cfg.TEST.IMS_PER_BATCH
-        assert (
-            images_per_batch % num_gpus == 0
-        ), "TEST.IMS_PER_BATCH ({}) must be divisible by the number of GPUs ({}) used.".format(
-            images_per_batch, num_gpus)
-        images_per_gpu = images_per_batch // num_gpus
-        shuffle = False if not is_distributed else True
-        num_iters = None
-        start_iter = 0
-
-    if images_per_gpu > 1:
-        logger = logging.getLogger(__name__)
         logger.warning(
             "When using more than one image per GPU you may encounter "
             "an out-of-memory (OOM) error if your GPU does not have "
