@@ -3,15 +3,11 @@ if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1
     echo "TRAINING Predcls"
-    MODEL_NAME="union_only_v2b_1" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    MODEL_NAME="union_only_v2b4_1" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     mkdir ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./tools/ ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./scripts/ ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./maskrcnn_benchmark/ ./checkpoints/${MODEL_NAME}/ &&
-    # cp ./maskrcnn_benchmark/data/datasets/visual_genome.py ./checkpoints/${MODEL_NAME}/
-    # cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/roi_relation_predictors.py ./checkpoints/${MODEL_NAME}/
-    # cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/model_transformer.py ./checkpoints/${MODEL_NAME}/
-    # cp ./maskrcnn_benchmark/layers/gcn/gcn_layers.py ./checkpoints/${MODEL_NAME}/
     python -u -m torch.distributed.launch --master_port 10050 --nproc_per_node=$NUM_GPUS \
     tools/relation_train_net.py \
     --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
@@ -30,7 +26,7 @@ if [ $1 == "0" ]; then
     SOLVER.CHECKPOINT_PERIOD 2000 \
     GLOVE_DIR ./datasets/vg/ \
     MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-    OUTPUT_DIR ./checkpoints/${MODEL_NAME}
+    OUTPUT_DIR ./checkpoints/${MODEL_NAME} 2>&1 | tee ./checkpoints/${MODEL_NAME}/log_train.log
     # MODEL.PRETRAINED_MODEL_CKPT /home/zhanwen/bpl_og/checkpoints/${MODEL_NAME}/model_0014000.pth \
 elif [ $1 == "1" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4

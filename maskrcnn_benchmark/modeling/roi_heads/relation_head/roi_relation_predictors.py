@@ -14,7 +14,8 @@ from maskrcnn_benchmark.modeling.utils import cat
 from maskrcnn_benchmark.data import get_dataset_statistics
 from maskrcnn_benchmark.layers.gcn._utils import adj_normalize
 from .model_motifs import FrequencyBias
-from .model_transformer import TransformerContext, TransformerEncoder
+# from .model_transformer import TransformerContext, TransformerEncoder
+from .model_transformer import TransformerContext
 from .utils_relation import layer_init_kaiming_normal
 from .lrga import LowRankAttention
 
@@ -84,9 +85,10 @@ class TransformerTransferGSCPredictor(Module):
 
         # self.attention = ModuleList()
         # self.dimension_reduce = ModuleList()
-        self.attention = LowRankAttention(self.k, self.in_channels, self.dropout)
-        # self.dimension_reduce = Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels), ReLU())
-        self.dimension_reduce = Sequential(Linear(2*self.k + self.hidden_channels, self.out_channels))
+        self.attention_1 = LowRankAttention(self.k, self.in_channels, self.dropout)
+        self.dimension_reduce_1 = Sequential(Linear(2*self.k + self.hidden_channels, self.hidden_channels), ReLU())
+        self.attention_2 = LowRankAttention(self.k, self.hidden_channels, self.dropout)
+        self.dimension_reduce_2 = Sequential(Linear(2*self.k + self.hidden_channels, self.out_channels))
         self.gn = GroupNorm(self.num_groups, self.hidden_channels)
         # for _ in range(self.time_step_num):
         #     self.attention.append(LowRankAttention(self.k, self.hidden_channels, self.dropout))
@@ -203,11 +205,23 @@ class TransformerTransferGSCPredictor(Module):
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096]) # TODO: Use F_sigmoid?
         visual_rep = union_features * ctx_gate
         del ctx_gate
-        visual_rep = torch_cat((self.attention(union_features), visual_rep), dim=1)
-        visual_rep = self.dimension_reduce(visual_rep)
-            # No ReLU nor batchnorm for last layer
-        visual_rep = self.gn(visual_rep)
+
+        # First pass
+        x_local = F_relu(visual_rep)
+        x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+        x_global = self.attention_1(union_features)
         del union_features
+        x = self.dimension_reduce_1(torch_cat((x_global, x_local), dim=1))
+        x = F_relu(x)
+        x = self.gn(x)
+
+        # Second/last pass
+        x_local = F_relu(x)
+        x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+        x_global = self.attention_2(x) # TOOD: or union_features?
+        del x
+        visual_rep = self.dimension_reduce_2(torch_cat((x_global, x_local), dim=1))
+        del x_local, x_global
 
         if not self.with_cleanclf:
             rel_dists = self.rel_compress(visual_rep) + self.ctx_compress(prod_rep) # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
