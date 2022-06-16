@@ -3,7 +3,7 @@ if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPU=1
     echo "TRAINING Predcls"
-    MODEL_NAME="naive_inside_no_bpl_no_sa_v1a" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    MODEL_NAME="v1a_optimized" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     mkdir ./checkpoints/${MODEL_NAME}/ &&
     cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./scripts/ ./checkpoints/${MODEL_NAME}/ &&

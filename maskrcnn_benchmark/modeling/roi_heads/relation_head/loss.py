@@ -1,22 +1,30 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-import torch.nn as nn
-from torch.nn import functional as F
+from torch import (
+    zeros as torch_zeros,
+    nonzero as torch_nonzero,
+    randperm as torch_randperm,
+    log as torch_log,
+    cat as torch_cat,
+    sum as torch_sum,
+    mean as torch_mean,
+)
+from torch.cuda import FloatTensor
+from torch.nn import Module, NLLLoss, CrossEntropyLoss
+from torch.nn.functional import (
+    F_log_softmax as F_log_softmax,
+    softmax as F_softmax,
+    binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits,
+)
 import numpy as np
-import numpy.random as npr
-
-from maskrcnn_benchmark.layers import smooth_l1_loss, Label_Smoothing_Regression
-from maskrcnn_benchmark.modeling.box_coder import BoxCoder
-from maskrcnn_benchmark.modeling.matcher import Matcher
-from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
+from maskrcnn_benchmark.layers import Label_Smoothing_Regression
 from maskrcnn_benchmark.modeling.utils import cat
+
 
 class RelationLossComputation(object):
     """
     Computes the loss for relation triplet.
     Also supports FPN
     """
-
     def __init__(
         self,
         attri_on,
@@ -38,14 +46,14 @@ class RelationLossComputation(object):
         self.attribute_sampling = attribute_sampling
         self.attribute_bgfg_ratio = attribute_bgfg_ratio
         self.use_label_smoothing = use_label_smoothing
-        self.pred_weight = (1.0 / torch.FloatTensor([0.5,] + predicate_proportion)).cuda()
-        self.nllloss = nn.NLLLoss()
+        self.pred_weight = (1.0 / FloatTensor([0.5,] + predicate_proportion)).cuda()
+        self.nllloss = NLLLoss()
         conf_mat = np.load('./misc/conf_mat_freq_train.npy')
-        self.conf_mat = torch.FloatTensor(conf_mat).cuda()
+        self.conf_mat = FloatTensor(conf_mat)
         if self.use_label_smoothing:
             self.criterion_loss = Label_Smoothing_Regression(e=0.01)
         else:
-            self.criterion_loss = nn.CrossEntropyLoss()
+            self.criterion_loss = CrossEntropyLoss()
 
 
     def __call__(self, proposals, rel_labels, relation_logits, refine_logits):
@@ -82,7 +90,7 @@ class RelationLossComputation(object):
         if refine_obj_logits.requires_grad:
             loss_refine_obj = self.criterion_loss(refine_obj_logits, fg_labels.long())
         else:
-            loss_refine_obj = torch.zeros(loss_relation.size()).float().to(loss_relation.get_device())
+            loss_refine_obj = torch_zeros(loss_relation.size()).float().to(loss_relation.get_device())
 
         # The following code is used to calcaulate sampled attribute loss
         if self.attri_on:
@@ -98,8 +106,8 @@ class RelationLossComputation(object):
                 refine_att_logits = refine_att_logits[0].view(1, -1)
                 attribute_targets = attribute_targets[0].view(1, -1)
 
-            loss_refine_att = self.attribute_loss(refine_att_logits, attribute_targets, 
-                                             fg_bg_sample=self.attribute_sampling, 
+            loss_refine_att = self.attribute_loss(refine_att_logits, attribute_targets,
+                                             fg_bg_sample=self.attribute_sampling,
                                              bg_fg_ratio=self.attribute_bgfg_ratio)
             return loss_relation, (loss_refine_obj, loss_refine_att)
         else:
@@ -114,9 +122,9 @@ class RelationLossComputation(object):
         num_obj = attributes.shape[0]
 
         fg_attri_idx = (attributes.sum(-1) > 0).long()
-        attribute_targets = torch.zeros((num_obj, self.num_attri_cat), device=device).float()
+        attribute_targets = torch_zeros((num_obj, self.num_attri_cat), device=device).float()
 
-        for idx in torch.nonzero(fg_attri_idx).squeeze(1).tolist():
+        for idx in torch_nonzero(fg_attri_idx).squeeze(1).tolist():
             for k in range(self.max_num_attri):
                 att_id = int(attributes[idx, k])
                 if att_id == 0:
@@ -127,33 +135,33 @@ class RelationLossComputation(object):
 
     def attribute_loss(self, logits, labels, fg_bg_sample=True, bg_fg_ratio=3):
         if fg_bg_sample:
-            loss_matrix = F.binary_cross_entropy_with_logits(logits, labels, reduction='none').view(-1)
+            loss_matrix = F_binary_cross_entropy_with_logits(logits, labels, reduction='none').view(-1)
             fg_loss = loss_matrix[labels.view(-1) > 0]
             bg_loss = loss_matrix[labels.view(-1) <= 0]
 
             num_fg = fg_loss.shape[0]
             # if there is no fg, add at least one bg
-            num_bg = max(int(num_fg * bg_fg_ratio), 1)   
-            perm = torch.randperm(bg_loss.shape[0], device=bg_loss.device)[:num_bg]
+            num_bg = max(int(num_fg * bg_fg_ratio), 1)
+            perm = torch_randperm(bg_loss.shape[0], device=bg_loss.device)[:num_bg]
             bg_loss = bg_loss[perm]
 
-            return torch.cat([fg_loss, bg_loss], dim=0).mean()
+            return torch_cat([fg_loss, bg_loss], dim=0).mean()
         else:
-            attri_loss = F.binary_cross_entropy_with_logits(logits, labels)
+            attri_loss = F_binary_cross_entropy_with_logits(logits, labels)
             attri_loss = attri_loss * self.num_attri_cat / 20.0
             return attri_loss
 
     def conf_mat_loss(self, input, target, conf_mat):
         """
         """
-        input = F.softmax(input, -1)
+        input = F_softmax(input, -1)
         #conf_mat = F.softmax(conf_mat, -1)
         conf_mat_pro = conf_mat/(conf_mat.sum(-1)[:,None]+1e-8)
         input_conf = input @ conf_mat_pro.T
-        loss = self.nllloss(torch.log(input_conf+1e-8), target)
-        return loss
+        return self.nllloss(torch_log(input_conf+1e-8), target)
 
-class SoftCrossEntropy(nn.Module):
+
+class SoftCrossEntropy(Module):
 
     def __init__(self, reduction='mean'):
         super(SoftCrossEntropy, self).__init__()
@@ -164,18 +172,18 @@ class SoftCrossEntropy(nn.Module):
         :param input: (batch, *)
         :param target: (batch, *) same shape as input, each item must be a valid distribution: target[i, :].sum() == 1.
         """
-        logprobs = torch.nn.functional.log_softmax(input.view(input.shape[0], -1), dim=1)
-        batchloss = - torch.sum(target.view(target.shape[0], -1) * logprobs, dim=1)
+        logprobs = F_log_softmax(input.view(input.shape[0], -1), dim=1)
+        batchloss = - torch_sum(target.view(target.shape[0], -1) * logprobs, dim=1)
         if self.reduction == 'none':
             return batchloss
         elif self.reduction == 'mean':
-            return torch.mean(batchloss)
+            return torch_mean(batchloss)
         elif self.reduction == 'sum':
-            return torch.sum(batchloss)
+            return torch_sum(batchloss)
         else:
             raise NotImplementedError('Unsupported reduction mode.')
 
-class FocalLoss(nn.Module):
+class FocalLoss(Module):
     def __init__(self, gamma=0, alpha=None, size_average=True):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
@@ -185,7 +193,7 @@ class FocalLoss(nn.Module):
     def forward(self, input, target):
         target = target.view(-1)
 
-        logpt = F.log_softmax(input)
+        logpt = F_log_softmax(input)
         logpt = logpt.index_select(-1, target).diag()
         logpt = logpt.view(-1)
         pt = logpt.exp()
@@ -193,9 +201,9 @@ class FocalLoss(nn.Module):
         logpt = logpt * self.alpha * (target > 0).float() + logpt * (1 - self.alpha) * (target <= 0).float()
 
         loss = -1 * (1-pt)**self.gamma * logpt
-        if self.size_average: return loss.mean()
-        else: return loss.sum()
-
+        if self.size_average:
+            return loss.mean()
+        return loss.sum()
 
 
 def make_roi_relation_loss_evaluator(cfg):
