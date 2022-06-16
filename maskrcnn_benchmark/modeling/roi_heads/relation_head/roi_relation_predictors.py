@@ -167,18 +167,22 @@ class TransformerTransferGSCPredictor(Module):
         prod_reps = []
         pair_preds = []
         pairs_culsum = 0
-        global_features_mapped = torch_empty_like(union_features, dtype=union_features.dtype, device=union_features.device)
-        # new_to_old = torch_empty(union_features.size(0), dtype=int)
+        device = union_features.device
+        global_features_mapped = torch_empty_like(union_features, dtype=union_features.dtype, device=device)
+        new_to_old = torch_empty(union_features.size(0), dtype=int, device=device)
         for img_idx, (pair_idx, head_rep, tail_rep, obj_pred) in enumerate(zip(rel_pair_idxs, head_reps, tail_reps, obj_preds)):
             prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
             pair_preds.append(obj_pred[pair_idx])
-            # new_to_old[pairs_culsum:pairs_culsum+len(pair_idx)] = img_idx
-            global_features_mapped[pairs_culsum:pairs_culsum+len(pair_idx)] = global_image_features[img_idx]
+            new_to_old[pairs_culsum:pairs_culsum+len(pair_idx)] = img_idx
+            # global_features_mapped[pairs_culsum:pairs_culsum+len(pair_idx)] = global_image_features[img_idx]
             pairs_culsum += len(pair_idx)
-        del global_image_features
+        del rel_pair_idxs, head_reps, tail_reps, obj_preds, img_idx, pair_idx, head_rep, tail_rep, obj_pred, pairs_culsum
         prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536]) torch.Size([5022, 1536]) # # REVIEW: Is this some sort of stateful bug?
+        del prod_reps
         pair_pred = cat(pair_preds, dim=0) # torch.Size([3009, 2])
-        # global_features_mapped[new_to_old] = global_image_features
+        del pair_preds
+        global_features_mapped[new_to_old] = global_image_features
+        del global_image_features, new_to_old
 
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096])
 
