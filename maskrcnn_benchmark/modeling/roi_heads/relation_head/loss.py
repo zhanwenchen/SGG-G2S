@@ -11,7 +11,7 @@ from torch import (
 from torch.cuda import FloatTensor
 from torch.nn import Module, NLLLoss, CrossEntropyLoss
 from torch.nn.functional import (
-    F_log_softmax as F_log_softmax,
+    log_softmax as F_log_softmax,
     softmax as F_softmax,
     binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits,
 )
