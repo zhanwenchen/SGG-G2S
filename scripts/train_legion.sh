@@ -3,7 +3,7 @@ if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1
     echo "TRAINING Predcls"
-    MODEL_NAME="v1b4_1" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    MODEL_NAME="v1b4_2" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     MODEL_DIRNAME=./checkpoints/${MODEL_NAME}/
     mkdir ${MODEL_DIRNAME} &&
     cp -r ./tools/ ${MODEL_DIRNAME} &&
@@ -21,7 +21,7 @@ if [ $1 == "0" ]; then
     MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
     MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
     DTYPE "float32" \
-    SOLVER.MAX_ITER 16000 SOLVER.BASE_LR 1e-3 \
+    SOLVER.MAX_ITER 20000 SOLVER.BASE_LR 1e-3 \
     SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
     SOLVER.STEPS "(10000, 16000)" \
     SOLVER.VAL_PERIOD 2000 \

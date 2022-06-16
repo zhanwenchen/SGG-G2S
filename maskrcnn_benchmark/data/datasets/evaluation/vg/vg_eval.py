@@ -205,7 +205,7 @@ def do_vg_evaluation(
         # if return_all is True:
             # return result_dict
         # return float(np_mean(result_dict[mode + '_recall'][100]))
-        return float(np_mean(result_dict[mode + '_mean_recall'][100])) # # REVIEW: Is there a point for neural motifs using recall instead of mean recall
+        return float(np_mean(result_dict[mode + '_mean_recall'][50])) # # REVIEW: Is there a point for neural motifs using recall instead of mean recall
     elif "bbox" in iou_types:
         return float(mAp)
     else:
