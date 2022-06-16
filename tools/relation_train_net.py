@@ -461,8 +461,9 @@ def main():
     num_gpus = int(os_environ["WORLD_SIZE"]) if "WORLD_SIZE" in os_environ else 1
     args.distributed = num_gpus > 1
 
+    local_rank = int(os_environ['LOCAL_RANK'])
     if args.distributed:
-        set_device(args.local_rank)
+        set_device(local_rank)
         init_process_group(
             backend="nccl", init_method="env://"
         )
@@ -494,7 +495,8 @@ def main():
     # save overloaded model config in the output directory
     save_config(cfg, output_config_path)
 
-    model = train(cfg, args.local_rank, args.distributed, logger)
+    # print(f'local_rank = {local_rank}')
+    model = train(cfg, local_rank, args.distributed, logger)
     model_name = os_environ.get('MODEL_NAME')
 
     if not args.skip_test:

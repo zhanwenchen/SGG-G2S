@@ -20,7 +20,9 @@ def compute_on_dataset(model, data_loader, device, synchronize_gather=True, time
     results_dict = {}
     cpu_device = torch_device("cpu")
     empty_cache()
+    print(f'len(data_loader) = {len(data_loader)}')
     for _, batch in enumerate(tqdm(data_loader)):
+        import pdb; pdb.set_trace()
         with torch_no_grad():
             images, targets, image_ids = batch
             targets = [target.to(device) for target in targets]

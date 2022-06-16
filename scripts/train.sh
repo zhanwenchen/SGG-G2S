@@ -8,11 +8,7 @@ if [ $1 == "0" ]; then
     cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./scripts/ ./checkpoints/${MODEL_NAME}/ &&
     cp -r ./maskrcnn_benchmark/ ./checkpoints/${MODEL_NAME}/ &&
-    # cp ./maskrcnn_benchmark/data/datasets/visual_genome.py ./checkpoints/${MODEL_NAME}/
-    # cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/roi_relation_predictors.py ./checkpoints/${MODEL_NAME}/
-    # cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/model_transformer.py ./checkpoints/${MODEL_NAME}/
-    # cp ./maskrcnn_benchmark/layers/gcn/gcn_layers.py ./checkpoints/${MODEL_NAME}/
-    python -u -m torch.distributed.launch --master_port 10050 --nproc_per_node=$NUM_GPU \
+    torchrun --master_port 10050 --nproc_per_node=$NUM_GPU \
     tools/relation_train_net.py \
     --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
     MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
@@ -30,8 +26,7 @@ if [ $1 == "0" ]; then
     SOLVER.CHECKPOINT_PERIOD 2000 \
     GLOVE_DIR ./datasets/vg/ \
     MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-    OUTPUT_DIR ./checkpoints/${MODEL_NAME}
-    # MODEL.PRETRAINED_MODEL_CKPT /home/zhanwen/bpl_og/checkpoints/${MODEL_NAME}/model_0014000.pth \
+    OUTPUT_DIR ./checkpoints/${MODEL_NAME} 2>&1 | tee ./checkpoints/${MODEL_NAME}/log_train.log
 
 elif [ $1 == "1" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
