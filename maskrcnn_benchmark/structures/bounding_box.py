@@ -16,8 +16,9 @@ class BoxList(object):
     labels.
     """
 
-    def __init__(self, bbox, image_size, mode="xyxy"):
-        device = bbox.device if isinstance(bbox, torch_Tensor) else torch_device("cpu")
+    def __init__(self, bbox, image_size, mode="xyxy", device=None):
+        if device is None:
+            device = bbox.device if isinstance(bbox, torch_Tensor) else torch_device("cpu")
         bbox = torch_as_tensor(bbox, dtype=torch_float32, device=device)
         if bbox.ndimension() != 2:
             raise ValueError(
