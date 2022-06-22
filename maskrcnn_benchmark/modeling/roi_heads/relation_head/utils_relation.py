@@ -1,5 +1,14 @@
 from itertools import product as itertools_product
-from torch import min as torch_min, max as torch_max, clamp as torch_clamp, cat as torch_cat, nonzero as torch_nonzero, zeros as torch_zeros, int64 as torch_int64
+from torch import (
+    min as torch_min,
+    max as torch_max,
+    clamp as torch_clamp,
+    cat as torch_cat,
+    nonzero as torch_nonzero,
+    zeros as torch_zeros,
+    int64 as torch_int64,
+    prod as torch_prod,
+)
 from torch.nn.init import kaiming_normal_, constant_, xavier_normal_, normal_, orthogonal_
 from torch.nn.functional import softmax as F_softmax
 from numpy import unravel_index as np_unravel_index
@@ -13,6 +22,7 @@ def get_box_info(boxes, need_norm=True, proposal=None):
     wh = boxes[:, 2:] - boxes[:, :2] + 1.0
     center_box = torch_cat((boxes[:, :2] + 0.5 * wh, wh), 1)
     box_info = torch_cat((boxes, center_box), 1)
+    del boxes, center_box
     if need_norm:
         box_info = box_info / float(max(max(proposal.size[0], proposal.size[1]), 100))
     return box_info
@@ -32,6 +42,7 @@ def get_box_pair_info(box1, box2):
     unionbox[:, 2] = torch_max(box1[:, 2], box2[:, 2])
     unionbox[:, 3] = torch_max(box1[:, 3], box2[:, 3])
     union_info = get_box_info(unionbox, need_norm=False)
+    del unionbox
 
     # intersection box
     intersextion_box = box1[:,:4].clone()
@@ -42,6 +53,7 @@ def get_box_pair_info(box1, box2):
     case1 = torch_nonzero(intersextion_box[:, 2].contiguous().view(-1) < intersextion_box[:, 0].contiguous().view(-1)).view(-1)
     case2 = torch_nonzero(intersextion_box[:, 3].contiguous().view(-1) < intersextion_box[:, 1].contiguous().view(-1)).view(-1)
     intersextion_info = get_box_info(intersextion_box, need_norm=False)
+    del intersextion_box
     if case1.numel() > 0:
         intersextion_info[case1, :] = 0
     if case2.numel() > 0:
@@ -51,8 +63,10 @@ def get_box_pair_info(box1, box2):
 def nms_overlaps(boxes):
     """ get overlaps for each channel"""
     assert boxes.dim() == 3
-    N = boxes.size(0)
-    nc = boxes.size(1)
+    # breakpoint()
+    # N = boxes.size(0)
+    # nc = boxes.size(1)
+    N, nc, _ = boxes.size()
     max_xy = torch_min(boxes[:, None, :, 2:].expand(N, N, nc, 2),
                        boxes[None, :, :, 2:].expand(N, N, nc, 2))
 
@@ -60,13 +74,17 @@ def nms_overlaps(boxes):
                        boxes[None, :, :, :2].expand(N, N, nc, 2))
 
     inter = torch_clamp((max_xy - min_xy + 1.0), min=0)
-
+    del max_xy, min_xy
     # n, n, 151
-    inters = inter[:,:,:,0]*inter[:,:,:,1]
+    # inters = inter[:,:,:,0]*inter[:,:,:,1]
+    inters = torch_prod(inter, 3)
+    del inter
     boxes_flat = boxes.view(-1, 4)
+    del boxes
     areas_flat = (boxes_flat[:,2]- boxes_flat[:,0]+1.0)*(
         boxes_flat[:,3]- boxes_flat[:,1]+1.0)
-    areas = areas_flat.view(boxes.size(0), boxes.size(1))
+    # areas = areas_flat.view(boxes.size(0), boxes.size(1))
+    areas = areas_flat.view(N, nc)
     union = -inters + areas[None] + areas[:, None]
     return inters / union
 
