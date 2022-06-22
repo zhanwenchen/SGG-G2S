@@ -64,11 +64,11 @@ class VGDataset(Dataset):
         self.filter_non_overlap = filter_non_overlap and self.split == 'train'
         self.filter_duplicate_rels = filter_duplicate_rels and self.split == 'train'
         self.transforms = transforms
-
         self.ind_to_classes, self.ind_to_predicates, self.ind_to_attributes = load_info(
             dict_file)  # contiguous 151, 51 containing __background__
         self.categories = {i: self.ind_to_classes[i] for i in range(len(self.ind_to_classes))}
         self.filenames, self.img_info = load_image_filenames(img_dir, image_file)  # length equals to split_mask
+
         self.split_mask, self.gt_boxes, self.gt_classes, self.gt_attributes, self.relationships = load_graphs(
             self.roidb_file, self.split, num_im, num_val_im=num_val_im,
             filter_empty_rels=filter_empty_rels,
@@ -78,6 +78,7 @@ class VGDataset(Dataset):
             with_clean_classifier=with_clean_classifier,
             get_state =get_state,
         )
+
         indices = np_where(self.split_mask)[0]
         self.filenames = [self.filenames[i] for i in indices]
         self.img_info = [self.img_info[i] for i in indices]
@@ -331,15 +332,18 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
         relationships: List where each element is a [num_r, 3] array of
                     (box_ind_1, box_ind_2, predicate) relationships
     """
+    split_flag = 2 if split == 'test' else 0
+
     with h5py_File(roidb_file, 'r') as roi_h5:
         data_split = roi_h5['split'][:]
-        split_flag = 2 if split == 'test' else 0
         split_mask = data_split == split_flag
 
+        img_to_first_box = roi_h5['img_to_first_box'][:]
+        img_to_first_rel = roi_h5['img_to_first_rel'][:]
         # Filter out images without bounding boxes
-        split_mask &= roi_h5['img_to_first_box'][:] >= 0
+        split_mask &= img_to_first_box >= 0
         if filter_empty_rels:
-            split_mask &= roi_h5['img_to_first_rel'][:] >= 0
+            split_mask &= img_to_first_rel >= 0
 
         image_index = np_where(split_mask)[0]
         if num_im > -1:
@@ -351,6 +355,7 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
                 image_index = image_index[num_val_im:]
 
         split_mask = np_zeros_like(data_split, dtype=bool)
+        del data_split
         split_mask[image_index] = True
 
         # Get box information
@@ -361,16 +366,12 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
         assert np_all(all_boxes[:, 2:] > 0)  # no empty box
 
         # convert from xc, yc, w, h to x1, y1, x2, y2
-        all_boxes_2plus = all_boxes[:, 2:]
-        all_boxes[:, :2] = all_boxes[:, :2] - all_boxes_2plus / 2
-        all_boxes[:, 2:] = all_boxes[:, :2] + all_boxes_2plus
-        del all_boxes_2plus
-        # all_boxes[:, :2] = all_boxes[:, 2:] - all_boxes[:, 2:] / 2
-        # all_boxes[:, 2:] += all_boxes[:, :2]
+        all_boxes[:, :2] = all_boxes[:, :2] - all_boxes[:, 2:] / 2
+        all_boxes[:, 2:] = all_boxes[:, :2] + all_boxes[:, 2:]
 
-        im_to_first_box = roi_h5['img_to_first_box'][split_mask]
+        im_to_first_box = img_to_first_box[split_mask]
         im_to_last_box = roi_h5['img_to_last_box'][split_mask]
-        im_to_first_rel = roi_h5['img_to_first_rel'][split_mask]
+        im_to_first_rel = img_to_first_rel[split_mask]
         im_to_last_rel = roi_h5['img_to_last_rel'][split_mask]
 
         # load relation labels
@@ -391,13 +392,14 @@ def load_graphs(roidb_file, split, num_im, num_val_im, filter_empty_rels, filter
     with open(DICT_FILE_FPATH,'r') as f:
         vg_dict_info = json_load(f)
     predicates_tree = vg_dict_info['predicate_count']
+    del vg_dict_info
     #predicates_tree = json.load(open('./datasets/vg/predicate_wikipedia_count.json', 'r'))
     predicates_sort = sorted(predicates_tree.items(), key=lambda x:x[1], reverse=True)
     for pred_i in predicates_sort:
         if pred_count >= pred_num:
             break
         pred_topk.append(str(pred_i[0]))
-        pred_count = pred_count + 1
+        pred_count += 1
 
     if with_clean_classifier:
         root_classes = pred_topk
