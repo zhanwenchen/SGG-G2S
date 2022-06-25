@@ -72,9 +72,11 @@ class RelationLossComputation(object):
         refine_obj_logits = cat(refine_obj_logits, dim=0)
 
         fg_labels = cat([proposal.get_field("labels") for proposal in proposals], dim=0)
+        # breakpoint()
         rel_labels = cat(rel_labels, dim=0)
 
-        loss_relation = self.criterion_loss(relation_logits, rel_labels.long())
+        # breakpoint()
+        loss_relation = self.criterion_loss(relation_logits, rel_labels.long()) # torch.Size([90]), torch.Size([992])
         #loss_relation = self.conf_mat_loss(relation_logits, rel_labels.long(), self.conf_mat)
         if refine_obj_logits.requires_grad:
             loss_refine_obj = self.criterion_loss(refine_obj_logits, fg_labels.long())

@@ -88,6 +88,7 @@ class ROIRelationHead(Module):
         # final classifier that converts the features into predictions
         # should corresponding to all the functions and layers after the self.context class
         refine_logits, relation_logits, add_losses = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=logger, global_image_features=global_image_features)
+        # breakpoint()
         del global_image_features, union_features, rel_binarys
         # for test
         if not self.training:

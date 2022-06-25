@@ -236,7 +236,8 @@ def make_data_loader(cfg, mode='train', is_distributed=False, start_iter=0):
         num_workers = cfg.DATALOADER.NUM_WORKERS
         data_loader = DataLoader(
             dataset,
-            num_workers=num_workers,
+            # num_workers=num_workers,
+            num_workers=0, # TODO
             batch_sampler=batch_sampler,
             collate_fn=collator,
             pin_memory=True,

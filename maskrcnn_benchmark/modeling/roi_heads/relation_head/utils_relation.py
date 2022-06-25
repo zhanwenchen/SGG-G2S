@@ -9,6 +9,7 @@ from torch import (
     int64 as torch_int64,
     prod as torch_prod,
 )
+from torch.nn import Module, Sequential, Linear, ReLU
 from torch.nn.init import kaiming_normal_, constant_, xavier_normal_, normal_, orthogonal_
 from torch.nn.functional import softmax as F_softmax
 from numpy import unravel_index as np_unravel_index
@@ -88,23 +89,63 @@ def nms_overlaps(boxes):
     union = -inters + areas[None] + areas[:, None]
     return inters / union
 
-def layer_init(layer, init_para=0.1, normal=False, xavier=True):
-    xavier = False if normal == True else True
-    if normal:
-        normal_(layer.weight, mean=0, std=init_para)
-        if layer.bias is not None:
-            constant_(layer.bias, 0)
-        return
-    elif xavier:
-        xavier_normal_(layer.weight, gain=1.0)
-        if layer.bias is not None:
-            constant_(layer.bias, 0)
-        return
+
+# def layer_init(layer, init_para=0.1, normal=False, xavier=True):
+#     xavier = False if normal == True else True
+#     if normal:
+#         normal_(layer.weight, mean=0, std=init_para)
+#         if layer.bias is not None:
+#             constant_(layer.bias, 0)
+#         return
+#     elif xavier:
+#         xavier_normal_(layer.weight, gain=1.0)
+#         if layer.bias is not None:
+#             constant_(layer.bias, 0)
+#         return
+
 
 def layer_init_kaiming_normal(layer):
     kaiming_normal_(layer.weight, mode='fan_out')
     if layer.bias is not None:
         constant_(layer.bias, 0)
+
+
+class XavierLinear(Module):
+    '''
+    Simple Linear layer with Xavier init
+
+    Paper by Xavier Glorot and Yoshua Bengio (2010):
+    Understanding the difficulty of training deep feedforward neural networks
+    http://proceedings.mlr.press/v9/glorot10a/glorot10a.pdf
+    '''
+    def __init__(self, in_features, out_features, bias=True, device=None):
+        if device is None:
+            raise
+        super(XavierLinear, self).__init__()
+        self.linear = Linear(in_features, out_features, bias=bias, device=device)
+        layer_init_kaiming_normal(self.linear)
+
+    def forward(self, x):
+        return self.linear(x)
+
+
+class MLP(Module):
+    def __init__(self, dim_in_hid_out, act_fn='ReLU', last_act=False, device=None):
+        if device is None:
+            raise
+        super(MLP, self).__init__()
+        layers = []
+        for i in range(len(dim_in_hid_out) - 1):
+            layers.append(XavierLinear(dim_in_hid_out[i], dim_in_hid_out[i + 1], device=device))
+            if i < len(dim_in_hid_out) - 2 or last_act:
+                if act_fn == 'ReLU':
+                    layers.append(ReLU())
+                else:
+                    raise
+        self.model = Sequential(*layers)
+
+    def forward(self, x):
+        return self.model(x)
 
 
 def obj_prediction_nms(boxes_per_cls, pred_logits, nms_thresh=0.3):

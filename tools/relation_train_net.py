@@ -223,7 +223,7 @@ def train(cfg, local_rank, distributed, logger):
         if any(len(target) < 1 for target in targets):
             logger.error("Iteration={iteration + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
         data_time = time_time() - end
-        iteration = iteration + 1
+        iteration += 1
         arguments["iteration"] = iteration
 
         model.train()

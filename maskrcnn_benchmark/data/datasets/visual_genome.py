@@ -24,6 +24,8 @@ from tqdm import tqdm
 
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
+# from torchvision.io import read_image, ImageReadMode
+# ImageReadMode_RGB = ImageReadMode.RGB
 
 
 BOX_SCALE = 1024  # Scale at which we have the boxes
@@ -89,7 +91,11 @@ class VGDataset(Dataset):
         #        index = int(random_random() * len(self.filenames))
 
         img = Image_open(self.filenames[index]).convert("RGB")
-        if img.size[0] != self.img_info[index]['width'] or img.size[1] != self.img_info[index]['height']:
+        # img = read_image(self.filenames[index], mode=ImageReadMode_RGB)
+        # breakpoint()
+        # if img.size(0) != self.img_info[index]['width'] or img.size(1) != self.img_info[index]['height']:
+        w, h = img.size
+        if w != self.img_info[index]['width'] or h != self.img_info[index]['height']:
             print('=' * 20, ' ERROR index ', str(index), ' ', str(img.size), ' ', str(self.img_info[index]['width']),
                   ' ', str(self.img_info[index]['height']), ' ', '=' * 20)
 
@@ -149,7 +155,7 @@ class VGDataset(Dataset):
         target.add_field("labels", torch_from_numpy(self.gt_classes[index]))
         target.add_field("attributes", torch_from_numpy(self.gt_attributes[index]))
 
-        relation = self.relationships[index].copy()  # (num_rel, 3)
+        relation = self.relationships[index].copy()  # (num_rel, 3) # TODO: do we really need copy?
         if self.filter_duplicate_rels:
             # Filter out dupes!
             assert self.split == 'train'

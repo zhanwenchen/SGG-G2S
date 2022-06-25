@@ -37,6 +37,7 @@ class Resize(object):
 
     # modified from torchvision to add support for max size
     def get_size(self, image_size):
+        # w, h, _ = image_size
         w, h = image_size
         size = random_choice(self.min_size)
         max_size = self.max_size
@@ -60,6 +61,7 @@ class Resize(object):
 
     def __call__(self, image, target=None):
         size = self.get_size(image.size)
+        # image = F_resize(image, size, antialias=True)
         image = F_resize(image, size)
         if target is None:
             return image
