@@ -11,12 +11,9 @@ from torch import (
 )
 from torch.nn import NLLLoss, CrossEntropyLoss, Module
 from torch.nn.functional import log_softmax as F_log_softmax, binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits, softmax as F_softmax
-from maskrcnn_benchmark.layers import smooth_l1_loss, Label_Smoothing_Regression
-from maskrcnn_benchmark.modeling.box_coder import BoxCoder
-from maskrcnn_benchmark.modeling.matcher import Matcher
-from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
+from maskrcnn_benchmark.layers import Label_Smoothing_Regression
 from maskrcnn_benchmark.modeling.utils import cat
-from numpy import sum as np_sum, ones as np_ones
+from numpy import sum as np_sum
 from pickle import load as pickle_load
 
 
@@ -64,7 +61,6 @@ class RelationLossComputation(object):
             self.rel_class_weights = (1.0 - beta) / (1 - (beta ** rel_counts))
             self.rel_class_weights *= float(config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES) / np_sum(self.rel_class_weights)
             self.criterion_loss = CrossEntropyLoss(weight=torch_as_tensor(self.rel_class_weights, device=config.MODEL.DEVICE, dtype=torch_float32))
-            # self.criterion_loss = CrossEntropyLoss()
 
 
     def __call__(self, proposals, rel_labels, relation_logits, refine_logits):
@@ -94,7 +90,6 @@ class RelationLossComputation(object):
         refine_obj_logits = cat(refine_obj_logits, dim=0)
 
         fg_labels = cat([proposal.get_field("labels") for proposal in proposals], dim=0)
-        # breakpoint()
         rel_labels = cat(rel_labels, dim=0)
 
         loss_relation = self.criterion_loss(relation_logits, rel_labels.long()) # torch.Size([90]), torch.Size([992]) # TODO need weights
