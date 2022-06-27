@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 if [ $1 == "0" ]; then
-    export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
+    export CUDA_VISIBLE_DEVICES=6 #3,4 #,4 #3,4
     export NUM_GPUS=1
     export MODEL_NAME="gbnet" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     echo "Started training PredCls model ${MODEL_NAME}"
@@ -9,14 +9,14 @@ if [ $1 == "0" ]; then
     cp -r ./tools/ ${MODEL_DIRNAME} &&
     cp -r ./scripts/ ${MODEL_DIRNAME} &&
     cp -r ./maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
-    PYTHONUNBUFFERED=x torchrun --nproc_per_node=$NUM_GPUS tools/relation_train_net.py \
+    HOST_NODE_ADDR=12345 PYTHONUNBUFFERED=x torchrun --master_port=17293 --nproc_per_node=$NUM_GPUS tools/relation_train_net.py \
     --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
     MODEL.ROI_RELATION_HEAD.USE_GSC True  \
     SOLVER.IMS_PER_BATCH 16 \
     MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
     MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
     TEST.IMS_PER_BATCH ${NUM_GPUS} \
-    SOLVER.PRE_VAL True \
+    SOLVER.PRE_VAL False \
     MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
     MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
     DTYPE "float32" \
