@@ -1,5 +1,14 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from torch import zeros as torch_zeros, float32 as torch_float32, nonzero as torch_nonzero, cat as torch_cat, randperm as torch_randperm, log as torch_log, sum as torch_sum, mean as torch_mean, as_tensor as torch_as_tensor
+from torch import (
+    zeros as torch_zeros,
+    float32 as torch_float32,
+    nonzero as torch_nonzero,
+    cat as torch_cat,
+    randperm as torch_randperm,
+    log as torch_log,
+    sum as torch_sum, mean as torch_mean,
+    as_tensor as torch_as_tensor,
+)
 from torch.nn import NLLLoss, CrossEntropyLoss, Module
 from torch.nn.functional import log_softmax as F_log_softmax, binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits, softmax as F_softmax
 from maskrcnn_benchmark.layers import smooth_l1_loss, Label_Smoothing_Regression
@@ -7,6 +16,9 @@ from maskrcnn_benchmark.modeling.box_coder import BoxCoder
 from maskrcnn_benchmark.modeling.matcher import Matcher
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
 from maskrcnn_benchmark.modeling.utils import cat
+from numpy import sum as np_sum, ones as np_ones
+from pickle import load as pickle_load
+
 
 class RelationLossComputation(object):
     """
@@ -23,6 +35,7 @@ class RelationLossComputation(object):
         attribute_bgfg_ratio,
         use_label_smoothing,
         predicate_proportion,
+        config,
     ):
         """
         Arguments:
@@ -42,7 +55,15 @@ class RelationLossComputation(object):
         if self.use_label_smoothing:
             self.criterion_loss = Label_Smoothing_Regression(e=0.01)
         else:
-            self.criterion_loss = CrossEntropyLoss()
+            class_volume = 1.0
+            rel_counts_path = config.MODEL.ROI_RELATION_HEAD.GBNET.REL_COUNTS_PATH
+            # if rel_counts_path is not None:
+            with open(rel_counts_path, 'rb') as fin:
+                rel_counts = pickle_load(fin)
+            beta = (class_volume - 1.0) / class_volume
+            self.rel_class_weights = (1.0 - beta) / (1 - (beta ** rel_counts))
+            self.rel_class_weights *= float(config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES) / np_sum(self.rel_class_weights)
+            self.criterion_loss = CrossEntropyLoss(weight=torch_as_tensor(self.rel_class_weights, device=config.MODEL.DEVICE))
 
 
     def __call__(self, proposals, rel_labels, relation_logits, refine_logits):
@@ -76,7 +97,7 @@ class RelationLossComputation(object):
         rel_labels = cat(rel_labels, dim=0)
 
         # breakpoint()
-        loss_relation = self.criterion_loss(relation_logits, rel_labels.long()) # torch.Size([90]), torch.Size([992])
+        loss_relation = self.criterion_loss(relation_logits, rel_labels.long()) # torch.Size([90]), torch.Size([992]) # TODO need weights
         #loss_relation = self.conf_mat_loss(relation_logits, rel_labels.long(), self.conf_mat)
         if refine_obj_logits.requires_grad:
             loss_refine_obj = self.criterion_loss(refine_obj_logits, fg_labels.long())
@@ -206,6 +227,7 @@ def make_roi_relation_loss_evaluator(cfg):
         cfg.MODEL.ROI_ATTRIBUTE_HEAD.ATTRIBUTE_BGFG_RATIO,
         cfg.MODEL.ROI_RELATION_HEAD.LABEL_SMOOTHING_LOSS,
         cfg.MODEL.ROI_RELATION_HEAD.REL_PROP,
+        cfg,
     )
 
     return loss_evaluator

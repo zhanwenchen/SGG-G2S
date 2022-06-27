@@ -227,11 +227,14 @@ class TransformerTransferGSCPredictor(Module):
             self.fc_output_proj_img_ent = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False, device=device)
             self.fc_output_proj_ont_ent = MLP([hidden_dim, hidden_dim, hidden_dim], act_fn='ReLU', last_act=False, device=device)
 
-
         self.obj_dim = 4096
         self.rel_dim = 4096
         self.obj_proj = Linear(self.obj_dim, hidden_dim)
         self.rel_proj = Linear(self.rel_dim, hidden_dim)
+
+
+        # else:
+            # self.rel_class_weights = np_ones((self.num_rels,))
 
         # self.debug_info = {}
 
@@ -333,7 +336,15 @@ class TransformerTransferGSCPredictor(Module):
         roi_features = self.obj_proj(roi_features) # torch.Size([85, 4096]) => torch.Size([85, 1024])
         union_features = self.rel_proj(union_features) # torch.Size([1138, 4096]) => torch.Size([1138, 1024])
 
-        for img_idx, (proposal, rel_pair_idx, rel_label, rel_binary) in enumerate(zip(proposals, rel_pair_idxs, rel_labels, rel_binarys)):
+        if proposals is None:
+            print(f'proposals is None')
+            breakpoint()
+
+        if rel_pair_idxs is None:
+            print(f'rel_pair_idxs is None')
+            breakpoint()
+
+        for img_idx, (proposal, rel_pair_idx) in enumerate(zip(proposals, rel_pair_idxs)):
             '''
             len(proposal) = 12. All proposals sum to 94 which is the nrows of roi_features
             rel_pair_idx.shape = torch.Size([132, 2])
@@ -347,12 +358,12 @@ class TransformerTransferGSCPredictor(Module):
             if self.mode == 'predcls':
                 obj_preds = obj_labels
                 obj_dists = to_onehot(obj_preds, self.num_obj_cls)
-
+            # breakpoint()
             # if self.mode == 'predcls':
             #     obj_preds = to_onehot(obj_preds, self.num_obj_cls)
 
             num_objs = len(proposal) #0: 15
-            num_rels = len(rel_label) #0: 210
+            num_rels = len(rel_pair_idx) #0: 210
 
             # breakpoint()
             nodes_ont_ent = self.fc_init_ont_ent(torch_as_tensor(self.emb_ent, dtype=torch_float32, device=device))
@@ -502,7 +513,7 @@ class TransformerTransferGSCPredictor(Module):
                     ent_cls_logits = obj_dists
                 # breakpoint()
 
-            ent_cls_logits_all.append(obj_preds)
+            ent_cls_logits_all.append(ent_cls_logits)
             pred_cls_logits_all.append(pred_cls_logits)
         # breakpoint()
         return ent_cls_logits_all, pred_cls_logits_all, {}
