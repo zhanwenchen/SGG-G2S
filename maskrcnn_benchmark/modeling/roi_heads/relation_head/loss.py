@@ -63,7 +63,8 @@ class RelationLossComputation(object):
             beta = (class_volume - 1.0) / class_volume
             self.rel_class_weights = (1.0 - beta) / (1 - (beta ** rel_counts))
             self.rel_class_weights *= float(config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES) / np_sum(self.rel_class_weights)
-            self.criterion_loss = CrossEntropyLoss(weight=torch_as_tensor(self.rel_class_weights, device=config.MODEL.DEVICE))
+            self.criterion_loss = CrossEntropyLoss(weight=torch_as_tensor(self.rel_class_weights, device=config.MODEL.DEVICE, dtype=torch_float32))
+            # self.criterion_loss = CrossEntropyLoss()
 
 
     def __call__(self, proposals, rel_labels, relation_logits, refine_logits):
@@ -96,7 +97,6 @@ class RelationLossComputation(object):
         # breakpoint()
         rel_labels = cat(rel_labels, dim=0)
 
-        # breakpoint()
         loss_relation = self.criterion_loss(relation_logits, rel_labels.long()) # torch.Size([90]), torch.Size([992]) # TODO need weights
         #loss_relation = self.conf_mat_loss(relation_logits, rel_labels.long(), self.conf_mat)
         if refine_obj_logits.requires_grad:
