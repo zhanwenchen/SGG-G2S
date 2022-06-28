@@ -77,15 +77,11 @@ class RelationFeatureExtractor(Module):
             tail_proposal = tail_proposal.resize((self_rect_size, self_rect_size)).bbox
 
             # use range to construct rectanglesized (rect_size, rect_size)
-            head_rect = ((dummy_range >= head_proposal[:, 0, None].floor().short()).unsqueeze(1) & \
-                         (dummy_range <= head_proposal[:, 2, None].ceil().short()).unsqueeze(1) & \
-                         (dummy_range >= head_proposal[:, 1, None].floor().short()).unsqueeze(2) & \
-                         (dummy_range <= head_proposal[:, 3, None].ceil().short()).unsqueeze(2))
+            head_rect = ((head_proposal[:, 0, None].floor().short() <= dummy_range <= head_proposal[:, 2, None].ceil().short()).unsqueeze(1) & \
+                         (head_proposal[:, 1, None].floor().short() <= dummy_range <= head_proposal[:, 3, None].ceil().short()).unsqueeze(2))
             del head_proposal
-            tail_rect = ((dummy_range >= tail_proposal[:, 0, None].floor().short()).unsqueeze(1) & \
-                         (dummy_range <= tail_proposal[:, 2, None].ceil().short()).unsqueeze(1) & \
-                         (dummy_range >= tail_proposal[:, 1, None].floor().short()).unsqueeze(2) & \
-                         (dummy_range <= tail_proposal[:, 3, None].ceil().short()).unsqueeze(2))
+            tail_rect = ((tail_proposal[:, 0, None].floor().short() <= dummy_range <= tail_proposal[:, 2, None].ceil().short()).unsqueeze(1) & \
+                         (tail_proposal[:, 1, None].floor().short() <= dummy_range <= tail_proposal[:, 3, None].ceil().short()).unsqueeze(2))
 
             del tail_proposal
             # (num_rel, 4, rect_size, rect_size) # torch.Size([651, 2, 27, 27]), torch.Size([110, 2, 27, 27])
