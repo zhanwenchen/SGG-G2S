@@ -87,7 +87,7 @@ class RelationFeatureExtractor(Module):
             # (num_rel, 4, rect_size, rect_size) # torch.Size([651, 2, 27, 27]), torch.Size([110, 2, 27, 27])
             rect_inputs.append(torch_stack((head_rect, tail_rect), dim=1))
             del head_rect, tail_rect
-        del rel_pair_idxs
+        del rel_pair_idxs, dummy_range
         # rectangle feature. size (total_num_rel, in_channels, POOLER_RESOLUTION, POOLER_RESOLUTION)
         rect_inputs = torch_cat(rect_inputs, dim=0).float() # original: rect_inputs = 16 * torch.Size([651, 2, 27, 27]), [650, ...], [110, ...], ... => torch.Size([5049, 2, 27, 27])
         rect_features = self.rect_conv(rect_inputs) # torch.Size([5049, 256, 7, 7])
