@@ -1,6 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from torch.optim import SGD
+from torch.optim import Adam # SGD
 from .lr_scheduler import WarmupMultiStepLR, WarmupReduceLROnPlateau
+from .adabound import AdaBound
 
 
 def make_optimizer(cfg, model, logger, slow_heads=None, slow_ratio=5.0, rl_factor=1.0,
@@ -28,13 +29,15 @@ def make_optimizer(cfg, model, logger, slow_heads=None, slow_ratio=5.0, rl_facto
         params += [{"params": [value], "lr": lr * rl_factor, "weight_decay": weight_decay}]
         logger.info("params {} lr: {}.".format(key, str(lr * rl_factor)))
 
-    optimizer = SGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
+    # optimizer = SGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
+    # optimizer = AdaBound(params, lr=cfg.SOLVER.BASE_LR)
+    optimizer = Adam(params, lr=cfg.SOLVER.BASE_LR, eps=1e-03)
     return optimizer
 
 
 def make_lr_scheduler(cfg, optimizer, logger=None):
     if cfg.SOLVER.SCHEDULE.TYPE == "WarmupMultiStepLR":
-        return WarmupMultiStepLR(
+        return WarmupMultiStepLR(# TEMP:
             optimizer,
             cfg.SOLVER.STEPS,
             cfg.SOLVER.GAMMA,
