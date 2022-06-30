@@ -1,10 +1,14 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-import torch.nn.functional as F
-from torch import nn
+from torch.nn import Module, Conv2d
+from torch.nn.init import kaiming_uniform_, constant_
+from torch.nn.functional import (
+    interpolate as F_interpolate,
+    max_pool2d as F_max_pool2d,
+    relu as F_relu,
+)
 
 
-class FPN(nn.Module):
+class FPN(Module):
     """
     Module that adds FPN on top of a list of feature maps.
     The feature maps are currently supposed to be in increasing depth
@@ -56,7 +60,7 @@ class FPN(nn.Module):
         ):
             if not inner_block:
                 continue
-            inner_top_down = F.interpolate(last_inner, scale_factor=2, mode="nearest")
+            inner_top_down = F_interpolate(last_inner, scale_factor=2, mode="nearest")
             inner_lateral = getattr(self, inner_block)(feature)
             # TODO use size instead of scale to make it robust to different sizes
             # inner_top_down = F.upsample(last_inner, size=inner_lateral.shape[-2:],
@@ -74,26 +78,26 @@ class FPN(nn.Module):
         return tuple(results)
 
 
-class LastLevelMaxPool(nn.Module):
+class LastLevelMaxPool(Module):
     def forward(self, x):
-        return [F.max_pool2d(x, 1, 2, 0)]
+        return [F_max_pool2d(x, 1, 2, 0)]
 
 
-class LastLevelP6P7(nn.Module):
+class LastLevelP6P7(Module):
     """
     This module is used in RetinaNet to generate extra layers, P6 and P7.
     """
     def __init__(self, in_channels, out_channels):
         super(LastLevelP6P7, self).__init__()
-        self.p6 = nn.Conv2d(in_channels, out_channels, 3, 2, 1)
-        self.p7 = nn.Conv2d(out_channels, out_channels, 3, 2, 1)
+        self.p6 = Conv2d(in_channels, out_channels, 3, 2, 1)
+        self.p7 = Conv2d(out_channels, out_channels, 3, 2, 1)
         for module in [self.p6, self.p7]:
-            nn.init.kaiming_uniform_(module.weight, a=1)
-            nn.init.constant_(module.bias, 0)
+            kaiming_uniform_(module.weight, a=1)
+            constant_(module.bias, 0)
         self.use_P5 = in_channels == out_channels
 
     def forward(self, c5, p5):
         x = p5 if self.use_P5 else c5
         p6 = self.p6(x)
-        p7 = self.p7(F.relu(p6))
+        p7 = self.p7(F_relu(p6))
         return [p6, p7]

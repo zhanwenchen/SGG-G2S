@@ -1,15 +1,20 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-import torch.nn.functional as F
-from torch import nn
-
+from torch import (
+    cat as torch_cat,
+    full as torch_full,
+    int64 as torch_int64,
+    kthvalue as torch_kthvalue,
+    nonzero as torch_nonzero
+)
+from torch.nn import Module
+from torch.nn.functional import softmax as F_softmax
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_nms
 from maskrcnn_benchmark.structures.boxlist_ops import cat_boxlist
 from maskrcnn_benchmark.modeling.box_coder import BoxCoder
 
 
-class PostProcessor(nn.Module):
+class PostProcessor(Module):
     """
     From a set of classification scores, box regression and proposals,
     computes the post-processed boxes, and applies NMS to obtain the
@@ -61,12 +66,12 @@ class PostProcessor(nn.Module):
                 the extra fields labels and scores
         """
         features, class_logits, box_regression = x
-        class_prob = F.softmax(class_logits, -1)
+        class_prob = F_softmax(class_logits, -1)
 
         # TODO think about a representation of batch of boxes
         image_shapes = [box.size for box in boxes]
         boxes_per_image = [len(box) for box in boxes]
-        concat_boxes = torch.cat([a.bbox for a in boxes], dim=0)
+        concat_boxes = torch_cat([a.bbox for a in boxes], dim=0)
 
         if self.cls_agnostic_bbox_reg:
             box_regression = box_regression[:, -4:]
@@ -93,20 +98,20 @@ class PostProcessor(nn.Module):
             assert self.bbox_aug_enabled == False
             if not self.bbox_aug_enabled:  # If bbox aug is enabled, we will do it later
                 boxlist, orig_inds, boxes_per_cls = self.filter_results(boxlist, num_classes)
-            # add 
+            # add
             boxlist = self.add_important_fields(i, boxes, orig_inds, boxlist, boxes_per_cls, relation_mode)
-            
+
             results.append(boxlist)
             nms_features.append(features[i][orig_inds])
-        
-        nms_features = torch.cat(nms_features, dim=0)
+
+        nms_features = torch_cat(nms_features, dim=0)
         return nms_features, results
 
     def add_important_fields(self, i, boxes, orig_inds, boxlist, boxes_per_cls, relation_mode=False):
         if relation_mode:
             gt_labels = boxes[i].get_field('labels')[orig_inds]
             gt_attributes = boxes[i].get_field('attributes')[orig_inds]
-        
+
             boxlist.add_field('labels', gt_labels)
             boxlist.add_field('attributes', gt_attributes)
 
@@ -127,7 +132,7 @@ class PostProcessor(nn.Module):
             if field_name not in boxes[i].triplet_extra_fields:
                 boxlist.add_field(field_name, selected_boxes.get_field(field_name))
         # replace background bbox after regression with bbox before regression
-        boxes_per_cls = torch.cat((
+        boxes_per_cls = torch_cat((
             boxlist.bbox, boxes_per_img[orig_inds][:,4:]), dim=1).view(len(boxlist), num_classes, 4) # tensor of size (#nms, #cls, 4) mode=xyxy
         boxlist.add_field('boxes_per_cls', boxes_per_cls) # will be used in motif predictor
         return boxlist
@@ -168,7 +173,7 @@ class PostProcessor(nn.Module):
         # Skip j = 0, because it's the background class
         inds_all = scores > self.score_thresh
         for j in range(1, num_classes):
-            inds = inds_all[:, j].nonzero().squeeze(1)
+            inds = inds_all[:, j].nonzero().squeeze_(1)
             scores_j = scores[inds, j]
             boxes_j = boxes[inds, j * 4 : (j + 1) * 4]
             boxlist_for_class = BoxList(boxes_j, boxlist.size, mode="xyxy")
@@ -179,7 +184,7 @@ class PostProcessor(nn.Module):
             inds = inds[keep]
             num_labels = len(boxlist_for_class)
             boxlist_for_class.add_field(
-                "pred_labels", torch.full((num_labels,), j, dtype=torch.int64, device=device)
+                "pred_labels", torch_full((num_labels,), j, dtype=torch_int64, device=device)
             )
             result.append(boxlist_for_class)
             orig_inds.append(inds)
@@ -188,7 +193,7 @@ class PostProcessor(nn.Module):
         if self.nms_filter_duplicates or self.save_proposals:
             assert len(orig_inds) == (num_classes - 1)
             # set all bg to zero
-            inds_all[:, 0] = 0 
+            inds_all[:, 0] = 0
             for j in range(1, num_classes):
                 inds_all[:, j] = 0
                 orig_idx = orig_inds[j-1]
@@ -197,7 +202,7 @@ class PostProcessor(nn.Module):
             scores_pre, labels_pre = dist_scores.max(1)
             final_inds = scores_pre.nonzero()
             assert final_inds.dim() != 0
-            final_inds = final_inds.squeeze(1)
+            final_inds.squeeze_(1)
 
             scores_pre = scores_pre[final_inds]
             labels_pre = labels_pre[final_inds]
@@ -208,17 +213,17 @@ class PostProcessor(nn.Module):
             orig_inds = final_inds
         else:
             result = cat_boxlist(result)
-            orig_inds = torch.cat(orig_inds, dim=0)
-        
+            orig_inds = torch_cat(orig_inds, dim=0)
+
         number_of_detections = len(result)
         # Limit to max_per_image detections **over all classes**
         if number_of_detections > self.detections_per_img > 0:
             cls_scores = result.get_field("pred_scores")
-            image_thresh, _ = torch.kthvalue(
+            image_thresh, _ = torch_kthvalue(
                 cls_scores.cpu(), number_of_detections - self.detections_per_img + 1
             )
             keep = cls_scores >= image_thresh.item()
-            keep = torch.nonzero(keep).squeeze(1)
+            keep = torch_nonzero(keep).squeeze_(1)
             result = result[keep]
             orig_inds = orig_inds[keep]
         return result, orig_inds, boxes_per_cls[orig_inds]

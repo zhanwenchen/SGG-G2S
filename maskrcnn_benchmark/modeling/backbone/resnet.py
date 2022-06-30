@@ -18,8 +18,9 @@ Custom implementations may be written in user code and hooked in via the
 """
 from collections import namedtuple
 
+from torch.nn import Module, Sequential
+from torch.nn.init import kaiming_uniform_
 from torch.nn.functional import relu_ as F_relu_, max_pool2d as F_max_pool2d
-from torch import nn
 
 from maskrcnn_benchmark.layers import FrozenBatchNorm2d
 from maskrcnn_benchmark.layers import Conv2d
@@ -77,7 +78,7 @@ ResNet152FPNStagesTo5 = tuple(
     for (i, c, r) in ((1, 3, True), (2, 8, True), (3, 36, True), (4, 3, True))
 )
 
-class ResNet(nn.Module):
+class ResNet(Module):
     def __init__(self, cfg):
         super(ResNet, self).__init__()
 
@@ -151,7 +152,7 @@ class ResNet(nn.Module):
         return outputs
 
 
-class ResNetHead(nn.Module):
+class ResNetHead(Module):
     def __init__(
         self,
         block_module,
@@ -232,10 +233,10 @@ def _make_stage(
         )
         stride = 1
         in_channels = out_channels
-    return nn.Sequential(*blocks)
+    return Sequential(*blocks)
 
 
-class Bottleneck(nn.Module):
+class Bottleneck(Module):
     def __init__(
         self,
         in_channels,
@@ -253,7 +254,7 @@ class Bottleneck(nn.Module):
         self.downsample = None
         if in_channels != out_channels:
             down_stride = stride if dilation == 1 else 1
-            self.downsample = nn.Sequential(
+            self.downsample = Sequential(
                 Conv2d(
                     in_channels, out_channels,
                     kernel_size=1, stride=down_stride, bias=False
@@ -263,7 +264,7 @@ class Bottleneck(nn.Module):
             for modules in [self.downsample,]:
                 for l in modules.modules():
                     if isinstance(l, Conv2d):
-                        nn.init.kaiming_uniform_(l.weight, a=1)
+                        kaiming_uniform_(l.weight, a=1)
 
         if dilation > 1:
             stride = 1 # reset to be 1
@@ -308,7 +309,7 @@ class Bottleneck(nn.Module):
                 groups=num_groups,
                 dilation=dilation
             )
-            nn.init.kaiming_uniform_(self.conv2.weight, a=1)
+            kaiming_uniform_(self.conv2.weight, a=1)
 
         self.bn2 = norm_func(bottleneck_channels)
 
@@ -318,7 +319,7 @@ class Bottleneck(nn.Module):
         self.bn3 = norm_func(out_channels)
 
         for l in [self.conv1, self.conv3,]:
-            nn.init.kaiming_uniform_(l.weight, a=1)
+            kaiming_uniform_(l.weight, a=1)
 
     def forward(self, x):
         identity = x
@@ -343,7 +344,7 @@ class Bottleneck(nn.Module):
         return out
 
 
-class BaseStem(nn.Module):
+class BaseStem(Module):
     def __init__(self, cfg, norm_func):
         super(BaseStem, self).__init__()
 
@@ -355,7 +356,7 @@ class BaseStem(nn.Module):
         self.bn1 = norm_func(out_channels)
 
         for l in [self.conv1,]:
-            nn.init.kaiming_uniform_(l.weight, a=1)
+            kaiming_uniform_(l.weight, a=1)
 
     def forward(self, x):
         x = self.conv1(x)

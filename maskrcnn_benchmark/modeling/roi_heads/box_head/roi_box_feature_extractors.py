@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import torch
-from torch import nn
+from torch.nn import Module, Sequential, Conv2d, ReLU
+from torch.nn.init import normal_, constant_
 from torch.nn.functional import relu as F_relu
 
 from maskrcnn_benchmark.modeling import registry
@@ -11,7 +11,7 @@ from maskrcnn_benchmark.modeling.make_layers import make_fc
 
 
 @registry.ROI_BOX_FEATURE_EXTRACTORS.register("ResNet50Conv5ROIFeatureExtractor")
-class ResNet50Conv5ROIFeatureExtractor(nn.Module):
+class ResNet50Conv5ROIFeatureExtractor(Module):
     def __init__(self, config, in_channels):
         super(ResNet50Conv5ROIFeatureExtractor, self).__init__()
 
@@ -46,7 +46,7 @@ class ResNet50Conv5ROIFeatureExtractor(nn.Module):
 
 
 @registry.ROI_BOX_FEATURE_EXTRACTORS.register("FPN2MLPFeatureExtractor")
-class FPN2MLPFeatureExtractor(nn.Module):
+class FPN2MLPFeatureExtractor(Module):
     """
     Heads for FPN for classification
     """
@@ -116,7 +116,7 @@ class FPN2MLPFeatureExtractor(nn.Module):
 
 
 @registry.ROI_BOX_FEATURE_EXTRACTORS.register("FPNXconv1fcFeatureExtractor")
-class FPNXconv1fcFeatureExtractor(nn.Module):
+class FPNXconv1fcFeatureExtractor(Module):
     """
     Heads for FPN for classification
     """
@@ -142,7 +142,7 @@ class FPNXconv1fcFeatureExtractor(nn.Module):
         xconvs = []
         for ix in range(num_stacked_convs):
             xconvs.append(
-                nn.Conv2d(
+                Conv2d(
                     in_channels,
                     conv_head_dim,
                     kernel_size=3,
@@ -155,15 +155,15 @@ class FPNXconv1fcFeatureExtractor(nn.Module):
             in_channels = conv_head_dim
             if use_gn:
                 xconvs.append(group_norm(in_channels))
-            xconvs.append(nn.ReLU(inplace=True))
+            xconvs.append(ReLU(inplace=True))
 
-        self.add_module("xconvs", nn.Sequential(*xconvs))
+        self.add_module("xconvs", Sequential(*xconvs))
         for modules in [self.xconvs,]:
             for l in modules.modules():
-                if isinstance(l, nn.Conv2d):
-                    torch.nn.init.normal_(l.weight, std=0.01)
+                if isinstance(l, Conv2d):
+                    normal_(l.weight, std=0.01)
                     if not use_gn:
-                        torch.nn.init.constant_(l.bias, 0)
+                        constant_(l.bias, 0)
 
         input_size = conv_head_dim * resolution ** 2
         representation_size = cfg.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM
