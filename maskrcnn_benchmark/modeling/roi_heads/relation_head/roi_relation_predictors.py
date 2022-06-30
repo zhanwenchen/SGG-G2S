@@ -17,7 +17,9 @@ from torch import (
     as_tensor as torch_as_tensor,
     eye as torch_eye,
     tanh as torch_tanh,
+    equal as torch_equal,
 )
+from torch.jit import script as torch_jit_script
 from torch.nn import Module, Sequential, Linear, ReLU
 from torch.nn.functional import dropout as F_dropout, binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits, relu as F_relu, softmax as F_softmax, cross_entropy as F_cross_entropy
 from maskrcnn_benchmark.modeling import registry
@@ -351,7 +353,6 @@ class TransformerTransferGSCPredictor(Module):
             len(rel_label) = 132
 
             '''
-            # breakpoint()
 
             obj_labels = proposal.get_field("labels")
 
@@ -365,7 +366,6 @@ class TransformerTransferGSCPredictor(Module):
             num_objs = len(proposal) #0: 15
             num_rels = len(rel_pair_idx) #0: 210
 
-            # breakpoint()
             nodes_ont_ent = self.fc_init_ont_ent(torch_as_tensor(self.emb_ent, dtype=torch_float32, device=device))
             nodes_ont_pred = self.fc_init_ont_pred(torch_as_tensor(self.emb_pred, dtype=torch_float32, device=device))
             nodes_img_ent = roi_features[idx_start_ent:idx_start_ent+num_objs]
@@ -388,7 +388,8 @@ class TransformerTransferGSCPredictor(Module):
             edges_img2ont_ent = obj_dists.clone().detach()
             edges_ont2img_ent = edges_img2ont_ent.t()
 
-            edges_img2ont_pred = torch_zeros((num_rels, self.num_rel_cls), dtype=torch_float32, device=device, requires_grad=False) # torch.Size([506, 51])
+            num_rel_cls = self.num_rel_cls
+            edges_img2ont_pred = torch_zeros((num_rels, num_rel_cls), dtype=torch_float32, device=device, requires_grad=False) # torch.Size([506, 51])
             edges_ont2img_pred = edges_img2ont_pred.t()
 
             ent_cls_logits = None
@@ -419,7 +420,51 @@ class TransformerTransferGSCPredictor(Module):
                 # breakpoint()
                 message_received_ont_ent = self.fc_mp_receive_ont_ent(message_received_ont_ent) # message_received_ont_ent: torch.Size([177, 3328]) => torch.Size([177, 1024])
 
+                # edges_ont_ent2pred: torch.Size([3, 151, 51])
+                # message_send_ont_ent: torch.Size([151, 256])
+                # og = torch_cat([torch_mm(edges_ont_ent2pred[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2pred)], 1)
+                # # og: 51, 768
                 # breakpoint()
+                # lol = torch_einsum('abc,bd->cad', edges_ont_ent2pred, message_send_ont_ent).view(num_rel_cls, -1) # 3, 51, 256
+
+                # import torch
+                # # b=3, n=151, m=51; b=1, m=51, p=256; x
+                # # b=51, n=3, m=151, b=51, m=151, p=1; v
+                # lol = edges_ont_ent2pred.view(3, 151, 51)
+                # message_send_ont_pred.unsqueeze(1)
+                # lol = torch.movedim(edges_ont_ent2pred, 2, 0)
+                # TODO:
+                # [a=3, b=151, c=51], [151, 256] => [3, 51, 256]
+                # a = torch.rand(3,151,51)
+                # b = torch.rand(151,256)
+                # c = torch.cat([torch.mm(a[zi].t(), b) for i in range(3)], 1)
+                # c1 = torch.mm(a[0].t(), b)
+                #
+                # lol = torch.einsum('abc,bd->cad', edges_ont_ent2pred, message_send_ont_ent)
+                # # c2 = torch.einsum('abc,bd->acd', a, b)
+                # c2 = torch.einsum('abc,bd->cad', a, b)
+                # c2v = c2.view(51, 768)
+                # # c1n = c2[0, :, :]
+                # # cn = c2.permute(1, 0, 2).reshape(51, 768)
+                # # torch.equal(c1, c1n)
+                # # torch.equal(c, cn)
+                # lol: torch.Size([3, 51, 256])
+
+                # [a=3, b=151, c=51], [151, 256] => [3, 51, 256]
+                # torch.einsum("abc,bd->acd")
+                # lol = torch.movedim(edges_ont_ent2pred, 2, 0) # not contiguous
+                # torch.bmm(edges_ont_ent2pred.moveaxis(), )
+                # torch.bmm(message_send_ont_ent.unsqueeze(-1))
+                # ijk = [3, 151, 51]; [51, 256]
+                # i = 3, j = 151, k = 51,
+                # jk
+                # lol = torch.einsum('ijk, kl -> ikl', edges_ont_ent2pred, message_send_ont_ent)
+                # lol = torch.einsum('ijk, nkl -> kli', edges_ont_ent2pred.view(51, ), message_send_ont_ent.unsqueeze(0))
+                # edges_ont_ent2pred: 3, 151, 51
+                # edges_ont_ent2pred[0] # 151, 51
+                # message_send_ont_ent: 151, 126
+                # torch_mm(edges_ont_ent2pred[i].t(), message_send_ont_ent) # torch.Size([51, 256])
+                # new = torch_mm(edges_ont_ent2pred, message_send_ont_ent)
                 message_received_ont_pred = torch_cat(
                     [torch_mm(edges_ont_ent2pred[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2pred)] +
                     [torch_mm(edges_ont_pred2pred[i].t(), message_send_ont_pred) for i in range(num_edge_types_pred2pred)] +
@@ -458,6 +503,15 @@ class TransformerTransferGSCPredictor(Module):
                 nodes_ont_ent = (1 - z_ont_ent) * nodes_ont_ent + z_ont_ent * h_ont_ent  # all inputs and outputs are torch.Size([177, 1024])
                 del z_ont_ent, h_ont_ent
 
+                # r_ont_ent = addsigmoid(self.fc_eq4_w_ont_ent(message_received_ont_ent), self.fc_eq4_u_ont_ent(nodes_ont_ent))
+                # nodes_ont_ent = formula(nodes_ont_ent,
+                #     self.fc_eq3_w_ont_ent(message_received_ont_ent),
+                #     self.fc_eq3_u_ont_ent(nodes_ont_ent),
+                #     self.fc_eq5_w_ont_ent(message_received_ont_ent),
+                #     self.fc_eq5_u_ont_ent(r_ont_ent * nodes_ont_ent),
+                # )
+                # del r_ont_ent
+
                 # breakpoint()
                 z_ont_pred = torch_sigmoid(self.fc_eq3_w_ont_pred(message_received_ont_pred) + self.fc_eq3_u_ont_pred(nodes_ont_pred)) # all torch.Size([51, 1024])
                 r_ont_pred = torch_sigmoid(self.fc_eq4_w_ont_pred(message_received_ont_pred) + self.fc_eq4_u_ont_pred(nodes_ont_pred)) # all torch.Size([51, 1024])
@@ -465,6 +519,15 @@ class TransformerTransferGSCPredictor(Module):
                 del message_received_ont_pred, r_ont_pred
                 nodes_ont_pred = (1 - z_ont_pred) * nodes_ont_pred + z_ont_pred * h_ont_pred # all torch.Size([51, 1024])
                 del z_ont_pred, h_ont_pred
+
+                # r_ont_pred = addsigmoid(self.fc_eq4_w_ont_pred(message_received_ont_pred), self.fc_eq4_u_ont_pred(nodes_ont_pred))
+                # nodes_ont_pred = formula(nodes_ont_pred,
+                #     self.fc_eq3_w_ont_pred(message_received_ont_pred),
+                #     self.fc_eq3_u_ont_pred(nodes_ont_pred),
+                #     self.fc_eq5_w_ont_pred(message_received_ont_pred),
+                #     self.fc_eq5_u_ont_pred(r_ont_pred * nodes_ont_pred),
+                # )
+                # del r_ont_pred
 
                 # breakpoint()
                 z_img_ent = torch_sigmoid(self.fc_eq3_w_img_ent(message_received_img_ent) + self.fc_eq3_u_img_ent(nodes_img_ent)) # torch.Size([23, 1024])
@@ -474,14 +537,35 @@ class TransformerTransferGSCPredictor(Module):
                 nodes_img_ent = (1 - z_img_ent) * nodes_img_ent + z_img_ent * h_img_ent # nodes_img_ent: torch.Size([23, 1024])
                 del z_img_ent, h_img_ent
 
+                # r_img_ent = addsigmoid(self.fc_eq4_w_img_ent(message_received_img_ent), self.fc_eq4_u_img_ent(nodes_img_ent))
+                # nodes_img_ent = formula(nodes_img_ent,
+                #     self.fc_eq3_w_img_ent(message_received_img_ent),
+                #     self.fc_eq3_u_img_ent(nodes_img_ent),
+                #     self.fc_eq5_w_img_ent(message_received_img_ent),
+                #     self.fc_eq5_u_img_ent(r_img_ent * nodes_img_ent),
+                # )
+                # del r_img_ent
+
                 # breakpoint()
                 z_img_pred = torch_sigmoid(self.fc_eq3_w_img_pred(message_received_img_pred) + self.fc_eq3_u_img_pred(nodes_img_pred)) # torch.Size([506, 1024])
                 r_img_pred = torch_sigmoid(self.fc_eq4_w_img_pred(message_received_img_pred) + self.fc_eq4_u_img_pred(nodes_img_pred))
                 h_img_pred = torch_tanh(self.fc_eq5_w_img_pred(message_received_img_pred) + self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred))
-                del message_received_img_pred, r_img_pred
+                # del message_received_img_pred, r_img_pred
+                nodes_img_pred_old = nodes_img_pred.clone().detach()
                 nodes_img_pred = (1 - z_img_pred) * nodes_img_pred + z_img_pred * h_img_pred # nodes_img_pred: torch.Size([506, 1024])
                 # import pdb; pdb.set_trace()
-                del z_img_pred, h_img_pred
+                # del z_img_pred, h_img_pred
+
+                # r_img_pred_new = addsigmoid(self.fc_eq4_w_img_pred(message_received_img_pred), self.fc_eq4_u_img_pred(nodes_img_pred))
+                # nodes_img_pred_new = formula(nodes_img_pred_old,
+                #     self.fc_eq3_w_img_pred(message_received_img_pred),
+                #     self.fc_eq3_u_img_pred(nodes_img_pred_old),
+                #     self.fc_eq5_w_img_pred(message_received_img_pred),
+                #     self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred_old),
+                # )
+                # assert torch_equal(r_img_pred, r_img_pred_new)
+                # assert torch_equal(nodes_img_pred, nodes_img_pred_new)
+                # del r_img_pred
                 # if self.use_lrga is True:
                 #     nodes_img_pred = self.dimension_reduce[t](torch_cat((self.attention[t](original_vr), nodes_img_pred), dim=1))
                 #     if t != self.time_step_num - 1:
@@ -518,6 +602,26 @@ class TransformerTransferGSCPredictor(Module):
         # breakpoint()
         return ent_cls_logits_all, pred_cls_logits_all, {}
 
+
+# @torch_jit_script
+# def addtmul(x, a, b):
+#     return (1 - a) * x + a * b
+
+# @torch_jit_script
+# def addsigmoid(a, b):
+#     return torch_sigmoid(a + b)
+
+# @torch_jit_script
+# def addtahn(a, b):
+#     return torch_tanh(a + b)
+
+# @torch_jit_script
+# def formula(x, a, b, e, f):
+#     z_img_ent = torch_sigmoid(a + b) # torch.Size([23, 1024])
+#     # r_img_ent = torch_sigmoid(c + d)
+#     h_img_ent = torch_tanh(e + f)
+#     return (1 - z_img_ent) * x + z_img_ent * h_img_ent # nodes_img_ent: torch.Size([23, 1024])
+    # nodes_img_pred: torch.Size([506, 1024])
             # TODO: need to do a few continuous calls maybe in the matrix ops
 
             # if self.mode == 'predcls':

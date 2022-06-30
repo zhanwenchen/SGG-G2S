@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 if [ $1 == "0" ]; then
-    export CUDA_VISIBLE_DEVICES=6 #3,4 #,4 #3,4
+    export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1
-    export MODEL_NAME="gbnet" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    export MODEL_NAME="gbnet_debug_perf" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     echo "Started training PredCls model ${MODEL_NAME}"
     MODEL_DIRNAME=./checkpoints/${MODEL_NAME}/
     mkdir ${MODEL_DIRNAME} &&
@@ -20,7 +20,7 @@ if [ $1 == "0" ]; then
     MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
     MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
     DTYPE "float32" \
-    SOLVER.MAX_ITER 20000 SOLVER.BASE_LR 1e-3 \
+    SOLVER.MAX_ITER 32000 SOLVER.BASE_LR 1e-3 \
     SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
     SOLVER.STEPS "(10000, 16000)" \
     SOLVER.VAL_PERIOD 2000 \
@@ -49,8 +49,8 @@ elif [ $1 == "1" ]; then
     MODEL.ROI_RELATION_HEAD.PREDICTOR TransformerTransferPredictor \
     MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS True \
     DTYPE "float32" \
-    SOLVER.IMS_PER_BATCH 8 TEST.IMS_PER_BATCH $NUM_GPUS \
-    SOLVER.MAX_ITER 16000 SOLVER.BASE_LR 1e-3 \
+    SOLVER.IMS_PER_BATCH 16 TEST.IMS_PER_BATCH $NUM_GPUS \
+    SOLVER.MAX_ITER 2000 SOLVER.BASE_LR 1e-3 \
     SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
     SOLVER.STEPS "(10000, 16000)" SOLVER.VAL_PERIOD 2000 \
     SOLVER.CHECKPOINT_PERIOD 2000 GLOVE_DIR ./datasets/vg/ \
