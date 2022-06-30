@@ -11,9 +11,9 @@ from os import environ as os_environ
 from os.path import join as os_path_join
 from time import time as time_time
 import datetime
-import random
+from random import seed as random_seed
 from resource import RLIMIT_NOFILE, getrlimit, setrlimit
-import numpy as np
+from numpy.random import seed as np_random_seed
 from torch import (
     cat as torch_cat,
     manual_seed as torch_manual_seed,
@@ -40,6 +40,7 @@ from maskrcnn_benchmark.utils.comm import synchronize, get_rank, all_gather
 from maskrcnn_benchmark.utils.logger import setup_logger, debug_print
 from maskrcnn_benchmark.utils.miscellaneous import mkdir, save_config
 from maskrcnn_benchmark.utils.metric_logger import MetricLogger
+from util_misc import load_gbnet_checkpoint, print_para
 
 # See if we can use apex.DistributedDataParallel instead of the torch default,
 # and enable mixed-precision via apex.amp
@@ -52,8 +53,8 @@ except ImportError:
 def setup_seed(seed):
     torch_manual_seed(seed)
     manual_seed_all(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+    np_random_seed(seed)
+    random_seed(seed)
     cudnn.deterministic = True
 
 def train(cfg, local_rank, distributed, logger):
@@ -82,8 +83,9 @@ def train(cfg, local_rank, distributed, logger):
         slow_heads = []
 
     device = torch_device(cfg.MODEL.DEVICE)
-    model.to(device)
-
+    model.to(device, non_blocking=True)
+    load_gbnet_checkpoint(model, '/home/zhanwen/gsc/checkpoints/gbnet_og/vgrel-11.tar')
+    print(print_para(model))
     num_batch = cfg.SOLVER.IMS_PER_BATCH
 
     output_dir = cfg.OUTPUT_DIR
@@ -161,7 +163,6 @@ def train(cfg, local_rank, distributed, logger):
                     checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=False,
                                      with_optim=False, load_mapping=load_mapping_classifier)
         # debug_print(logger, 'end optimizer and shcedule')
-    model.to(device)
 
     # Initialize mixed-precision training
     use_mixed_precision = cfg.DTYPE == "float16"
@@ -233,7 +234,7 @@ def train(cfg, local_rank, distributed, logger):
         else:
             fix_eval_modules(eval_modules)
 
-        images = images.to(device)
+        images = images.to(device, non_blocking=True)
         targets = [target.to(device) for target in targets]
 
         loss_dict = model(images, targets)
@@ -431,8 +432,9 @@ def run_test(cfg, model, distributed, logger, iteration):
 
 
 def main():
+    # cudnn.benchmark = True
     setrlimit(RLIMIT_NOFILE, (4096, getrlimit(RLIMIT_NOFILE)[1]))
-    setup_seed(20)
+    setup_seed(5678)
     parser = argparse.ArgumentParser(description="PyTorch Relation Detection Training")
     parser.add_argument(
         "--config-file",
