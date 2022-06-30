@@ -3,7 +3,7 @@
 Implements the Generalized R-CNN framework
 """
 
-from torch import nn
+from torch.nn import Module
 
 from maskrcnn_benchmark.structures.image_list import to_image_list
 from maskrcnn_benchmark.structures.bounding_box import BoxList
@@ -13,7 +13,7 @@ from ..rpn.rpn import build_rpn
 from ..roi_heads.roi_heads import build_roi_heads
 
 
-class GeneralizedRCNN(nn.Module):
+class GeneralizedRCNN(Module):
     """
     Main class for Generalized R-CNN. Currently supports boxes and masks.
     It consists of three main parts:
@@ -49,7 +49,8 @@ class GeneralizedRCNN(nn.Module):
         if self.training and targets is None:
             raise ValueError("In training mode, targets should be passed")
         images = to_image_list(images) # (Pdb) images.tensors.size() torch.Size([16, 3, 608, 1024])
-        boxes_global = [BoxList([[0, 0, *image_size]], image_size, device=images.tensors.device) for image_size in images.image_sizes]
+        # boxes_global = [BoxList([[0, 0, *image_size]], image_size, device=images.tensors.device) for image_size in images.image_sizes]
+        boxes_global = None
         features = self.backbone(images.tensors)
         # (Pdb) len(features)
         # 5
