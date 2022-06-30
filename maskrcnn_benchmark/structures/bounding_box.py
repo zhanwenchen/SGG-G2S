@@ -215,10 +215,10 @@ class BoxList(object):
     # Tensor-like methods
 
     def to(self, device):
-        bbox = BoxList(self.bbox.to(device), self.size, self.mode)
+        bbox = BoxList(self.bbox.to(device, non_blocking=True), self.size, self.mode)
         for k, v in self.extra_fields.items():
             if hasattr(v, "to"):
-                v = v.to(device)
+                v = v.to(device, non_blocking=True)
             if k in self.triplet_extra_fields:
                 bbox.add_field(k, v, is_triplet=True)
             else:

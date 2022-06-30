@@ -20,9 +20,8 @@ def compute_on_dataset(model, data_loader, device, synchronize_gather=True, time
     results_dict = {}
     cpu_device = torch_device("cpu")
     empty_cache()
-    for _, batch in enumerate(tqdm(data_loader)):
+    for _, (images, targets, image_ids) in enumerate(tqdm(data_loader)):
         with torch_no_grad():
-            images, targets, image_ids = batch
             targets = [target.to(device) for target in targets]
             if timer:
                 timer.tic()
@@ -30,7 +29,7 @@ def compute_on_dataset(model, data_loader, device, synchronize_gather=True, time
                 output = im_detect_bbox_aug(model, images, device)
             else:
                 # relation detection needs the targets
-                output = model(images.to(device), targets)
+                output = model(images.to(device, non_blocking=True), targets)
             if timer:
                 if not cfg.MODEL.DEVICE == 'cpu':
                     synchronize()

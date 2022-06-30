@@ -1,8 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from __future__ import division
-
 from math import ceil as math_ceil
-from torch import Tensor as torch_Tensor
+from torch import Tensor as torch_Tensor, device as torch_device, zeros as torch_zeros
 
 
 class ImageList(object):
@@ -22,12 +20,14 @@ class ImageList(object):
         self.tensors = tensors
         self.image_sizes = image_sizes
 
+    # TODO: optimizations and non-blocking
     def to(self, *args, **kwargs):
         cast_tensor = self.tensors.to(*args, **kwargs)
         return ImageList(cast_tensor, self.image_sizes)
 
 
-def to_image_list(tensors, size_divisible=0):
+# TODO: some optimizations
+def to_image_list(tensors, size_divisible=0, device=None):
     """
     tensors can be an ImageList, a torch.Tensor or
     an iterable of Tensors. It can't be a numpy array.
@@ -60,7 +60,8 @@ def to_image_list(tensors, size_divisible=0):
             max_size = tuple(max_size)
 
         batch_shape = (len(tensors),) + max_size
-        batched_imgs = tensors[0].new(*batch_shape).zero_()
+        device = tensors[0].device if device is None else device
+        batched_imgs = torch_zeros(batch_shape, dtype=tensors[0].dtype, device=device)
         for img, pad_img in zip(tensors, batched_imgs):
             pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
 

@@ -112,7 +112,7 @@ def get_dropout_mask(dropout_probability, tensor_shape, device):
     """
     binary_mask = (torch_rand(tensor_shape, device=device, dtype=torch_float32) > dropout_probability)
     # Scale mask by 1/keep_prob to preserve output statistics.
-    return binary_mask.to(device, dtype=torch_float32).div(1.0 - dropout_probability)
+    return binary_mask.to(device, dtype=torch_float32, non_blocking=True).div(1.0 - dropout_probability)
 
 
 def center_x(proposals):
