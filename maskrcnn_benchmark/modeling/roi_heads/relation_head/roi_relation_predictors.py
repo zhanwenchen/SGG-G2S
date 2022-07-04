@@ -22,6 +22,10 @@ from torch import (
     get_num_threads as torch_get_num_threads,
     add as torch_add,
     mul as torch_mul,
+    addcmul as torch_addcmul,
+    einsum as torch_einsum,
+    matmul as torch_matmul,
+    transpose as torch_transpose,
 )
 from torch.utils.benchmark import Timer, Compare
 from torch.jit import script as torch_jit_script
@@ -34,6 +38,7 @@ from maskrcnn_benchmark.layers.gcn._utils import adj_normalize
 from .model_motifs import FrequencyBias, to_onehot
 from .model_transformer import TransformerContext, TransformerEncoder
 from .utils_relation import MLP
+import readline
 # from util_misc import print_para
 
 
@@ -838,7 +843,8 @@ class TransformerTransferGSCPredictor(Module):
 
         num_objs = len(proposal) #0: 15
         num_rels = len(rel_pair_idx) #0: 210
-
+        num_obj_cls = self.num_obj_cls
+        num_rel_cls = self.num_rel_cls
         nodes_ont_ent = self.fc_init_ont_ent(torch_as_tensor(self.emb_ent, dtype=torch_float32, device=device))
         nodes_ont_pred = self.fc_init_ont_pred(torch_as_tensor(self.emb_pred, dtype=torch_float32, device=device))
         # nodes_img_ent = roi_features[idx_start_ent:idx_start_ent+num_objs]
@@ -866,7 +872,6 @@ class TransformerTransferGSCPredictor(Module):
         edges_img2ont_ent = obj_dists.clone().detach()
         edges_ont2img_ent = edges_img2ont_ent.t()
 
-        num_rel_cls = self.num_rel_cls
         edges_img2ont_pred = torch_zeros((num_rels, num_rel_cls), dtype=torch_float32, device=device, requires_grad=False) # torch.Size([506, 51])
         edges_ont2img_pred = edges_img2ont_pred.t()
 
@@ -893,22 +898,384 @@ class TransformerTransferGSCPredictor(Module):
             message_send_img_ent = self.fc_mp_send_img_ent(nodes_img_ent) # torch.Size([23, 1024]) => torch.Size([23, 256])
             # breakpoint()
             message_send_img_pred = self.fc_mp_send_img_pred(nodes_img_pred) # torch.Size([506, 1024]) => torch.Size([506, 256])
-            # breakpoint()
+            # edges_ont_ent2ent: torch.Size([9, 151, 151]); message_send_ont_ent: torch.Size([151, 256]) => # torch.Size([151, 9, 256])
+            # edges_ont_pred2ent: torch.Size([3, 51, 151]) ; message_send_ont_pred: torch.Size([51, 256]) => # torch.Size([151, 3, 256])
+            # edges_img2ont_ent: torch.Size([3, 151]) ; message_send_img_ent: torch.Size([3, 256])
+            # 768
+
+
+            # c1_matmul = torch.matmul(edges_ont_ent2ent, message_send_ont_ent)
+            # c1_new = torch_einsum('abc,bd->cad', edges_ont_ent2ent, message_send_ont_ent) # torch.Size([151, 9, 256])
+            # c2_new = torch_einsum('abc,bd->cad', edges_ont_pred2ent, message_send_ont_pred) # torch.Size([151, 3, 256])
+            # c3_new = torch_mm(edges_img2ont_ent.t(), message_send_img_ent) # torch.Size([151, 256])
+            # message_received_ont_ent_separate = torch_cat([c1_new, c2_new, c3_new.unsqueeze(1)], dim=1).view(num_obj_cls, -1) # torch.Size([151, 3328])
+
+            # This AB approach is unfeasible because the num axis cannot be discriminated by einsum.
+            # I'd need to do some insane indexing in the end. Also, what would the gradients be?
+            # A = torch_cat([edges_ont_ent2ent, edges_ont_pred2ent, edges_img2ont_ent.unsqueeze(0)], dim=0)
+            # B = torch_cat([message_send_ont_ent, message_send_ont_pred, message_send_img_ent], dim=0)
+            # message_received_ont_ent_together = torch_einsum('abc,bd->cad', A, B)
             message_received_ont_ent = torch_cat(
                 [torch_mm(edges_ont_ent2ent[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2ent)] + # 177, 177 => 177, 256 x 9
                 [torch_mm(edges_ont_pred2ent[i].t(), message_send_ont_pred) for i in range(num_edge_types_pred2ent)] + # 51 177 => 51, 256 * 3
                 [torch_mm(edges_img2ont_ent.t(), message_send_img_ent),]
             , 1) #  torch.Size([177, 3328])
-            # NOTE: there's some vectorization opportunity right here.
+
+            # c1_matmul = torch_matmul(edges_ont_ent2ent.transpose(1, 2), message_send_ont_ent) # torch.Size([9, 151, 256])
+            # # [3, 1, 151, 51] * [51, 256] => [3, 151, 256]. m=51, p=256. k=1. j=3. n=151
+            # c2_matmul = torch_matmul(edges_ont_pred2ent.transpose(1, 2), message_send_ont_pred) # torch.Size([3, 151, 256])
+            # # c1 = [torch_mm(edges_ont_ent2ent[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2ent)] # 9 x torch.Size([151, 256])
+            # c3 = torch_mm(edges_img2ont_ent.T, message_send_img_ent).unsqueeze(0)
+            #
+            # message_received_ont_ent_matmul = torch_cat([c1_matmul, c2_matmul, c3], dim=0)
+
+            # bmm wouldn't work because I need to manually repeat along the num dimension
+
             # breakpoint()
-            message_received_ont_ent = self.fc_mp_receive_ont_ent(message_received_ont_ent) # message_received_ont_ent: torch.Size([177, 3328]) => torch.Size([177, 1024])
+
+            # TODO:
+            # CAT (unsqueeze #3) and then einsum???????
+            # NOTE: there's some vectorization opportunity right here.
+            # c1 = torch_einsum('abc,bd->cad', edges_ont_ent2pred, message_send_ont_ent).view(num_rel_cls, -1) # 3, 51, 256
+            # c1 = [torch_mm(edges_ont_ent2ent[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2ent)] # 9 x torch.Size([151, 256])
+            # c1_new = torch_einsum('abc,bd->cad', edges_ont_ent2ent, message_send_ont_ent).view(num_obj_cls, -1) # 3, 51, 256
+            # c2 = [torch_mm(edges_ont_pred2ent[i].t(), message_send_ont_pred) for i in range(num_edge_types_pred2ent)] # 3 x torch.Size([151, 256])
+            # c21 = torch_mm(edges_ont_pred2ent[0].t(), message_send_ont_pred)
+            # c22 = torch_mm(edges_ont_pred2ent[1].t(), message_send_ont_pred)
+            # c23 = torch_mm(edges_ont_pred2ent[2].t(), message_send_ont_pred)
+            # breakpoint()
+            # c21_new = torch_einsum('abc,bd->cad', edges_ont_pred2ent, message_send_ont_pred)[:, 0, :]
+            # c22_new = torch_einsum('abc,bd->cad', edges_ont_pred2ent, message_send_ont_pred)[:, 1, :]
+            # c23_new = torch_einsum('abc,bd->cad', edges_ont_pred2ent, message_send_ont_pred)[:, 2, :]
+            # c2_new = torch_einsum('abc,bd->cad', edges_ont_pred2ent, message_send_ont_pred) # torch.Size([151, 3, 256])
+            # c2_new = torch_einsum('abc,bd->cad', edges_ont_pred2ent, message_send_ont_pred).view(num_obj_cls, -1) # torch.Size([151, 768])
+            # c3 = torch_mm(edges_img2ont_ent.t(), message_send_img_ent) #torch.Size([151, 256])
+            # # edges_img2ont_ent: [3, 151], message_send_ont_pred: torch.Size([3, 256])
+            # c3_new = torch_einsum('ab,ac->bc', edges_img2ont_ent, message_send_img_ent) # 151, 256
+            # c21_new[torch.where(~torch.isclose(c21, c21_new))]
+            # torch.allclose(torch.cat(c2, -1), c2_new.view(num_obj_cls, -1), atol=1e-03)
+            with torch_no_grad():
+                message_received_ont_ent = self.fc_mp_receive_ont_ent(message_received_ont_ent) # message_received_ont_ent: torch.Size([177, 3328]) => torch.Size([177, 1024])
+                message_received_ont_ent_original = original(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)
+                message_received_ont_ent_new = jit_transpose_first_inplace(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)
+                message_received_ont_ent_nonjit = nonjit_transpose_first(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)
+            try:
+                assert torch_allclose(message_received_ont_ent, message_received_ont_ent_original, atol=1e-3)
+                assert torch_allclose(message_received_ont_ent, message_received_ont_ent_new, atol=1e-3)
+                assert torch_allclose(message_received_ont_ent, message_received_ont_ent_nonjit, atol=1e-3)
+                # import torch
+                # message_received_ont_ent[~torch.isclose(message_received_ont_ent, message_received_ont_ent_nonjit)]
+                # message_received_ont_ent_new[~torch.isclose(message_received_ont_ent, message_received_ont_ent_new)]
+                # message_received_ont_ent_nonjit[~torch.isclose(message_received_ont_ent, message_received_ont_ent_nonjit)]
+            except:
+                breakpoint()
+            # breakpoint()
+            # lol = mm_flatten_cat_transpose_first_debug(edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)
+            # c1 = torch_transpose(torch_matmul(torch_transpose(edges_ont_ent2ent, 1, 2), message_send_ont_ent), 0, 1) # torch.Size([256, 151, 9])
+            # c2 = torch_transpose(torch_matmul(torch_transpose(edges_ont_pred2ent, 1, 2), message_send_ont_pred), 0, 1)
+            # c3 = torch_mm(torch_transpose(edges_img2ont_ent, 0, 1), message_send_img_ent).unsqueeze_(1)
+            # return torch_cat((
+            #     c1,
+            #     c2,
+            #     c3,
+            # ), dim=1).view(a3.size(1), -1)
+            # breakpoint()
+
+            # c1 = torch_matmul(edges_ont_ent2ent.transpose_(1, 2), message_send_ont_ent).transpose_(0, 1) # torch.Size([151, 9, 256])
+            # c2 = torch_matmul(edges_ont_pred2ent.transpose_(1, 2), message_send_ont_pred).transpose_(0, 1) # torch.Size([151, 3, 256])
+            # c3 = torch_mm(edges_img2ont_ent.transpose(0, 1), message_send_img_ent).unsqueeze_(1) # torch.Size([151, 1, 256])
+            # c = torch_cat((c1, c2, c3), dim=1).view(edges_img2ont_ent.size(1), -1)
+            # torch_matmul(a2.transpose_(1, 2), b2).transpose_(0, 1),
+            # torch_mm(a3.transpose_(0, 1), b3).unsqueeze_(1),
+            # @torch_jit_script
+            # def mm_flatten_cat_transpose_first_inplace(a1, b1, a2, b2, a3, b3):
+                # return torch_cat((
+                #     torch_matmul(a1.transpose_(1, 2), b1).transpose_(0, 1),
+                #     torch_matmul(a2.transpose_(1, 2), b2).transpose_(0, 1),
+                #     torch_mm(a3.transpose_(0, 1), b3).unsqueeze_(1),
+                # ), dim=1).view(a3.size(0), -1)
+            #
+            # label = 'alltogether mm vs matmul ont_ent'
+            # timer_mm_ont_ent = Timer(
+            #     label=label,
+            #     sub_label=f'{num_objs}_{t}',
+            #     description='mm listcomp',
+            #     stmt='lol = original(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)',
+            #     setup='',
+            #     globals={
+            #         'original': original,
+            #         'self': self,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'edges_img2ont_ent': edges_img2ont_ent,
+            #         'message_send_img_ent': message_send_img_ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_mm_ont_ent)
+            #
+            # timer_jit_ont_ent = Timer(
+            #     label=label,
+            #     sub_label=f'{num_objs}_{t}',
+            #     description='jit',
+            #     stmt='lol = jit(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)',
+            #     setup='',
+            #     globals={
+            #         'jit': jit,
+            #         'self': self,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'edges_img2ont_ent': edges_img2ont_ent,
+            #         'message_send_img_ent': message_send_img_ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_jit_ont_ent)
+            #
+            # timer_jit_non_contiguous_ont_ent = Timer(
+            #     label=label,
+            #     sub_label=f'{num_objs}_{t}',
+            #     description='jit (non-contiguous)',
+            #     stmt='lol = jit_non_contiguous(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)',
+            #     setup='',
+            #     globals={
+            #         'jit_non_contiguous': jit_non_contiguous,
+            #         'self': self,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'edges_img2ont_ent': edges_img2ont_ent,
+            #         'message_send_img_ent': message_send_img_ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_jit_non_contiguous_ont_ent)
+            #
+            # timer_jit_t_ont_ent = Timer(
+            #     label=label,
+            #     sub_label=f'{num_objs}_{t}',
+            #     description='jit transpose first',
+            #     stmt='lol = jit_transpose_first(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)',
+            #     setup='',
+            #     globals={
+            #         'jit_transpose_first': jit_transpose_first,
+            #         'self': self,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'edges_img2ont_ent': edges_img2ont_ent,
+            #         'message_send_img_ent': message_send_img_ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_jit_t_ont_ent)
+            #
+            # timer_nonjit_t_ont_ent = Timer(
+            #     label=label,
+            #     sub_label=f'{num_objs}_{t}',
+            #     description='nonjit transpose first',
+            #     stmt='lol = nonjit_transpose_first(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)',
+            #     setup='',
+            #     globals={
+            #         'nonjit_transpose_first': nonjit_transpose_first,
+            #         'self': self,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'edges_img2ont_ent': edges_img2ont_ent,
+            #         'message_send_img_ent': message_send_img_ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_nonjit_t_ont_ent)
+            #
+            # timer_jit_t_ont_ent_unsqueeze = Timer(
+            #     label=label,
+            #     sub_label=f'{num_objs}_{t}',
+            #     description='jit transpose first (unsqueeze)',
+            #     stmt='lol = jit_transpose_first_unsqueeze(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)',
+            #     setup='',
+            #     globals={
+            #         'jit_transpose_first_unsqueeze': jit_transpose_first_unsqueeze,
+            #         'self': self,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'edges_img2ont_ent': edges_img2ont_ent,
+            #         'message_send_img_ent': message_send_img_ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_jit_t_ont_ent_unsqueeze)
+            #
+            # timer_jit_t_ont_ent_unsqueeze = Timer(
+            #     label=label,
+            #     sub_label=f'{num_objs}_{t}',
+            #     description='jit transpose first (inplace)',
+            #     stmt='lol = jit_transpose_first_inplace(self.fc_mp_receive_ont_ent, edges_ont_ent2ent, message_send_ont_ent, edges_ont_pred2ent, message_send_ont_pred, edges_img2ont_ent, message_send_img_ent)',
+            #     setup='',
+            #     globals={
+            #         'jit_transpose_first_inplace': jit_transpose_first_inplace,
+            #         'self': self,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'edges_img2ont_ent': edges_img2ont_ent,
+            #         'message_send_img_ent': message_send_img_ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_jit_t_ont_ent_unsqueeze)
+            # sizea = list(edges_ont_ent2ent.size())
+            # sizeb = list(message_send_ont_ent.size())
+            # label = 'mm vs einsum vs matmul'
+            # timer_mm_c1 = Timer(
+            #     label=f'{label} c1',
+            #     sub_label=f'{sizea}x{sizeb}_{t}',
+            #     description='mm listcomp',
+            #     stmt='c1 = [torch_mm(edges_ont_ent2ent[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2ent)]',
+            #     setup='',
+            #     globals={
+            #         'torch_mm': torch_mm,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'num_edge_types_ent2ent': num_edge_types_ent2ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_mm_c1)
+            #
+            # sizea = list(edges_ont_ent2ent.size())
+            # sizeb = list(message_send_ont_ent.size())
+            # label = 'mm vs einsum vs matmul'
+            # timer_mm_c1 = Timer(
+            #     label=f'{label} c1',
+            #     sub_label=f'{sizea}x{sizeb}_{t}',
+            #     description='mm listcomp',
+            #     stmt='c1 = [torch_mm(edges_ont_ent2ent[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2ent)]',
+            #     setup='',
+            #     globals={
+            #         'torch_mm': torch_mm,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'num_edge_types_ent2ent': num_edge_types_ent2ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_mm_c1)
+            #
+            # timer_einsum_c1 = Timer(
+            #     label=f'{label} c1',
+            #     sub_label=f'{sizea}x{sizeb}_{t}',
+            #     description='einsum',
+            #     stmt='c1_new = torch_einsum(\'abc,bd->cad\', edges_ont_ent2ent, message_send_ont_ent).view(num_obj_cls, -1)',
+            #     setup='',
+            #     globals={
+            #         'torch_einsum': torch_einsum,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'num_obj_cls': num_obj_cls,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_einsum_c1)
+            #
+            # timer_matmul_c1 = Timer(
+            #     label=f'{label} c1',
+            #     sub_label=f'{sizea}x{sizeb}_{t}',
+            #     description='matmul',
+            #     stmt='c1_matmul = torch_matmul(edges_ont_ent2ent.transpose(1, 2), message_send_ont_ent).transpose(0, 2).contiguous().view(num_obj_cls, -1)',
+            #     setup='',
+            #     globals={
+            #         'torch_matmul': torch_matmul,
+            #         'edges_ont_ent2ent': edges_ont_ent2ent,
+            #         'message_send_ont_ent': message_send_ont_ent,
+            #         'num_obj_cls': num_obj_cls,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_matmul_c1)
+            #
+            # sizea = list(edges_ont_pred2ent.size())
+            # sizeb = list(message_send_ont_pred.size())
+            # timer_mm_c2 = Timer(
+            #     label=f'{label} c2',
+            #     sub_label=f'{sizea}x{sizeb}_{t}',
+            #     description='mm listcomp',
+            #     stmt='c2 = [torch_mm(edges_ont_pred2ent[i].t(), message_send_ont_pred) for i in range(num_edge_types_pred2ent)]',
+            #     setup='',
+            #     globals={
+            #         'torch_mm': torch_mm,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'num_edge_types_pred2ent': num_edge_types_pred2ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_mm_c2)
+            #
+            # timer_einsum_c2 = Timer(
+            #     label=f'{label} c2',
+            #     sub_label=f'{sizea}x{sizeb}_{t}',
+            #     description='einsum',
+            #     stmt='c2_new = torch_einsum(\'abc,bd->cad\', edges_ont_pred2ent, message_send_ont_pred).view(num_obj_cls, -1)',
+            #     setup='',
+            #     globals={
+            #         'torch_einsum': torch_einsum,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'num_obj_cls': num_obj_cls,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_einsum_c2)
+            #
+            # timer_matmul_c2 = Timer(
+            #     label=f'{label} c2',
+            #     sub_label=f'{sizea}x{sizeb}_{t}',
+            #     description='matmul',
+            #     stmt='c2_matmul = torch_matmul(edges_ont_pred2ent.transpose(1, 2), message_send_ont_pred).transpose(0, 2).contiguous().view(num_obj_cls, -1)',
+            #     setup='',
+            #     globals={
+            #         'torch_matmul': torch_matmul,
+            #         'edges_ont_pred2ent': edges_ont_pred2ent,
+            #         'message_send_ont_pred': message_send_ont_pred,
+            #         'num_obj_cls': num_obj_cls,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_matmul_c2)
+            #
+            # sizea = list(edges_img2ont_ent.size())
+            # sizeb = list(message_send_img_ent.size())
+            # timer_old_c3 = Timer(
+            #     label=f'{label} c3',
+            #     sub_label=f'{sizea}x{sizeb}_{t}',
+            #     description='old',
+            #     stmt='c3 = torch_mm(edges_img2ont_ent.t(), message_send_img_ent)',
+            #     setup='',
+            #     globals={
+            #         'torch_mm': torch_mm,
+            #         'edges_img2ont_ent': edges_img2ont_ent,
+            #         'message_send_img_ent': message_send_img_ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_old_c3)
+            #
+            # timer_einsum_c3 = Timer(
+            #     label=f'{label} c3',
+            #     sub_label=f'{sizea}x{sizeb}_{t}',
+            #     description='einsum',
+            #     stmt='c3_einsum = torch_einsum(\'ab,ac->bc\', edges_img2ont_ent, message_send_img_ent)',
+            #     setup='',
+            #     globals={
+            #         'torch_einsum': torch_einsum,
+            #         'edges_img2ont_ent': edges_img2ont_ent,
+            #         'message_send_img_ent': message_send_img_ent,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_einsum_c3)
 
             # edges_ont_ent2pred: torch.Size([3, 151, 51])
             # message_send_ont_ent: torch.Size([151, 256])
             # og = torch_cat([torch_mm(edges_ont_ent2pred[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2pred)], 1)
             # # og: 51, 768
             # breakpoint()
-            # lol = torch_einsum('abc,bd->cad', edges_ont_ent2pred, message_send_ont_ent).view(num_rel_cls, -1) # 3, 51, 256
 
             # import torch
             # # b=3, n=151, m=51; b=1, m=51, p=256; x
@@ -976,51 +1343,56 @@ class TransformerTransferGSCPredictor(Module):
 
             del message_send_ont_pred, message_send_img_ent
 
-            r_ont_ent = addsigmoid(self.fc_eq4_w_ont_ent(message_received_ont_ent), self.fc_eq4_u_ont_ent(nodes_ont_ent))
-            nodes_ont_ent = formula(nodes_ont_ent,
-                self.fc_eq3_w_ont_ent(message_received_ont_ent),
-                self.fc_eq3_u_ont_ent(nodes_ont_ent),
-                self.fc_eq5_w_ont_ent(message_received_ont_ent),
-                self.fc_eq5_u_ont_ent(r_ont_ent * nodes_ont_ent),
-            )
-            del r_ont_ent
 
-            r_ont_pred = addsigmoid(self.fc_eq4_w_ont_pred(message_received_ont_pred), self.fc_eq4_u_ont_pred(nodes_ont_pred))
-            nodes_ont_pred = formula(nodes_ont_pred,
-                self.fc_eq3_w_ont_pred(message_received_ont_pred),
-                self.fc_eq3_u_ont_pred(nodes_ont_pred),
-                self.fc_eq5_w_ont_pred(message_received_ont_pred),
-                self.fc_eq5_u_ont_pred(r_ont_pred * nodes_ont_pred),
-            )
-            del r_ont_pred
+            # r_ont_ent = addsigmoid(self.fc_eq4_w_ont_ent(message_received_ont_ent), self.fc_eq4_u_ont_ent(nodes_ont_ent))
+            # nodes_ont_ent = formula(nodes_ont_ent,
+            #     self.fc_eq3_w_ont_ent(message_received_ont_ent),
+            #     self.fc_eq3_u_ont_ent(nodes_ont_ent),
+            #     self.fc_eq5_w_ont_ent(message_received_ont_ent),
+            #     self.fc_eq5_u_ont_ent(r_ont_ent * nodes_ont_ent),
+            # )
+            # del r_ont_ent
 
-            r_img_ent = addsigmoid(self.fc_eq4_w_img_ent(message_received_img_ent), self.fc_eq4_u_img_ent(nodes_img_ent))
-            nodes_img_ent = formula(nodes_img_ent,
-                self.fc_eq3_w_img_ent(message_received_img_ent),
-                self.fc_eq3_u_img_ent(nodes_img_ent),
-                self.fc_eq5_w_img_ent(message_received_img_ent),
-                self.fc_eq5_u_img_ent(r_img_ent * nodes_img_ent),
-            )
-            del r_img_ent
+            # r_ont_pred = addsigmoid(self.fc_eq4_w_ont_pred(message_received_ont_pred), self.fc_eq4_u_ont_pred(nodes_ont_pred))
+            # nodes_ont_pred = formula(nodes_ont_pred,
+            #     self.fc_eq3_w_ont_pred(message_received_ont_pred),
+            #     self.fc_eq3_u_ont_pred(nodes_ont_pred),
+            #     self.fc_eq5_w_ont_pred(message_received_ont_pred),
+            #     self.fc_eq5_u_ont_pred(r_ont_pred * nodes_ont_pred),
+            # )
+            # del r_ont_pred
+
+            # r_img_ent = addsigmoid(self.fc_eq4_w_img_ent(message_received_img_ent), self.fc_eq4_u_img_ent(nodes_img_ent))
+            # nodes_img_ent = formula(nodes_img_ent,
+            #     self.fc_eq3_w_img_ent(message_received_img_ent),
+            #     self.fc_eq3_u_img_ent(nodes_img_ent),
+            #     self.fc_eq5_w_img_ent(message_received_img_ent),
+            #     self.fc_eq5_u_img_ent(r_img_ent * nodes_img_ent),
+            # )
+            # del r_img_ent
+            nodes_ont_ent = apply_formula(message_received_ont_ent, nodes_ont_ent, self.fc_eq3_w_ont_ent, self.fc_eq3_u_ont_ent, self.fc_eq4_w_ont_ent, self.fc_eq4_u_ont_ent, self.fc_eq5_w_ont_ent, self.fc_eq5_u_ont_ent, num_rels)
+            nodes_ont_pred = apply_formula(message_received_ont_pred, nodes_ont_pred, self.fc_eq3_w_ont_pred, self.fc_eq3_u_ont_pred, self.fc_eq4_w_ont_pred, self.fc_eq4_u_ont_pred, self.fc_eq5_w_ont_pred, self.fc_eq5_u_ont_pred, num_rels)
+            nodes_img_ent = apply_formula(message_received_img_ent, nodes_img_ent, self.fc_eq3_w_img_ent, self.fc_eq3_u_img_ent, self.fc_eq4_w_img_ent, self.fc_eq4_u_img_ent, self.fc_eq5_w_img_ent, self.fc_eq5_u_img_ent, num_rels)
+            nodes_img_pred = apply_formula(message_received_img_pred, nodes_img_pred, self.fc_eq3_w_img_pred, self.fc_eq3_u_img_pred, self.fc_eq4_w_img_pred, self.fc_eq4_u_img_pred, self.fc_eq5_w_img_pred, self.fc_eq5_u_img_pred, num_rels)
 
             # nodes_img_pred_old = nodes_img_pred.clone().detach()
             # message_received_img_pred_old = message_received_img_pred.clone().detach()
             # start_old = time_time_ns()
             # debug_memory()
-            size = message_received_img_pred.size()
-            timer_old = Timer(
-                label='gating formula',
-                sub_label=f'{size}_{t}',
-                description='old',
-                stmt='lol = self.get_new_nodes_img_pred_old(message_received_img_pred, nodes_img_pred)',
-                setup='',
-                globals={
-                    'self': self,
-                    'message_received_img_pred': message_received_img_pred,
-                    'nodes_img_pred': nodes_img_pred,
-                }
-            ).blocked_autorange(min_run_time=1)
-            results.append(timer_old)
+            # size = message_received_img_pred.size()
+            # timer_old = Timer(
+            #     label='gating formula',
+            #     sub_label=f'{size}_{t}',
+            #     description='old',
+            #     stmt='lol = self.get_new_nodes_img_pred_old(message_received_img_pred, nodes_img_pred)',
+            #     setup='',
+            #     globals={
+            #         'self': self,
+            #         'message_received_img_pred': message_received_img_pred,
+            #         'nodes_img_pred': nodes_img_pred,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_old)
             # print('OLD: 4x get_new_nodes_img_pred_old(message_received_img_pred, nodes_img_pred):')
             # print(timer_old.timeit(100))
             # print()
@@ -1029,19 +1401,19 @@ class TransformerTransferGSCPredictor(Module):
             # print(print_para(self))
             # debug_memory()
 
-            timer_2x = Timer(
-                label='gating formula',
-                sub_label=f'{size}_{t}',
-                description='2x',
-                stmt='lol = self.get_new_nodes_img_pred_2x(message_received_img_pred, nodes_img_pred)',
-                setup='',
-                globals={
-                    'self': self,
-                    'message_received_img_pred': message_received_img_pred,
-                    'nodes_img_pred': nodes_img_pred,
-                }
-            ).blocked_autorange(min_run_time=1)
-            results.append(timer_2x)
+            # timer_2x = Timer(
+            #     label='gating formula',
+            #     sub_label=f'{size}_{t}',
+            #     description='2x',
+            #     stmt='lol = self.get_new_nodes_img_pred_2x(message_received_img_pred, nodes_img_pred)',
+            #     setup='',
+            #     globals={
+            #         'self': self,
+            #         'message_received_img_pred': message_received_img_pred,
+            #         'nodes_img_pred': nodes_img_pred,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_2x)
             # print('timer_2x:')
             # print(print_para(self))
             # debug_memory()
@@ -1050,56 +1422,113 @@ class TransformerTransferGSCPredictor(Module):
             # print()
             # print(gpu_profile(frame=_getframe(), event='line', arg=None))
 
-            timer_2x_no_addsig = Timer(
-                label='gating formula',
-                sub_label=f'{size}_{t}',
-                description='2x_no_addsig',
-                stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid(message_received_img_pred, nodes_img_pred)',
-                setup='',
-                globals={
-                    'self': self,
-                    'message_received_img_pred': message_received_img_pred,
-                    'nodes_img_pred': nodes_img_pred,
-                }
-            ).blocked_autorange(min_run_time=1)
-            results.append(timer_2x_no_addsig)
-            print('timer_2x_no_addsig:')
-            # print(print_para(self))
-            # debug_memory()
-            # print(gpu_profile(frame=_getframe(), event='line', arg=None))
+            # timer_2x_no_addsig = Timer(
+            #     label='gating formula',
+            #     sub_label=f'{size}_{t}',
+            #     description='2x_no_addsig',
+            #     stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid(message_received_img_pred, nodes_img_pred)',
+            #     setup='',
+            #     globals={
+            #         'self': self,
+            #         'message_received_img_pred': message_received_img_pred,
+            #         'nodes_img_pred': nodes_img_pred,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_2x_no_addsig)
+            # # print('timer_2x_no_addsig:')
+            # # print(print_para(self))
+            # # debug_memory()
+            # # print(gpu_profile(frame=_getframe(), event='line', arg=None))
+            #
+            # timer_2x_no_addsig_oneline = Timer(
+            #     label='gating formula',
+            #     sub_label=f'{size}_{t}',
+            #     description='2x_no_addsig_oneline',
+            #     stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid_oneline(message_received_img_pred, nodes_img_pred)',
+            #     setup='',
+            #     globals={
+            #         'self': self,
+            #         'message_received_img_pred': message_received_img_pred,
+            #         'nodes_img_pred': nodes_img_pred,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_2x_no_addsig_oneline)
+            # # print('timer_2x_no_addsig_oneline:')
+            # # print(print_para(self))
+            # # debug_memory()
+            # # print(gpu_profile(frame=_getframe(), event='line', arg=None))
+            #
+            # timer_2x_no_addsig_oneline_inplace = Timer(
+            #     label='gating formula',
+            #     sub_label=f'{size}_{t}',
+            #     description='2x_no_addsig_oneline_inplace',
+            #     stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid_oneline_inplace(message_received_img_pred, nodes_img_pred)',
+            #     setup='',
+            #     globals={
+            #         'self': self,
+            #         'message_received_img_pred': message_received_img_pred,
+            #         'nodes_img_pred': nodes_img_pred,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_2x_no_addsig_oneline_inplace)
+            #
+            # timer_2x_no_addsig_oneline_inplace_inplace = Timer(
+            #     label='gating formula',
+            #     sub_label=f'{size}_{t}',
+            #     description='2x_no_addsig_oneline_inplace_inplace',
+            #     stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid_oneline_inplace_inplace(message_received_img_pred, nodes_img_pred)',
+            #     setup='',
+            #     globals={
+            #         'self': self,
+            #         'message_received_img_pred': message_received_img_pred,
+            #         'nodes_img_pred': nodes_img_pred,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_2x_no_addsig_oneline_inplace_inplace)
+            #
+            # timer_2x_no_addsig_oneline_aby = Timer(
+            #     label='gating formula',
+            #     sub_label=f'{size}_{t}',
+            #     description='2x_no_addsig_oneline_aby',
+            #     stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid_oneline_aby(message_received_img_pred, nodes_img_pred)',
+            #     setup='',
+            #     globals={
+            #         'self': self,
+            #         'message_received_img_pred': message_received_img_pred,
+            #         'nodes_img_pred': nodes_img_pred,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_2x_no_addsig_oneline_aby)
+            #
+            # timer_2x_no_addsig_addcmul_aby = Timer(
+            #     label='gating formula',
+            #     sub_label=f'{size}_{t}',
+            #     description='2x_no_addsig_addcmul_aby',
+            #     stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid_addcmul_aby(message_received_img_pred, nodes_img_pred)',
+            #     setup='',
+            #     globals={
+            #         'self': self,
+            #         'message_received_img_pred': message_received_img_pred,
+            #         'nodes_img_pred': nodes_img_pred,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_2x_no_addsig_addcmul_aby)
 
-            timer_2x_no_addsig_oneline = Timer(
-                label='gating formula',
-                sub_label=f'{size}_{t}',
-                description='2x_no_addsig_oneline',
-                stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid_oneline(message_received_img_pred, nodes_img_pred)',
-                setup='',
-                globals={
-                    'self': self,
-                    'message_received_img_pred': message_received_img_pred,
-                    'nodes_img_pred': nodes_img_pred,
-                }
-            ).blocked_autorange(min_run_time=1)
-            results.append(timer_2x_no_addsig_oneline)
-            print('timer_2x_no_addsig_oneline:')
-            # print(print_para(self))
-            # debug_memory()
-            # print(gpu_profile(frame=_getframe(), event='line', arg=None))
-
-            timer_2x_no_addsig_oneline_out_cls = Timer(
-                label='gating formula',
-                sub_label=f'{size}_{t}',
-                description='2x_no_addsig_oneline_out_cls',
-                stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid_oneline_out_cls(message_received_img_pred, nodes_img_pred)',
-                setup='',
-                globals={
-                    'self': self,
-                    'message_received_img_pred': message_received_img_pred,
-                    'nodes_img_pred': nodes_img_pred,
-                }
-            ).blocked_autorange(min_run_time=1)
-            results.append(timer_2x_no_addsig_oneline_out_cls)
-            print('timer_2x_no_addsig_oneline_out_cls:')
+            # print('timer_2x_no_addsig_oneline_inplace:')
+            # timer_2x_no_addsig_oneline_out_cls = Timer(
+            #     label='gating formula',
+            #     sub_label=f'{size}_{t}',
+            #     description='2x_no_addsig_oneline_out_cls',
+            #     stmt='lol = self.get_new_nodes_img_pred_2x_no_addsigmoid_oneline_out_cls(message_received_img_pred, nodes_img_pred)',
+            #     setup='',
+            #     globals={
+            #         'self': self,
+            #         'message_received_img_pred': message_received_img_pred,
+            #         'nodes_img_pred': nodes_img_pred,
+            #     }
+            # ).blocked_autorange(min_run_time=1)
+            # results.append(timer_2x_no_addsig_oneline_out_cls)
+            # print('timer_2x_no_addsig_oneline_out_cls:')
             # print(print_para(self))
             # debug_memory()
             # print(gpu_profile(frame=_getframe(), event='line', arg=None))
@@ -1159,14 +1588,14 @@ class TransformerTransferGSCPredictor(Module):
             # print(f'OLD: 4 formulas: time_elapsed (ns)={time_old}')
 
             # start_new = time_time_ns()
-            r_img_pred = addsigmoid(self.fc_eq4_w_img_pred(message_received_img_pred), self.fc_eq4_u_img_pred(nodes_img_pred))
-            nodes_img_pred = formula(nodes_img_pred,
-                self.fc_eq3_w_img_pred(message_received_img_pred),
-                self.fc_eq3_u_img_pred(nodes_img_pred),
-                self.fc_eq5_w_img_pred(message_received_img_pred),
-                self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
-            )
-            del r_img_pred
+            # r_img_pred = addsigmoid(self.fc_eq4_w_img_pred(message_received_img_pred), self.fc_eq4_u_img_pred(nodes_img_pred))
+            # nodes_img_pred = formula(nodes_img_pred,
+            #     self.fc_eq3_w_img_pred(message_received_img_pred),
+            #     self.fc_eq3_u_img_pred(nodes_img_pred),
+            #     self.fc_eq5_w_img_pred(message_received_img_pred),
+            #     self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
+            # )
+            # del r_img_pred
             # end_new = time_time_ns()
             # del r_img_pred
             # time_new = end_new-start_new
@@ -1245,59 +1674,144 @@ class TransformerTransferGSCPredictor(Module):
             # breakpoint()
 
         # debug_memory()
-        compare = Compare(results)
-        compare.print()
-        # debug_memory()
-        # print(gpu_profile(frame=_getframe(), event='line', arg=None))
-        del results, compare
+        # compare = Compare(results)
+        # compare.print()
+        # # debug_memory()
+        # # print(gpu_profile(frame=_getframe(), event='line', arg=None))
+        # del results, compare
         return ent_cls_logits, pred_cls_logits
+
+def original(fc, a1, b1, a2, b2, a3, b3):
+    return fc(torch_cat(
+        [torch_mm(a1[i].t(), b1) for i in range(a1.size(0))] + # 177, 177 => 177, 256 x 9
+        [torch_mm(a2[i].t(), b2) for i in range(a2.size(0))] + # 51 177 => 51, 256 * 3
+        [torch_mm(a3.t(), b3),]
+    , 1))
+#
+# def jit(fc, a1, b1, a2, b2, a3, b3):
+#     return fc(mm_flatten_cat(a1, b1, a2, b2, a3, b3))
+#
+# def jit_non_contiguous(fc, a1, b1, a2, b2, a3, b3):
+#     return fc(mm_flatten_cat_non_contiguous(a1, b1, a2, b2, a3, b3))
+
+# def jit_transpose_first(fc, a1, b1, a2, b2, a3, b3):
+#     return fc(mm_flatten_cat_transpose_first(a1, b1, a2, b2, a3, b3))
+# #
+# def jit_transpose_first_unsqueeze(fc, a1, b1, a2, b2, a3, b3):
+#     return fc(mm_flatten_cat_transpose_first_unsqueeze(a1, b1, a2, b2, a3, b3))
+#
+def jit_transpose_first_inplace(fc, a1, b1, a2, b2, a3, b3):
+    return fc(mm_flatten_cat_transpose_first_inplace(a1, b1, a2, b2, a3, b3))
+#
+def nonjit_transpose_first(fc, a1, b1, a2, b2, a3, b3):
+    return fc(mm_flatten_cat_transpose_first_nonjit(a1, b1, a2, b2, a3, b3))
 
 # @torch_jit_script
 # def addtmul(x, a, b):
 #     return (1 - a) * x + a * b
 
-    def get_new_nodes_img_pred_old(self, message_received_img_pred, nodes_img_pred):
-        z_img_pred = torch_sigmoid(self.fc_eq3_w_img_pred(message_received_img_pred) + self.fc_eq3_u_img_pred(nodes_img_pred)) # torch.Size([506, 1024])
-        r_img_pred = torch_sigmoid(self.fc_eq4_w_img_pred(message_received_img_pred) + self.fc_eq4_u_img_pred(nodes_img_pred))
-        h_img_pred = torch_tanh(self.fc_eq5_w_img_pred(message_received_img_pred) + self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred))
-        # del message_received_img_pred, r_img_pred
-        return (1 - z_img_pred) * nodes_img_pred + z_img_pred * h_img_pred # nodes_img_pred: torch.Size([506, 1024])
+    # def get_new_nodes_img_pred_old(self, message_received_img_pred, nodes_img_pred):
+    #     z_img_pred = torch_sigmoid(self.fc_eq3_w_img_pred(message_received_img_pred) + self.fc_eq3_u_img_pred(nodes_img_pred)) # torch.Size([506, 1024])
+    #     r_img_pred = torch_sigmoid(self.fc_eq4_w_img_pred(message_received_img_pred) + self.fc_eq4_u_img_pred(nodes_img_pred))
+    #     h_img_pred = torch_tanh(self.fc_eq5_w_img_pred(message_received_img_pred) + self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred))
+    #     # del message_received_img_pred, r_img_pred
+    #     return (1 - z_img_pred) * nodes_img_pred + z_img_pred * h_img_pred # nodes_img_pred: torch.Size([506, 1024])
+    #
+    # # def get_new_nodes_img_pred_2x(self, message_received_img_pred, nodes_img_pred):
+    # #     r_img_pred = addsigmoid(self.fc_eq4_w_img_pred(message_received_img_pred), self.fc_eq4_u_img_pred(nodes_img_pred))
+    # #     return formula(nodes_img_pred,
+    # #         self.fc_eq3_w_img_pred(message_received_img_pred),
+    # #         self.fc_eq3_u_img_pred(nodes_img_pred),
+    # #         self.fc_eq5_w_img_pred(message_received_img_pred),
+    # #         self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
+    # #     )
+    #
+    # # TODO: Maybe try without del?
+    # def get_new_nodes_img_pred_2x_no_addsigmoid(self, message_received_img_pred, nodes_img_pred):
+    #     r_img_pred = torch_sigmoid(self.fc_eq4_w_img_pred(message_received_img_pred) + self.fc_eq4_u_img_pred(nodes_img_pred))
+    #     return formula(nodes_img_pred,
+    #         self.fc_eq3_w_img_pred(message_received_img_pred),
+    #         self.fc_eq3_u_img_pred(nodes_img_pred),
+    #         self.fc_eq5_w_img_pred(message_received_img_pred),
+    #         self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
+    #     )
+    #
+    # # Better for smaller. Best so far. A tiny bit worse than get_new_nodes_img_pred_2x_no_addsigmoid
+    # # Also more stable in terms of time reduction.
+    # # TODO: Maybe try without del?
+    # def get_new_nodes_img_pred_2x_no_addsigmoid_oneline(self, message_received_img_pred, nodes_img_pred):
+    #     r_img_pred = torch_sigmoid(self.fc_eq4_w_img_pred(message_received_img_pred) + self.fc_eq4_u_img_pred(nodes_img_pred))
+    #     return formula_oneline(nodes_img_pred,
+    #         self.fc_eq3_w_img_pred(message_received_img_pred),
+    #         self.fc_eq3_u_img_pred(nodes_img_pred),
+    #         self.fc_eq5_w_img_pred(message_received_img_pred),
+    #         self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
+    #     )
+    #
+    # # The new best. Saves ~10% or 17-34 ms per call vs 170-340.
+    # def get_new_nodes_img_pred_2x_no_addsigmoid_oneline_inplace(self, message_received_img_pred, nodes_img_pred):
+    #     r_img_pred = self.fc_eq4_w_img_pred(message_received_img_pred).add_(self.fc_eq4_u_img_pred(nodes_img_pred)).sigmoid_()
+    #     return formula_oneline(nodes_img_pred,
+    #         self.fc_eq3_w_img_pred(message_received_img_pred),
+    #         self.fc_eq3_u_img_pred(nodes_img_pred),
+    #         self.fc_eq5_w_img_pred(message_received_img_pred),
+    #         self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
+    #     )
+    #
+    # # Somehow really bad all around. Sometimes worse than old
+    # def get_new_nodes_img_pred_2x_no_addsigmoid_oneline_inplace_inplace(self, message_received_img_pred, nodes_img_pred):
+    #     f = self.fc_eq4_w_img_pred(message_received_img_pred).add_(self.fc_eq4_u_img_pred(nodes_img_pred)).sigmoid_().mul_(nodes_img_pred)
+    #     return formula_oneline(nodes_img_pred,
+    #         self.fc_eq3_w_img_pred(message_received_img_pred),
+    #         self.fc_eq3_u_img_pred(nodes_img_pred),
+    #         self.fc_eq5_w_img_pred(message_received_img_pred),
+    #         self.fc_eq5_u_img_pred(f),
+    #     )
+    #
+    # # Only the best when num_rels is huge. Actually no. After warming up it's the best.
+    # def get_new_nodes_img_pred_2x_no_addsigmoid_oneline_aby(self, message_received_img_pred, nodes_img_pred):
+    #     f = addsigmoidmuly(self.fc_eq4_w_img_pred(message_received_img_pred), self.fc_eq4_u_img_pred(nodes_img_pred), nodes_img_pred)
+    #     return formula_oneline(nodes_img_pred,
+    #         self.fc_eq3_w_img_pred(message_received_img_pred),
+    #         self.fc_eq3_u_img_pred(nodes_img_pred),
+    #         self.fc_eq5_w_img_pred(message_received_img_pred),
+    #         self.fc_eq5_u_img_pred(f),
+    #     )
+    #
+    # # This is the best now for both small and big sizes.
+    # def get_new_nodes_img_pred_2x_no_addsigmoid_addcmul_aby(self, message_received_img_pred, nodes_img_pred):
+    #     f = addsigmoidmuly(self.fc_eq4_w_img_pred(message_received_img_pred), self.fc_eq4_u_img_pred(nodes_img_pred), nodes_img_pred)
+    #     # r_img_pred = self.fc_eq4_w_img_pred(message_received_img_pred).add_(self.fc_eq4_u_img_pred(nodes_img_pred)).sigmoid_()
+    #     return formula_addcmul(nodes_img_pred,
+    #         self.fc_eq3_w_img_pred(message_received_img_pred),
+    #         self.fc_eq3_u_img_pred(nodes_img_pred),
+    #         self.fc_eq5_w_img_pred(message_received_img_pred),
+    #         self.fc_eq5_u_img_pred(f),
+    #     )
 
-    def get_new_nodes_img_pred_2x(self, message_received_img_pred, nodes_img_pred):
-        r_img_pred = addsigmoid(self.fc_eq4_w_img_pred(message_received_img_pred), self.fc_eq4_u_img_pred(nodes_img_pred))
-        return formula(nodes_img_pred,
-            self.fc_eq3_w_img_pred(message_received_img_pred),
-            self.fc_eq3_u_img_pred(nodes_img_pred),
-            self.fc_eq5_w_img_pred(message_received_img_pred),
-            self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
+def apply_formula(x, y, eq3x, eq3y, eq4x, eq4y, eq5x, eq5y, num_rels):
+    if num_rels <= 60:
+        return formula_oneline(y,
+            eq3x(x),
+            eq3y(y),
+            eq5x(x),
+            eq5y(eq4x(x).add_(eq4y(y)).sigmoid_() * y),
         )
+    return formula_addcmul(y,
+        eq3x(x),
+        eq3y(y),
+        eq5x(x),
+        eq5y(addsigmoidmuly(eq4x(x), eq4y(y), y)),
+    )
 
-    def get_new_nodes_img_pred_2x_no_addsigmoid(self, message_received_img_pred, nodes_img_pred):
-        r_img_pred = torch_sigmoid(self.fc_eq4_w_img_pred(message_received_img_pred) + self.fc_eq4_u_img_pred(nodes_img_pred))
-        return formula(nodes_img_pred,
-            self.fc_eq3_w_img_pred(message_received_img_pred),
-            self.fc_eq3_u_img_pred(nodes_img_pred),
-            self.fc_eq5_w_img_pred(message_received_img_pred),
-            self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
-        )
-
-    def get_new_nodes_img_pred_2x_no_addsigmoid_oneline(self, message_received_img_pred, nodes_img_pred):
-        r_img_pred = torch_sigmoid(self.fc_eq4_w_img_pred(message_received_img_pred) + self.fc_eq4_u_img_pred(nodes_img_pred))
-        return formula_oneline(nodes_img_pred,
-            self.fc_eq3_w_img_pred(message_received_img_pred),
-            self.fc_eq3_u_img_pred(nodes_img_pred),
-            self.fc_eq5_w_img_pred(message_received_img_pred),
-            self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
-        )
-
-    def get_new_nodes_img_pred_2x_no_addsigmoid_oneline_out_cls(self, message_received_img_pred, nodes_img_pred):
-        r_img_pred = torch_sigmoid(self.fc_eq4_w_img_pred(message_received_img_pred) + self.fc_eq4_u_img_pred(nodes_img_pred))
-        return formula_oneline_out_cls(nodes_img_pred,
-            self.fc_eq3_w_img_pred(message_received_img_pred),
-            self.fc_eq3_u_img_pred(nodes_img_pred),
-            self.fc_eq5_w_img_pred(message_received_img_pred),
-            self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
-        )
+    # def get_new_nodes_img_pred_2x_no_addsigmoid_oneline_out_cls(self, message_received_img_pred, nodes_img_pred):
+    #     r_img_pred = torch_sigmoid(self.fc_eq4_w_img_pred(message_received_img_pred) + self.fc_eq4_u_img_pred(nodes_img_pred))
+    #     return formula_oneline_out_cls(nodes_img_pred,
+    #         self.fc_eq3_w_img_pred(message_received_img_pred),
+    #         self.fc_eq3_u_img_pred(nodes_img_pred),
+    #         self.fc_eq5_w_img_pred(message_received_img_pred),
+    #         self.fc_eq5_u_img_pred(r_img_pred * nodes_img_pred),
+    #     )
 
     # NOTE: message_received_img_pred and nodes_img_pred requires grad so can't use out=.
     # def get_new_nodes_img_pred_2x_no_addsigmoid_oneline_out_fn(self, message_received_img_pred, nodes_img_pred):
@@ -1332,18 +1846,79 @@ class TransformerTransferGSCPredictor(Module):
 # @torch_jit_script
 # def torch_mm_bT(a, b):
 #     return torch_mm(a, b.T)
+# @torch_jit_script
+# def mm_flatten_cat(a1, b1, a2, b2, a3, b3):
+#     return torch_cat((
+#         torch_matmul(torch_transpose(a1, 1, 2), b1),
+#         torch_matmul(torch_transpose(a2, 1, 2), b2),
+#         torch_mm(torch_transpose(a3, 0, 1), b3).unsqueeze_(0),
+#     ), dim=0).transpose_(0, 1).contiguous().view(a3.size(1), -1)
+#
+# @torch_jit_script
+# def mm_flatten_cat_non_contiguous(a1, b1, a2, b2, a3, b3):
+#     return torch_cat((
+#         torch_matmul(torch_transpose(a1, 1, 2), b1),
+#         torch_matmul(torch_transpose(a2, 1, 2), b2),
+#         torch_mm(torch_transpose(a3, 0, 1), b3).unsqueeze_(0),
+#     ), dim=0).transpose_(0, 1).reshape(a3.size(1), -1)
+#
+# @torch_jit_script
+# def mm_flatten_cat_transpose_first(a1, b1, a2, b2, a3, b3):
+#     return torch_cat((
+#         torch_transpose(torch_matmul(torch_transpose(a1, 1, 2), b1), 0, 1),
+#         torch_transpose(torch_matmul(torch_transpose(a2, 1, 2), b2), 0, 1),
+#         torch_mm(torch_transpose(a3, 0, 1), b3).unsqueeze_(1),
+#     ), dim=1).view(a3.size(1), -1)
+# #
+def mm_flatten_cat_transpose_first_nonjit(a1, b1, a2, b2, a3, b3):
+    return torch_cat((
+        torch_transpose(torch_matmul(torch_transpose(a1, 1, 2), b1), 0, 1),
+        torch_transpose(torch_matmul(torch_transpose(a2, 1, 2), b2), 0, 1),
+        torch_mm(torch_transpose(a3, 0, 1), b3).unsqueeze_(1),
+    ), dim=1).view(a3.size(1), -1)
+
+# @torch_jit_script
+# def mm_flatten_cat_transpose_first_unsqueeze(a1, b1, a2, b2, a3, b3):
+#     return torch_cat((
+#         torch_transpose(torch_matmul(torch_transpose(a1, 1, 2), b1), 0, 1),
+#         torch_transpose(torch_matmul(torch_transpose(a2, 1, 2), b2), 0, 1),
+#         torch_mm(torch_transpose(a3, 0, 1), b3).unsqueeze(1),
+#     ), dim=1).view(a3.size(1), -1)
+#
+@torch_jit_script
+def mm_flatten_cat_transpose_first_inplace(a1, b1, a2, b2, a3, b3):
+    return torch_cat((
+        torch_matmul(a1.transpose(1, 2), b1).transpose_(0, 1),
+        torch_matmul(a2.transpose(1, 2), b2).transpose_(0, 1),
+        torch_mm(a3.transpose(0, 1), b3).unsqueeze_(1),
+    ), dim=1).view(a3.size(1), -1)
+#
+# def mm_flatten_cat_transpose_first_debug(a1, b1, a2, b2, a3, b3):
+#     breakpoint()
+#     c1 = torch_transpose(torch_matmul(torch_transpose(a1, 1, 2), b1), 0, 2)
+#     c2 = torch_transpose(torch_matmul(torch_transpose(a2, 1, 2), b2), 0, 2)
+#     c3 = torch_mm(torch_transpose(a3, 0, 1), b3).unsqueeze_(-1)
+#     return torch_cat((
+#         c1,
+#         c2,
+#         c3,
+#     ), dim=1).view(a3.size(1), -1)
 
 
 @torch_jit_script
 def addsigmoid(a, b):
     return torch_sigmoid(a + b)
 
+@torch_jit_script
+def addsigmoidmuly(a, b, y):
+    return torch_sigmoid(a + b) * y
+
 # @torch_jit_script
 # def addtahn(a, b):
 #     return torch_tanh(a + b)
 
 @torch_jit_script
-def formula(x, a, b, e, f):
+def formula_old(x, a, b, e, f):
     z = torch_sigmoid(a + b) # torch.Size([23, 1024])
     # r_img_ent = torch_sigmoid(c + d)
     del a, b
@@ -1358,13 +1933,22 @@ def formula_oneline(x, a, b, e, f):
     # r_img_ent = torch_sigmoid(c + d)
     return (1 - z) * x + z * torch_tanh(e + f) # nodes_img_ent: torch.Size([23, 1024])
 
+# No benefit to addcmul over the regular formula
 @torch_jit_script
-def formula_oneline_out_cls(x, a, b, e, f):
-    a.add_(b).sigmoid_() # torch.Size([23, 1024])
-    del b
+def formula_addcmul(x, a, b, e, f):
+    z = torch_sigmoid(a + b) # torch.Size([23, 1024])
+    del a, b
     # r_img_ent = torch_sigmoid(c + d)
-    # x.mul_((1 - a)).add_(e.add_(f).tanh_().mul_(a)) # nodes_img_ent: torch.Size([23, 1024])
-    return x.mul((1 - a)).add_(e.add_(f).tanh_().mul_(a)) # nodes_img_ent: torch.Size([23, 1024])
+    return torch_addcmul((1 - z) * x, z, torch_tanh(e + f)) # nodes_img_ent: torch.Size([23, 1024])
+
+# Actually super slow
+# @torch_jit_script
+# def formula_oneline_out_cls(x, a, b, e, f):
+#     a.add_(b).sigmoid_() # torch.Size([23, 1024])
+#     del b
+#     # r_img_ent = torch_sigmoid(c + d)
+#     # x.mul_((1 - a)).add_(e.add_(f).tanh_().mul_(a)) # nodes_img_ent: torch.Size([23, 1024])
+#     return x.mul((1 - a)).add_(e.add_(f).tanh_().mul_(a)) # nodes_img_ent: torch.Size([23, 1024])
     # del a, e, f
 # @torch_jit_script
 # def formula_oneline_out_fn(x, a, b, e, f):
