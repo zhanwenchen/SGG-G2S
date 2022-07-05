@@ -1,5 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from torch.optim import Adam # SGD
+from apex.optimizers import FusedAdam, FusedSGD
+# from torch.optim import Adam, SGD
 from .lr_scheduler import WarmupMultiStepLR, WarmupReduceLROnPlateau
 from .adabound import AdaBound
 
@@ -29,9 +30,12 @@ def make_optimizer(cfg, model, logger, slow_heads=None, slow_ratio=5.0, rl_facto
         params += [{"params": [value], "lr": lr * rl_factor, "weight_decay": weight_decay}]
         logger.info("params {} lr: {}.".format(key, str(lr * rl_factor)))
 
-    # optimizer = SGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
-    # optimizer = AdaBound(params, lr=cfg.SOLVER.BASE_LR)
-    optimizer = Adam(params, lr=cfg.SOLVER.BASE_LR, eps=1e-03)
+    if cfg.SOLVER.TYPE == 'Adam':
+        optimizer = FusedAdam(params, lr=cfg.SOLVER.BASE_LR)
+    elif cfg.SOLVER.TYPE == 'SGD':
+        optimizer = FusedSGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
+    elif cfg.SOLVER.TYPE == 'AdaBound':
+        optimizer = AdaBound(params, lr=cfg.SOLVER.BASE_LR)
     return optimizer
 
 

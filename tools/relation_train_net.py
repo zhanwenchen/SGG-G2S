@@ -95,8 +95,9 @@ def train(cfg, local_rank, distributed, logger):
 
     arguments = {}
 
+    using_scheduler = not cfg.SOLVER.TYPE == 'Adam'
     optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1, rl_factor=float(num_batch))
-    scheduler = make_lr_scheduler(cfg, optimizer, logger)
+    scheduler = make_lr_scheduler(cfg, optimizer, logger) if using_scheduler else None
     debug_print(logger, 'instantiating checkpointer')
 
     checkpointer = DetectronCheckpointer(cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True)
@@ -247,7 +248,8 @@ def train(cfg, local_rank, distributed, logger):
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
         meters.update(loss=losses_reduced, **loss_dict_reduced)
 
-        optimizer.zero_grad(set_to_none=True)
+        # optimizer.zero_grad(set_to_none=True)
+        optimizer.zero_grad() # For Apex FusedSGD, FusedAdam, etc
         # Note: If mixed precision is not used, this ends up doing nothing
         # Otherwise apply loss scaling for mixed-precision recipe
         with amp_scale_loss(losses, optimizer) as scaled_losses:
@@ -304,13 +306,14 @@ def train(cfg, local_rank, distributed, logger):
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
-        if cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau":
-            scheduler.step(val_result, epoch=iteration)
-            if scheduler.stage_count >= cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP:
-                logger.info("Trigger MAX_DECAY_STEP at iteration {}.".format(iteration))
-                # break
-        else:
-            scheduler.step()
+        if using_scheduler:
+            if cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau":
+                scheduler.step(val_result, epoch=iteration)
+                if scheduler.stage_count >= cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP:
+                    logger.info("Trigger MAX_DECAY_STEP at iteration {}.".format(iteration))
+                    # break
+            else:
+                scheduler.step()
         writer.add_scalars(f'{mode}/loss', {'loss': losses_reduced, **loss_dict_reduced}, iteration)
         writer.add_scalars(f'{mode}/time', {'time_batch': batch_time, 'time_data': data_time}, iteration)
 
