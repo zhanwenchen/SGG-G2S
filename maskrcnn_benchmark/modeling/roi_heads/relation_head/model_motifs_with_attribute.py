@@ -37,7 +37,7 @@ class AttributeDecoderRNN(nn.Module):
         self.state_linearity = torch.nn.Linear(self.hidden_size, 5 * self.hidden_size, bias=True)
         self.out_obj = nn.Linear(self.hidden_size, len(self.obj_classes))
         self.out_att = nn.Linear(self.hidden_size, len(self.att_classes))
-        
+
         self.init_parameters()
 
     def init_parameters(self):
@@ -302,7 +302,7 @@ class AttributeLSTMContext(nn.Module):
         :param obj_feats: [num_obj, img_dim + object embedding0 dim]
         :return: edge_ctx: [num_obj, #feats] For later!
         """
-        obj_embed2 = self.obj_embed2(obj_preds)        
+        obj_embed2 = self.obj_embed2(obj_preds)
         att_embed2 = normalize_sigmoid_logits(att_dists) @ self.att_embed2.weight
         inp_feats = torch.cat((obj_embed2, att_embed2, obj_feats), 1)
 
@@ -332,7 +332,7 @@ class AttributeLSTMContext(nn.Module):
             att_logits = cat([proposal.get_field("attribute_logits") for proposal in proposals], dim=0).detach()
             obj_embed = F.softmax(obj_logits, dim=1) @ self.obj_embed1.weight
             att_embed = normalize_sigmoid_logits(att_logits) @ self.att_embed1.weight
-        
+
         assert proposals[0].mode == 'xyxy'
         pos_embed = self.pos_embed(encode_box_info(proposals))
         obj_pre_rep = cat((x, obj_embed, att_embed, pos_embed), -1)
@@ -345,7 +345,7 @@ class AttributeLSTMContext(nn.Module):
         obj_dists, obj_preds, att_dists, obj_ctx, perm, inv_perm, ls_transposed = self.obj_ctx(obj_pre_rep, proposals, obj_labels, att_labels, boxes_per_cls)
         # edge level contextual feature
         obj_rel_rep = cat((x, obj_ctx), -1)
-        edge_ctx = self.edge_ctx(obj_rel_rep, obj_preds=obj_preds, att_dists=att_dists, perm=perm, 
+        edge_ctx = self.edge_ctx(obj_rel_rep, obj_preds=obj_preds, att_dists=att_dists, perm=perm,
                                 inv_perm=inv_perm, ls_transposed=ls_transposed)
 
         return obj_dists, obj_preds, att_dists, edge_ctx
@@ -359,9 +359,9 @@ class AttributeLSTMContext(nn.Module):
 
         with_attri_idx = (attributes.sum(-1) > 0).long()
         without_attri_idx = 1 - with_attri_idx
-        
+
         attribute_targets = torch.zeros((num_obj, self.num_attri_cat), device=attributes.device).float()
-      
+
         for idx in torch.nonzero(with_attri_idx).squeeze(1).tolist():
             for k in range(max_num_attri):
                 att_id = int(attributes[idx, k])

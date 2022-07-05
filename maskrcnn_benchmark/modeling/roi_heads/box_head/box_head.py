@@ -23,7 +23,8 @@ class ROIBoxHead(Module):
     def __init__(self, cfg, in_channels):
         super(ROIBoxHead, self).__init__()
         self.cfg = cfg.clone()
-        self.feature_extractor = make_roi_box_feature_extractor(cfg, in_channels, half_out=self.cfg.MODEL.ATTRIBUTE_ON)
+        if self.cfg.MODEL.MASK_ON or self.cfg.MODEL.KEYPOINT_ON or (self.cfg.MODEL.RELATION_ON and self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX and not self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL):
+            self.feature_extractor = make_roi_box_feature_extractor(cfg, in_channels, half_out=self.cfg.MODEL.ATTRIBUTE_ON)
         if not self.cfg.MODEL.RELATION_ON or (self.cfg.MODEL.RELATION_ON and not self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX):
             self.predictor = make_roi_box_predictor(
                 cfg, self.feature_extractor.out_channels)
@@ -57,7 +58,10 @@ class ROIBoxHead(Module):
                 else:
                     proposals = [target.copy_with_fields(["labels"]) for target in targets]
                 del targets
-                x = self.feature_extractor(features, proposals)
+                if self.cfg.MODEL.MASK_ON or self.cfg.MODEL.KEYPOINT_ON or not self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL:
+                    x = self.feature_extractor(features, proposals)
+                else:
+                    x = None
                 del features
                 if self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL:
                     # mode==predcls

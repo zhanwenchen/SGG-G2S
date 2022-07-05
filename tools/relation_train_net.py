@@ -84,7 +84,8 @@ def train(cfg, local_rank, distributed, logger):
 
     device = torch_device(cfg.MODEL.DEVICE)
     model.to(device, non_blocking=True)
-    load_gbnet_checkpoint(model, '/home/zhanwen/gsc/checkpoints/gbnet_og/vgrel-11.tar')
+    if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == 'GBNetPredictor':
+        load_gbnet_checkpoint(model, '/home/zhanwen/gsc/checkpoints/gbnet_og/vgrel-11.tar')
     print(print_para(model))
     num_batch = cfg.SOLVER.IMS_PER_BATCH
 

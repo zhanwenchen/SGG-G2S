@@ -2,8 +2,7 @@
 from collections import OrderedDict
 import logging
 
-import torch
-
+from torch import as_tensor as torch_as_tensor
 from maskrcnn_benchmark.utils.imports import import_file
 
 
@@ -27,7 +26,7 @@ def align_and_update_state_dicts(model_state_dict, loaded_state_dict, load_mappi
     loaded_keys = sorted(list(loaded_state_dict.keys()))
     # get a matrix of string matches, where each (i, j) entry correspond to the size of the
     # loaded_key string, if it matches
-    # NOTE: Kaihua Tang, since some modules of current model will be initialized from assigned layer of 
+    # NOTE: Kaihua Tang, since some modules of current model will be initialized from assigned layer of
     # loaded model, we use load_mapping to do such operation
     mapped_current_keys = current_keys.copy()
     for i, key in enumerate(mapped_current_keys):
@@ -39,7 +38,7 @@ def align_and_update_state_dicts(model_state_dict, loaded_state_dict, load_mappi
     match_matrix = [
         len(j) if i.endswith(j) else 0 for i in mapped_current_keys for j in loaded_keys
     ]
-    match_matrix = torch.as_tensor(match_matrix).view(
+    match_matrix = torch_as_tensor(match_matrix).view(
         len(current_keys), len(loaded_keys)
     )
     max_match_size, idxs = match_matrix.max(1)
@@ -53,7 +52,7 @@ def align_and_update_state_dicts(model_state_dict, loaded_state_dict, load_mappi
     for idx_new, idx_old in enumerate(idxs.tolist()):
         if idx_old == -1:
             key = current_keys[idx_new]
-            logger.info("NO-MATCHING of current module: {} of shape {}".format(key, 
+            logger.info("NO-MATCHING of current module: {} of shape {}".format(key,
                                     tuple(model_state_dict[key].shape)))
             continue
         key = current_keys[idx_new]
