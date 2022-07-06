@@ -2,7 +2,7 @@
 if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1
-    export MODEL_NAME="verify_gsc" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    export MODEL_NAME="gbnet_debug" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     echo "Started training PredCls model ${MODEL_NAME}"
     MODEL_DIRNAME=./checkpoints/${MODEL_NAME}/
     mkdir ${MODEL_DIRNAME} &&
@@ -11,6 +11,7 @@ if [ $1 == "0" ]; then
     cp -r ./maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
     HOST_NODE_ADDR=12345 PYTHONUNBUFFERED=x torchrun --master_port=17293 --nproc_per_node=$NUM_GPUS tools/relation_train_net.py \
     --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
+    MODEL.ROI_RELATION_HEAD.PREDICTOR GBNetPredictor \
     MODEL.ROI_RELATION_HEAD.USE_GSC True  \
     SOLVER.IMS_PER_BATCH 16 \
     MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
@@ -20,7 +21,7 @@ if [ $1 == "0" ]; then
     MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
     MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
     DTYPE "float32" \
-    SOLVER.MAX_ITER 32000 SOLVER.BASE_LR 1e-3 \
+    SOLVER.MAX_ITER 32000 SOLVER.BASE_LR 1e-4 \
     SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
     SOLVER.STEPS "(10000, 16000)" \
     SOLVER.VAL_PERIOD 2000 \
