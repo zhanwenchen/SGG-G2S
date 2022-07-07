@@ -17,7 +17,7 @@ from torch.cuda import (
     LongTensor as torch_cuda_LongTensor,
     ByteStorage as torch_cuda_ByteStorage,
 )
-from torch.distributed.dist import (
+from torch.distributed import (
     is_available as dist_is_available,
     is_initialized as dist_is_initialized,
     get_world_size as dist_get_world_size,
