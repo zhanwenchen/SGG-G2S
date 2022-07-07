@@ -23,6 +23,7 @@ from torch import (
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
 # from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
+from torch.nn.utils import clip_grad_norm_
 from torch.utils.tensorboard import SummaryWriter
 from torch.backends import cudnn
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
@@ -34,7 +35,7 @@ from maskrcnn_benchmark.engine.trainer import reduce_loss_dict
 from maskrcnn_benchmark.engine.inference import inference
 from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
-from maskrcnn_benchmark.utils.checkpoint import clip_grad_norm
+# from maskrcnn_benchmark.utils.checkpoint import clip_grad_norm
 from maskrcnn_benchmark.utils.collect_env import collect_env_info
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank, all_gather
 from maskrcnn_benchmark.utils.logger import setup_logger, debug_print
@@ -49,7 +50,7 @@ from apex.amp import (
     scale_loss as amp_scale_loss,
     master_params as amp_master_params,
 )
-from apex.parallel import DistributedDataParallel
+from apex.parallel import DistributedDataParallel, convert_syncbn_model
 
 
 APEX_FUSED_OPTIMIZERS = {'FusedSGD', 'FusedAdam'}
@@ -179,6 +180,8 @@ def train(cfg, local_rank, distributed, logger):
     model, optimizer = amp_initialize(model, optimizer, opt_level=amp_opt_level)
 
     if distributed:
+        # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model, process_group)
+        model = convert_syncbn_model(model)
         model = DistributedDataParallel(model)
         # model = DistributedDataParallel(
         #     model, device_ids=[local_rank], output_device=local_rank,
@@ -268,7 +271,8 @@ def train(cfg, local_rank, distributed, logger):
         # add clip_grad_norm from MOTIFS, tracking gradient, used for debug
         verbose = (iteration % cfg.SOLVER.PRINT_GRAD_FREQ) == 0 or print_first_grad # print grad or not
         print_first_grad = False
-        clip_grad_norm(amp_master_params(optimizer), max_norm=cfg.SOLVER.GRAD_NORM_CLIP, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
+        # clip_grad_norm(amp_master_params(optimizer), max_norm=cfg.SOLVER.GRAD_NORM_CLIP, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
+        clip_grad_norm_(amp_master_params(optimizer), cfg.SOLVER.GRAD_NORM_CLIP)
 
         optimizer.step()
 
