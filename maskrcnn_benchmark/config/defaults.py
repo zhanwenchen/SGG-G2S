@@ -1,6 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import os
-
+from os.path import join as os_path_join, dirname as os_path_dirname
 from yacs.config import CfgNode as CN
 
 
@@ -540,7 +539,7 @@ _C.SOLVER.GRAD_NORM_CLIP = 5.0
 _C.SOLVER.PRINT_GRAD_FREQ = 5000
 # whether validate and validate period
 _C.SOLVER.TO_VAL = True
-_C.SOLVER.TYPE = "Adam"
+_C.SOLVER.TYPE = "SGD"
 _C.SOLVER.PRE_VAL = True
 _C.SOLVER.VAL_PERIOD = 2500
 
@@ -608,8 +607,8 @@ _C.TEST.VAL_FLAG = False
 _C.OUTPUT_DIR = "."
 _C.GLOVE_DIR = "."
 
-_C.PATHS_CATALOG = os.path.join(os.path.dirname(__file__), "paths_catalog.py")
-_C.PATHS_DATA = os.path.join(os.path.dirname(__file__), "../data/datasets")
+_C.PATHS_CATALOG = os_path_join(os_path_dirname(__file__), "paths_catalog.py")
+_C.PATHS_DATA = os_path_join(os_path_dirname(__file__), "../data/datasets")
 
 # ---------------------------------------------------------------------------- #
 # Precision options

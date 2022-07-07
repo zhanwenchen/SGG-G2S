@@ -50,6 +50,10 @@ except ImportError:
     raise ImportError('Use APEX for multi-precision via apex.amp')
 
 
+APEX_FUSED_OPTIMIZERS = {'FusedSGD', 'FusedAdam'}
+OPTIMIZERS_WITH_SCHEDULERS = {'SGD', 'FusedSGD'}
+
+
 def setup_seed(seed):
     torch_manual_seed(seed)
     manual_seed_all(seed)
@@ -84,6 +88,7 @@ def train(cfg, local_rank, distributed, logger):
 
     device = torch_device(cfg.MODEL.DEVICE)
     model.to(device, non_blocking=True)
+    print(print_para(model))
     if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == 'GBNetPredictor':
         load_gbnet_checkpoint(model, '/home/zhanwen/gsc/checkpoints/gbnet_og/vgrel-11.tar')
     print(print_para(model))
@@ -95,7 +100,7 @@ def train(cfg, local_rank, distributed, logger):
 
     arguments = {}
 
-    using_scheduler = not cfg.SOLVER.TYPE == 'Adam'
+    using_scheduler = cfg.SOLVER.TYPE in OPTIMIZERS_WITH_SCHEDULERS
     optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1, rl_factor=float(num_batch))
     scheduler = make_lr_scheduler(cfg, optimizer, logger) if using_scheduler else None
     debug_print(logger, 'instantiating checkpointer')
@@ -248,8 +253,10 @@ def train(cfg, local_rank, distributed, logger):
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
         meters.update(loss=losses_reduced, **loss_dict_reduced)
 
-        # optimizer.zero_grad(set_to_none=True)
-        optimizer.zero_grad() # For Apex FusedSGD, FusedAdam, etc
+        if cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS:
+            optimizer.zero_grad() # For Apex FusedSGD, FusedAdam, etc
+        else:
+            optimizer.zero_grad(set_to_none=True) # For Apex FusedSGD, FusedAdam, etc
         # Note: If mixed precision is not used, this ends up doing nothing
         # Otherwise apply loss scaling for mixed-precision recipe
         with amp_scale_loss(losses, optimizer) as scaled_losses:

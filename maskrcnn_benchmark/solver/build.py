@@ -1,14 +1,17 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-# from apex.optimizers import FusedAdam, FusedSGD
+from apex.optimizers import FusedAdam, FusedSGD
 from torch.optim import Adam, SGD
 from .lr_scheduler import WarmupMultiStepLR, WarmupReduceLROnPlateau
 from .adabound import AdaBound
 
 
+OPTIMIZERS_WITH_SCHEDULERS = {'SGD', 'FusedSGD'}
+
+
 def make_optimizer(cfg, model, logger, slow_heads=None, slow_ratio=5.0, rl_factor=1.0,
                    wofinetune_params=None, finetune_rate=100):
-
-    if cfg.SOLVER.TYPE == 'SGD':
+    optimizer_type = cfg.SOLVER.TYPE
+    if optimizer_type in OPTIMIZERS_WITH_SCHEDULERS:
         params = []
         for key, value in model.named_parameters():
             if not value.requires_grad:
@@ -45,13 +48,16 @@ def make_optimizer(cfg, model, logger, slow_heads=None, slow_ratio=5.0, rl_facto
         # non_fc_params = [p for n,p in model.named_parameters() if not n.startswith('fc') and p.requires_grad]
         lr = cfg.SOLVER.BASE_LR
         params = [{'params': fc_params, 'lr': lr / 10.0}, {'params': non_fc_params}]
-    if cfg.SOLVER.TYPE == 'Adam':
-        optimizer = Adam(params, lr=cfg.SOLVER.BASE_LR, eps=1e-3) # From GB-Net
-    elif cfg.SOLVER.TYPE == 'SGD':
-        optimizer = SGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
-    elif cfg.SOLVER.TYPE == 'AdaBound':
-        optimizer = AdaBound(params, lr=cfg.SOLVER.BASE_LR)
-    return optimizer
+    if optimizer_type == 'Adam':
+        return Adam(params, lr=cfg.SOLVER.BASE_LR, eps=1e-3) # From GB-Net
+    if optimizer_type == 'FusedAdam':
+        return FusedAdam(params, lr=cfg.SOLVER.BASE_LR, eps=1e-3) # From GB-Net
+    if optimizer_type == 'SGD':
+        return SGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
+    if optimizer_type == 'FusedSGD':
+        return FusedSGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
+    if optimizer_type == 'AdaBound':
+        return AdaBound(params, lr=cfg.SOLVER.BASE_LR)
 
 
 def make_lr_scheduler(cfg, optimizer, logger=None):
