@@ -189,10 +189,10 @@ class BoxList(object):
         box_0 = box[0]
         box_1 = box[1]
         w, h = box[2] - box_0, box[3] - box_1
-        cropped_xmin = (xmin - box_0).clamp(min=0, max=w)
-        cropped_ymin = (ymin - box_1).clamp(min=0, max=h)
-        cropped_xmax = (xmax - box_0).clamp(min=0, max=w)
-        cropped_ymax = (ymax - box_1).clamp(min=0, max=h)
+        cropped_xmin = (xmin - box_0).clamp_(min=0, max=w)
+        cropped_ymin = (ymin - box_1).clamp_(min=0, max=h)
+        cropped_xmax = (xmax - box_0).clamp_(min=0, max=w)
+        cropped_ymax = (ymax - box_1).clamp_(min=0, max=h)
 
         # TODO should I filter empty boxes here?
         # if False:

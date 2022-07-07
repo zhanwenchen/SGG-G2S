@@ -50,7 +50,7 @@ class LevelMapper(object):
 
         # Eqn.(1) in FPN paper
         target_lvls = torch_floor(self.lvl0 + torch_log2(s / self.s0 + self.eps))
-        target_lvls = torch_clamp(target_lvls, min=self.k_min, max=self.k_max)
+        target_lvls.clamp_(min=self.k_min, max=self.k_max)
         return target_lvls.to(torch_int64) - self.k_min
 
 
