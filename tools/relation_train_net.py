@@ -49,6 +49,7 @@ from apex.amp import (
     scale_loss as amp_scale_loss,
     master_params as amp_master_params,
 )
+from apex.parallel import DistributedDataParallel
 
 
 APEX_FUSED_OPTIMIZERS = {'FusedSGD', 'FusedAdam'}
@@ -178,12 +179,13 @@ def train(cfg, local_rank, distributed, logger):
     model, optimizer = amp_initialize(model, optimizer, opt_level=amp_opt_level)
 
     if distributed:
-        model = DistributedDataParallel(
-            model, device_ids=[local_rank], output_device=local_rank,
-            # this should be removed if we update BatchNorm stats
-            broadcast_buffers=False,
-            find_unused_parameters=True,
-        )
+        model = DistributedDataParallel(model)
+        # model = DistributedDataParallel(
+        #     model, device_ids=[local_rank], output_device=local_rank,
+        #     # this should be removed if we update BatchNorm stats
+        #     broadcast_buffers=False,
+        #     find_unused_parameters=True,
+        # )
     debug_print(logger, 'end distributed')
 
     train_data_loader = make_data_loader(
