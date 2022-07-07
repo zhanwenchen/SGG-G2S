@@ -28,7 +28,7 @@ from torch.distributed import (
 )
 
 
-if version_parse(torch___version__) <= version_parse('1.10'):
+if version_parse(torch___version__) < version_parse('1.11'):
     from_buffer = torch_ByteStorage.from_buffer
 else:
     from_buffer = torch_cuda_ByteStorage.from_buffer
