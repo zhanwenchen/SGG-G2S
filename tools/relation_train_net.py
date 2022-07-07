@@ -21,7 +21,7 @@ from torch import (
     as_tensor as torch_as_tensor,
 )
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
-from torch.nn.parallel import DistributedDataParallel
+# from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
 from torch.utils.tensorboard import SummaryWriter
 from torch.backends import cudnn
@@ -44,10 +44,11 @@ from util_misc import load_gbnet_checkpoint, print_para
 
 # See if we can use apex.DistributedDataParallel instead of the torch default,
 # and enable mixed-precision via apex.amp
-try:
-    from apex.amp import initialize as amp_initialize, scale_loss as amp_scale_loss
-except ImportError:
-    raise ImportError('Use APEX for multi-precision via apex.amp')
+from apex.amp import (
+    initialize as amp_initialize,
+    scale_loss as amp_scale_loss,
+    master_params as amp_master_params,
+)
 
 
 APEX_FUSED_OPTIMIZERS = {'FusedSGD', 'FusedAdam'}
@@ -265,7 +266,7 @@ def train(cfg, local_rank, distributed, logger):
         # add clip_grad_norm from MOTIFS, tracking gradient, used for debug
         verbose = (iteration % cfg.SOLVER.PRINT_GRAD_FREQ) == 0 or print_first_grad # print grad or not
         print_first_grad = False
-        clip_grad_norm([(n, p) for n, p in model.named_parameters() if p.requires_grad], max_norm=cfg.SOLVER.GRAD_NORM_CLIP, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
+        clip_grad_norm(amp_master_params(optimizer), max_norm=cfg.SOLVER.GRAD_NORM_CLIP, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
 
         optimizer.step()
 
