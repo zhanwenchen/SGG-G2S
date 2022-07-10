@@ -39,7 +39,7 @@ from .model_motifs import FrequencyBias, to_onehot
 from .model_transformer import TransformerContext, TransformerEncoder
 from .utils_relation import MLP, layer_init_kaiming_normal
 from .lrga import LowRankAttention
-from .model_ggnn import GGNNContext
+from .model_ggnn_per_image import GGNNContext
 
 
 @registry.ROI_RELATION_PREDICTOR.register("TransformerTransferGSCPredictor")
@@ -396,12 +396,12 @@ class GBNetPredictor(Module):
         # if self.union_single_not_match:
         #     union_features = self.up_dim(union_features)
 
-        # encode context infomation
-        obj_dists, rel_dists = self.ggnn(proposals, rel_pair_idxs, roi_features, union_features, device=None, debug=True)
-
         num_objs = [len(b) for b in proposals]
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         assert len(num_rels) == len(num_objs)
+
+        # encode context infomation
+        obj_dists, rel_dists = self.ggnn(proposals, rel_pair_idxs, roi_features, union_features, device=None, debug=True, num_objs=num_objs, num_rels=num_rels)
 
         if self.use_bias:
             obj_preds = obj_dists.max(-1)[1]
@@ -414,8 +414,8 @@ class GBNetPredictor(Module):
 
             rel_dists = rel_dists + self.freq_bias.index_with_labels(pair_pred.long())
 
-        obj_dists = obj_dists.split(num_objs, dim=0)
-        rel_dists = rel_dists.split(num_rels, dim=0)
+        # obj_dists = obj_dists.split(num_objs, dim=0)
+        # rel_dists = rel_dists.split(num_rels, dim=0)
 
         # we use obj_preds instead of pred from obj_dists
         # because in decoder_rnn, preds has been through a nms stage
