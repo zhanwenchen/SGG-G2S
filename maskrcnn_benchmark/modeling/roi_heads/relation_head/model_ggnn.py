@@ -12,6 +12,7 @@ from torch import (
     addcmul as torch_addcmul,
     arange as torch_arange,
     device as torch_device,
+    float16 as torch_float16,
 )
 from torch.nn import Module, Linear
 from torch.nn.functional import softmax as F_softmax
@@ -162,9 +163,10 @@ class GGNNContext(Module):
 
     def forward(self, proposals, rel_pair_idxs, roi_features_images, union_features_images, device=None, debug=True):
         device = union_features_images.device
+        dtype = union_features_images.dtype
         obj_labels = torch_cat([proposal.get_field("labels") for proposal in proposals], dim=0)
-        obj_logits = to_onehot(obj_labels, self.num_obj_cls)
-        obj_probs = F_softmax(obj_logits, 1)
+        obj_logits = to_onehot(obj_labels, self.num_obj_cls).type(dtype)
+        obj_probs = F_softmax(obj_logits, 1).type(dtype) #TODO: type_as?
 
         num_objs = [len(proposal) for proposal in proposals]
         num_objs_sum_batch = sum(num_objs)
@@ -173,8 +175,8 @@ class GGNNContext(Module):
         # num_rels = len(rel_pair_idx) #0: 210
         # num_obj_cls = self.num_obj_cls
         num_rel_cls = self.num_rel_cls
-        nodes_ont_ent = self.fc_init_ont_ent(torch_as_tensor(self.emb_ent, dtype=torch_float32, device=device))
-        nodes_ont_pred = self.fc_init_ont_pred(torch_as_tensor(self.emb_pred, dtype=torch_float32, device=device))
+        nodes_ont_ent = self.fc_init_ont_ent(torch_as_tensor(self.emb_ent, dtype=dtype, device=device))
+        nodes_ont_pred = self.fc_init_ont_pred(torch_as_tensor(self.emb_pred, dtype=dtype, device=device))
         # nodes_img_ent = roi_features[idx_start_ent:idx_start_ent+num_objs]
         nodes_img_ent = roi_features_images
         nodes_img_pred = union_features_images
@@ -182,10 +184,10 @@ class GGNNContext(Module):
         # TODO: use placeholders instead of generating new tensors which
         # require a recreation of the computation graph. This may be true
         # even if requires_grad = False.
-        edges_ont_ent2ent = torch_as_tensor(self.adjmtx_ent2ent, dtype=torch_float32, device=device)
-        edges_ont_ent2pred = torch_as_tensor(self.adjmtx_ent2pred, dtype=torch_float32, device=device)
-        edges_ont_pred2ent = torch_as_tensor(self.adjmtx_pred2ent, dtype=torch_float32, device=device)
-        edges_ont_pred2pred = torch_as_tensor(self.adjmtx_pred2pred, dtype=torch_float32, device=device)
+        edges_ont_ent2ent = torch_as_tensor(self.adjmtx_ent2ent, dtype=dtype, device=device)
+        edges_ont_ent2pred = torch_as_tensor(self.adjmtx_ent2pred, dtype=dtype, device=device)
+        edges_ont_pred2ent = torch_as_tensor(self.adjmtx_pred2ent, dtype=dtype, device=device)
+        edges_ont_pred2pred = torch_as_tensor(self.adjmtx_pred2pred, dtype=dtype, device=device)
 
         obj_offset = 0
         rel_offset = 0
@@ -211,17 +213,18 @@ class GGNNContext(Module):
         obj_global_inds = torch_cat(obj_global_inds, dim=0)
         # rel_global_inds = torch_cat(rel_global_inds, dim=0)
 
-        edges_img_pred2subj = torch_zeros((num_rels_sum_batch, num_objs_sum_batch), dtype=torch_float32, device=device)
+        edges_img_pred2subj = torch_zeros((num_rels_sum_batch, num_objs_sum_batch), dtype=dtype, device=device)
+        # TODO: # DEBUG: arange vs :? Let's compare
         edges_img_pred2subj[:, sub_global_inds] = 1
-        edges_img_pred2obj = torch_zeros((num_rels_sum_batch, num_objs_sum_batch), dtype=torch_float32, device=device)
+        edges_img_pred2obj = torch_zeros((num_rels_sum_batch, num_objs_sum_batch), dtype=dtype, device=device)
         edges_img_pred2obj[:, obj_global_inds] = 1
         edges_img_subj2pred = edges_img_pred2subj.t() # TODO: need to specify axes when vectorized
         edges_img_obj2pred = edges_img_pred2obj.t()
 
-        edges_img2ont_ent = obj_probs.clone().detach()
+        edges_img2ont_ent = obj_probs.detach().clone()
         edges_ont2img_ent = edges_img2ont_ent.t()
 
-        edges_img2ont_pred = torch_zeros((num_rels_sum_batch, num_rel_cls), dtype=torch_float32, device=device, requires_grad=False) # torch.Size([506, 51])
+        edges_img2ont_pred = torch_zeros((num_rels_sum_batch, num_rel_cls), dtype=dtype, device=device, requires_grad=False) # torch.Size([506, 51])
         edges_ont2img_pred = edges_img2ont_pred.t()
 
         ent_cls_logits = None
@@ -237,6 +240,7 @@ class GGNNContext(Module):
             message_send_img_ent = self.fc_mp_send_img_ent(nodes_img_ent) # torch.Size([23, 1024]) => torch.Size([23, 256]) # Can be vectorized
             message_send_img_pred = self.fc_mp_send_img_pred(nodes_img_pred) # torch.Size([506, 1024]) => torch.Size([506, 256]) # Can be vectorized
 
+            # breakpoint()
             message_received_ont_ent = torch_cat(
                 [torch_mm(edges_ont_ent2ent[i].t(), message_send_ont_ent) for i in range(num_edge_types_ent2ent)] + # 177, 177 => 177, 256 x 9
                 [torch_mm(edges_ont_pred2ent[i].t(), message_send_ont_pred) for i in range(num_edge_types_pred2ent)] + # 51 177 => 51, 256 * 3
@@ -278,11 +282,11 @@ class GGNNContext(Module):
 
             pred_cls_logits = torch_mm(self.fc_output_proj_img_pred(nodes_img_pred), self.fc_output_proj_ont_pred(nodes_ont_pred).t()) # torch.Size([506, 1024]) @ torch.Size([1024, 51])
 
-            edges_img2ont_pred = F_softmax(pred_cls_logits, dim=1)
+            edges_img2ont_pred = F_softmax(pred_cls_logits, dtype=torch_float32, dim=1).type_as(pred_cls_logits)
             edges_ont2img_pred = edges_img2ont_pred.t()
             if self.refine_obj_cls:
                 ent_cls_logits = torch_mm(self.fc_output_proj_img_ent(nodes_img_ent), self.fc_output_proj_ont_ent(nodes_ont_ent).t())
-                edges_img2ont_ent = F_softmax(ent_cls_logits, dim=1)
+                edges_img2ont_ent = F_softmax(ent_cls_logits, dtype=torch_float32, dim=1).type_as(ent_cls_logits)
                 edges_ont2img_ent = edges_img2ont_ent.t()
             else:
                 ent_cls_logits = obj_logits

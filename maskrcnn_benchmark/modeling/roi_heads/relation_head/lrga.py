@@ -2,15 +2,15 @@ from torch import ones as torch_ones, mm as torch_mm, sum as torch_sum, \
     cat as torch_cat, t as torch_t
 from torch.nn import Module, Sequential, Linear, ReLU, Dropout
 from torch.nn.init import xavier_normal_, constant_
+from torch.jit import script as torch_jit_script
 
-
+@torch_jit_script
 def joint_normalize2(U, V_T):
     # U and V_T are in block diagonal form
-    tmp_ones = torch_ones((V_T.shape[1],1), device=V_T.device)
-    norm_factor = torch_mm(U, torch_mm(V_T, tmp_ones))
-    norm_factor = (torch_sum(norm_factor) / U.shape[0]) + 1e-6
-    return 1/norm_factor
-
+    tmp_ones = torch_ones((V_T.shape[1], 1), device=V_T.device, dtype=V_T.dtype)
+    # TODO: isn't torch_mm(V_T, tmp_ones) just sum(V_T)
+    norm_factor = torch_mm(U, torch_mm(V_T, tmp_ones)) # TORCH.LINALG.MULTI_DOT
+    return torch_sum(norm_factor).div_(U.shape[0]).add_(1e-6).pow_(-1)
 
 def weight_init(layer):
     # if type(layer) == Linear:
@@ -25,7 +25,7 @@ class LowRankAttention(Module):
     def __init__(self, k, d, dropout):
         super(LowRankAttention, self).__init__()
         self.w = Sequential(Linear(d, 4*k), ReLU())
-        self.activation = ReLU()
+        # self.activation = ReLU()
         self.apply(weight_init)
         self.k = k
         self.dropout = Dropout(p=dropout)
@@ -39,8 +39,9 @@ class LowRankAttention(Module):
         V_T = torch_t(V)
         # normalization
         D = joint_normalize2(U, V_T)
-        res = torch_mm(U, torch_mm(V_T, Z))
-        res = torch_cat((res*D,T),dim=1)
+        res = torch_mm(U, torch_mm(V_T, Z))  # TORCH.LINALG.MULTI_DOT
+        del U, V_T, Z
+        res = torch_cat((res.mul_(D), T), dim=1)
         return self.dropout(res)
 
 #

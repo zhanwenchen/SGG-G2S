@@ -88,8 +88,8 @@ class BoxList(object):
             return (
                 xmin,
                 ymin,
-                xmin + (w - TO_REMOVE).clamp(min=0),
-                ymin + (h - TO_REMOVE).clamp(min=0),
+                xmin + w.sub_(TO_REMOVE).clamp_(min=0),
+                ymin + h.sub_(TO_REMOVE).clamp_(min=0),
             )
         else:
             raise RuntimeError("Should not be here")
@@ -185,6 +185,7 @@ class BoxList(object):
         4-tuple defining the left, upper, right, and lower pixel
         coordinate.
         """
+        # TODO: there may be a better algo
         xmin, ymin, xmax, ymax = self._split_into_xyxy()
         box_0 = box[0]
         box_1 = box[1]
@@ -245,7 +246,7 @@ class BoxList(object):
         self.bbox[:, [1, 3]].clamp_(min=0, max=max_y)
         if remove_empty:
             box = self.bbox
-            keep = (box[:, 3] > box[:, 1]) & (box[:, 2] > box[:, 0])
+            keep = (box[:, 3] > box[:, 1]).logical_and_(box[:, 2] > box[:, 0])
             return self[keep]
         return self
 
@@ -253,7 +254,7 @@ class BoxList(object):
         box = self.bbox
         if self.mode == "xyxy":
             TO_REMOVE = 1
-            area = (box[:, 2] - box[:, 0] + TO_REMOVE) * (box[:, 3] - box[:, 1] + TO_REMOVE)
+            area = (box[:, 2] - box[:, 0]).add_(TO_REMOVE).mul_((box[:, 3] - box[:, 1]).add_(TO_REMOVE))
         elif self.mode == "xywh":
             area = box[:, 2] * box[:, 3]
         else:

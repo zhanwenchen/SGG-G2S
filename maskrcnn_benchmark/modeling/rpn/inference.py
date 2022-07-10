@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+from math import prod as math_prod
 from torch import (
     ones as torch_ones,
     arange as torch_arange,
@@ -14,6 +15,9 @@ from maskrcnn_benchmark.structures.boxlist_ops import (
     cat_boxlist, boxlist_nms, remove_small_boxes
 )
 from .utils import permute_and_flatten
+
+
+OBJECTNESS = 'objectness'
 
 
 class RPNPostProcessor(Module):
@@ -92,16 +96,16 @@ class RPNPostProcessor(Module):
 
         # put in the same format as anchors
         objectness = permute_and_flatten(objectness, N, A, 1, H, W).view(N, -1)
-        objectness = objectness.sigmoid()
+        objectness.sigmoid_()
 
         box_regression = permute_and_flatten(box_regression, N, A, 4, H, W)
 
-        num_anchors = A * H * W
+        num_anchors = math_prod((A, H, W))
 
         pre_nms_top_n = min(self.pre_nms_top_n, num_anchors)
         objectness, topk_idx = objectness.topk(pre_nms_top_n, dim=1, sorted=True)
 
-        batch_idx = torch_arange(N, device=device)[:, None]
+        batch_idx = torch_arange(N, device=device).unsqueeze_(-1)
         box_regression = box_regression[batch_idx, topk_idx]
 
         image_shapes = [box.size for box in anchors]
@@ -114,17 +118,20 @@ class RPNPostProcessor(Module):
 
         proposals = proposals.view(N, -1, 4)
 
+        min_size = self.min_size
+        nms_thresh = self.nms_thresh
+        post_nms_top_n = self.post_nms_top_n
         result = []
         for proposal, score, im_shape in zip(proposals, objectness, image_shapes):
-            boxlist = BoxList(proposal, im_shape, mode="xyxy")
-            boxlist.add_field("objectness", score)
+            boxlist = BoxList(proposal, im_shape, mode="xyxy", device=device)
+            boxlist.add_field(OBJECTNESS, score)
             boxlist = boxlist.clip_to_image(remove_empty=False)
-            boxlist = remove_small_boxes(boxlist, self.min_size)
+            boxlist = remove_small_boxes(boxlist, min_size)
             boxlist, _ = boxlist_nms(
                 boxlist,
-                self.nms_thresh,
-                max_proposals=self.post_nms_top_n,
-                score_field="objectness",
+                nms_thresh,
+                max_proposals=post_nms_top_n,
+                score_field=OBJECTNESS,
             )
             result.append(boxlist)
         return result
@@ -165,22 +172,23 @@ class RPNPostProcessor(Module):
         # during testing, it is over the proposals for each image
         # NOTE: it should be per image, and not per batch. However, to be consistent
         # with Detectron, the default is per batch (see Issue #672)
+        fpn_post_nms_top_n = self.fpn_post_nms_top_n
         if self.training and self.fpn_post_nms_per_batch:
             objectness = torch_cat(
-                [boxlist.get_field("objectness") for boxlist in boxlists], dim=0
+                (boxlist.get_field(OBJECTNESS) for boxlist in boxlists), dim=0
             )
-            box_sizes = [len(boxlist) for boxlist in boxlists]
-            post_nms_top_n = min(self.fpn_post_nms_top_n, len(objectness))
+            box_sizes = (len(boxlist) for boxlist in boxlists)
+            post_nms_top_n = min(fpn_post_nms_top_n, len(objectness))
             _, inds_sorted = torch_topk(objectness, post_nms_top_n, dim=0, sorted=True)
-            inds_mask = torch_zeros_like(objectness, dtype=torch_uint8)
+            inds_mask = torch_zeros_like(objectness, dtype=torch_uint8, device=objectness.device)
             inds_mask[inds_sorted] = 1
             inds_mask = inds_mask.split(box_sizes)
             for i in range(num_images):
                 boxlists[i] = boxlists[i][inds_mask[i]]
         else:
             for i in range(num_images):
-                objectness = boxlists[i].get_field("objectness")
-                post_nms_top_n = min(self.fpn_post_nms_top_n, len(objectness))
+                objectness = boxlists[i].get_field(OBJECTNESS)
+                post_nms_top_n = min(fpn_post_nms_top_n, len(objectness))
                 _, inds_sorted = torch_topk(
                     objectness, post_nms_top_n, dim=0, sorted=True
                 )

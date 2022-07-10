@@ -46,12 +46,10 @@ class LevelMapper(object):
             boxlists (list[BoxList])
         """
         # Compute level ids
-        s = torch_sqrt(cat([boxlist.area() for boxlist in boxlists]))
+        s = cat([boxlist.area() for boxlist in boxlists]).sqrt_()
 
         # Eqn.(1) in FPN paper
-        target_lvls = torch_floor(self.lvl0 + torch_log2(s / self.s0 + self.eps))
-        target_lvls.clamp_(min=self.k_min, max=self.k_max)
-        return target_lvls.to(torch_int64) - self.k_min
+        return s.div_(self.s0).add_(self.eps).log2_().add_(self.lvl0).floor_().clamp_(min=self.k_min, max=self.k_max).sub_(self.k_min).long()
 
 
 class Pooler(Module):
@@ -159,11 +157,11 @@ class Pooler(Module):
         )
         for level, (per_level_feature, pooler) in enumerate(zip(x, self.poolers)):
             if self.cat_all_levels: # False
-                result[:,level*num_channels:(level+1)*num_channels,:,:] = pooler(per_level_feature, rois).to(dtype)
+                result[:,level*num_channels:(level+1)*num_channels,:,:] = pooler(per_level_feature.type(torch_float32), rois.type(torch_float32)).type(dtype)
             else:
-                idx_in_level = torch_nonzero(levels == level).squeeze(1)
+                idx_in_level = torch_nonzero(level == levels).squeeze_(1)
                 rois_per_level = rois[idx_in_level]
-                result[idx_in_level] = pooler(per_level_feature, rois_per_level).to(dtype)
+                result[idx_in_level] = pooler(per_level_feature.type(torch_float32), rois_per_level.type(torch_float32)).type(dtype)
                 del rois_per_level
         del rois, levels, level, per_level_feature, pooler
         if self.cat_all_levels: # False

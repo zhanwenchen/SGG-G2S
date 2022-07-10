@@ -5,8 +5,98 @@ from torch import (
     stack as torch_stack,
     log as torch_log,
     exp as torch_exp,
-    zeros_like as torch_zeros_like,
+    empty_like as torch_empty_like,
+    float32 as torch_float32,
+    as_tensor as torch_as_tensor,
 )
+from torch.jit import script as torch_jit_script
+
+
+@torch_jit_script
+def encode_jit(reference_boxes, proposals, weights):
+    """
+    Encode a set of proposals with respect to some
+    reference boxes
+
+    Arguments:
+        reference_boxes (Tensor): reference boxes
+        proposals (Tensor): boxes to be encoded
+    """
+    wx, wy, ww, wh = weights[0], weights[1], weights[2], weights[3]
+
+    TO_REMOVE = 1  # TODO remove
+    ex_widths = (proposals[:, 2] - proposals[:, 0]).add_(TO_REMOVE)
+    ex_heights = (proposals[:, 3] - proposals[:, 1]).add_(TO_REMOVE)
+    ex_ctr_x = ex_widths.mul(0.5).add_(proposals[:, 0])
+    ex_ctr_y = ex_heights.mul(0.5).add_(proposals[:, 1])
+
+    gt_widths = (reference_boxes[:, 2] - reference_boxes[:, 0]).add_(TO_REMOVE)
+    gt_heights = (reference_boxes[:, 3] - reference_boxes[:, 1]).add_(TO_REMOVE)
+    gt_ctr_x = gt_widths.mul(0.5).add_(reference_boxes[:, 0])
+    gt_ctr_y = gt_heights.mul(0.5).add_(reference_boxes[:, 1])
+
+    targets_dx = (gt_ctr_x - ex_ctr_x).div_(ex_widths).mul_(wx)
+    targets_dy = (gt_ctr_y - ex_ctr_y).div_(ex_heights).mul_(wy)
+    targets_dw = (gt_widths / ex_widths).log_().mul_(ww)
+    targets_dh = (gt_heights / ex_heights).log_().mul_(wh)
+
+    targets = torch_stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
+    return targets
+
+
+@torch_jit_script
+def decode_jit(rel_codes, boxes, weights, bbox_xform_clip):
+    """
+    From a set of original boxes and encoded relative box offsets,
+    get the decoded boxes.
+
+    Arguments:
+        rel_codes (Tensor): encoded boxes
+        boxes (Tensor): reference boxes.
+    """
+    wx, wy, ww, wh = weights[0], weights[1], weights[2], weights[3]
+    dtype = rel_codes.dtype
+    boxes = boxes.type(dtype)
+
+    TO_REMOVE = 1  # TODO remove
+    widths = (boxes[:, 2] - boxes[:, 0]).add_(TO_REMOVE)
+    heights = (boxes[:, 3] - boxes[:, 1]).add_(TO_REMOVE)
+    ctr_x = widths.mul(0.5).add_(boxes[:, 0])
+    ctr_y = heights.mul(0.5).add_(boxes[:, 1])
+    # There's some opportunity to optimize these below and later:
+    # pred_ctr_x = dx.mul_(widths.unsqueeze_()).add_(ctr_x.unsqueeze_())
+    # Be careful of pointers.
+
+    dx = rel_codes[:, 0::4] / wx
+    dy = rel_codes[:, 1::4] / wy
+    dw = rel_codes[:, 2::4] / ww
+    dh = rel_codes[:, 3::4] / wh
+
+    # Prevent sending too large values into torch.exp()
+    # dw = torch_clamp(dw, max=self.bbox_xform_clip)
+    # dh = torch_clamp(dh, max=self.bbox_xform_clip)
+    dw.clamp_(max=bbox_xform_clip)
+    dh.clamp_(max=bbox_xform_clip)
+
+
+    pred_ctr_x = dx.mul_(widths.unsqueeze_(-1)).add_(ctr_x.unsqueeze_(-1))
+    del ctr_x
+    pred_ctr_y = dy.mul_(heights.unsqueeze_(-1)).add_(ctr_y.unsqueeze_(-1))
+    del ctr_y
+    pred_w = dw.float().exp_().type(dtype).mul_(widths).mul_(0.5)
+    pred_h = dh.float().exp_().type(dtype).mul_(heights).mul_(0.5)
+
+    pred_boxes = torch_empty_like(rel_codes, dtype=dtype, device=rel_codes.device)
+    # x1
+    pred_boxes[:, 0::4] = pred_ctr_x - pred_w
+    # y1
+    pred_boxes[:, 1::4] = pred_ctr_y - pred_h
+    # x2 (note: "- 1" is correct; don't be fooled by the asymmetry)
+    pred_boxes[:, 2::4] = (pred_ctr_x + pred_w).sub_(1)
+    # y2 (note: "- 1" is correct; don't be fooled by the asymmetry)
+    pred_boxes[:, 3::4] = (pred_ctr_y + pred_h).sub_(1)
+
+    return pred_boxes
 
 
 class BoxCoder(object):
@@ -20,8 +110,8 @@ class BoxCoder(object):
             weights (4-element tuple)
             bbox_xform_clip (float)
         """
-        self.weights = weights
-        self.bbox_xform_clip = bbox_xform_clip
+        self.weights = torch_as_tensor(weights, dtype=torch_float32, device='cuda')
+        self.bbox_xform_clip = torch_as_tensor(bbox_xform_clip, dtype=torch_float32, device='cuda')
 
     def encode(self, reference_boxes, proposals):
         """
@@ -33,25 +123,10 @@ class BoxCoder(object):
             proposals (Tensor): boxes to be encoded
         """
 
-        TO_REMOVE = 1  # TODO remove
-        ex_widths = proposals[:, 2] - proposals[:, 0] + TO_REMOVE
-        ex_heights = proposals[:, 3] - proposals[:, 1] + TO_REMOVE
-        ex_ctr_x = proposals[:, 0] + 0.5 * ex_widths
-        ex_ctr_y = proposals[:, 1] + 0.5 * ex_heights
-
-        gt_widths = reference_boxes[:, 2] - reference_boxes[:, 0] + TO_REMOVE
-        gt_heights = reference_boxes[:, 3] - reference_boxes[:, 1] + TO_REMOVE
-        gt_ctr_x = reference_boxes[:, 0] + 0.5 * gt_widths
-        gt_ctr_y = reference_boxes[:, 1] + 0.5 * gt_heights
-
-        wx, wy, ww, wh = self.weights
-        targets_dx = wx * (gt_ctr_x - ex_ctr_x) / ex_widths
-        targets_dy = wy * (gt_ctr_y - ex_ctr_y) / ex_heights
-        targets_dw = ww * torch_log(gt_widths / ex_widths)
-        targets_dh = wh * torch_log(gt_heights / ex_heights)
-
-        targets = torch_stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
-        return targets
+        # wx, wy, ww, wh = self.weights
+        # dtype, device = reference_boxes.dtype, reference_boxes.device
+        # weights = torch_as_tensor(self.weights, dtype=dtype, device=device)
+        return encode_jit(reference_boxes, proposals, self.weights.to(reference_boxes, non_blocking=True))
 
     def decode(self, rel_codes, boxes):
         """
@@ -63,39 +138,9 @@ class BoxCoder(object):
             boxes (Tensor): reference boxes.
         """
 
-        boxes = boxes.to(rel_codes.dtype)
-
-        TO_REMOVE = 1  # TODO remove
-        widths = boxes[:, 2] - boxes[:, 0] + TO_REMOVE
-        heights = boxes[:, 3] - boxes[:, 1] + TO_REMOVE
-        ctr_x = boxes[:, 0] + 0.5 * widths
-        ctr_y = boxes[:, 1] + 0.5 * heights
-
-        wx, wy, ww, wh = self.weights
-        dx = rel_codes[:, 0::4] / wx
-        dy = rel_codes[:, 1::4] / wy
-        dw = rel_codes[:, 2::4] / ww
-        dh = rel_codes[:, 3::4] / wh
-
-        # Prevent sending too large values into torch.exp()
-        # dw = torch_clamp(dw, max=self.bbox_xform_clip)
-        # dh = torch_clamp(dh, max=self.bbox_xform_clip)
-        dw.clamp_(max=self.bbox_xform_clip)
-        dh.clamp_(max=self.bbox_xform_clip)
-
-        pred_ctr_x = dx * widths[:, None] + ctr_x[:, None]
-        pred_ctr_y = dy * heights[:, None] + ctr_y[:, None]
-        pred_w = torch_exp(dw) * widths[:, None]
-        pred_h = torch_exp(dh) * heights[:, None]
-
-        pred_boxes = torch_zeros_like(rel_codes)
-        # x1
-        pred_boxes[:, 0::4] = pred_ctr_x - 0.5 * pred_w
-        # y1
-        pred_boxes[:, 1::4] = pred_ctr_y - 0.5 * pred_h
-        # x2 (note: "- 1" is correct; don't be fooled by the asymmetry)
-        pred_boxes[:, 2::4] = pred_ctr_x + 0.5 * pred_w - 1
-        # y2 (note: "- 1" is correct; don't be fooled by the asymmetry)
-        pred_boxes[:, 3::4] = pred_ctr_y + 0.5 * pred_h - 1
-
-        return pred_boxes
+        # wx, wy, ww, wh = self.weights
+        dtype, device = rel_codes.dtype, rel_codes.device
+        # weights = torch_as_tensor(self.weights, dtype=dtype, device=device)
+        # bbox_xform_clip = self.bbox_xform_clip
+        # bbox_xform_clip = torch_as_tensor(self.bbox_xform_clip, dtype=dtype, device=device)
+        return decode_jit(rel_codes, boxes, self.weights.to(dtype=dtype, device=device, non_blocking=True), self.bbox_xform_clip.to(dtype=dtype, device=device, non_blocking=True))

@@ -7,9 +7,10 @@ from torch import (
     nonzero as torch_nonzero,
     zeros as torch_zeros,
     int64 as torch_int64,
+    float32 as torch_float32,
     prod as torch_prod,
 )
-from torch.nn import Module, Sequential, Linear, ReLU
+from torch.nn import Module, Sequential, Linear, Dropout, ReLU
 from torch.nn.init import kaiming_normal_, constant_, xavier_normal_, normal_, orthogonal_
 from torch.nn.functional import softmax as F_softmax
 from numpy import unravel_index as np_unravel_index
@@ -28,6 +29,7 @@ def get_box_info(boxes, need_norm=True, proposal=None):
         box_info = box_info / float(max(max(proposal.size[0], proposal.size[1]), 100))
     return box_info
 
+# TODO: jit optimization
 def get_box_pair_info(box1, box2):
     """
     input:
@@ -38,6 +40,7 @@ def get_box_pair_info(box1, box2):
     """
     # union box
     unionbox = box1[:,:4].clone()
+    # TODO: optimize into two equations
     unionbox[:, 0] = torch_min(box1[:, 0], box2[:, 0])
     unionbox[:, 1] = torch_min(box1[:, 1], box2[:, 1])
     unionbox[:, 2] = torch_max(box1[:, 2], box2[:, 2])
@@ -46,7 +49,8 @@ def get_box_pair_info(box1, box2):
     del unionbox
 
     # intersection box
-    intersextion_box = box1[:,:4].clone()
+    intersextion_box = box1[:,:4].clone() # Isn't this just box1.clone?
+    # TODO: vectorize two and two
     intersextion_box[:, 0] = torch_max(box1[:, 0], box2[:, 0])
     intersextion_box[:, 1] = torch_max(box1[:, 1], box2[:, 1])
     intersextion_box[:, 2] = torch_min(box1[:, 2], box2[:, 2])
@@ -68,25 +72,26 @@ def nms_overlaps(boxes):
     # N = boxes.size(0)
     # nc = boxes.size(1)
     N, nc, _ = boxes.size()
+    # TODO: can we just unsqueeze and expand boxes first?
     max_xy = torch_min(boxes[:, None, :, 2:].expand(N, N, nc, 2),
                        boxes[None, :, :, 2:].expand(N, N, nc, 2))
 
     min_xy = torch_max(boxes[:, None, :, :2].expand(N, N, nc, 2),
                        boxes[None, :, :, :2].expand(N, N, nc, 2))
 
-    inter = torch_clamp((max_xy - min_xy + 1.0), min=0)
-    del max_xy, min_xy
+    inter = max_xy.sub_(min_xy).add_(1.0).clamp_(min=0)
+    del min_xy
     # n, n, 151
     # inters = inter[:,:,:,0]*inter[:,:,:,1]
     inters = torch_prod(inter, 3)
     del inter
     boxes_flat = boxes.view(-1, 4)
     del boxes
-    areas_flat = (boxes_flat[:,2]- boxes_flat[:,0]+1.0)*(
-        boxes_flat[:,3]- boxes_flat[:,1]+1.0)
+    areas_flat = ((boxes_flat[:,2]- boxes_flat[:,0]).add_(1.0)).mul_(
+        (boxes_flat[:,3]- boxes_flat[:,1]).add_(1.0))
     # areas = areas_flat.view(boxes.size(0), boxes.size(1))
     areas = areas_flat.view(N, nc)
-    union = -inters + areas[None] + areas[:, None]
+    union = (areas[None] - inters).add_(areas[:, None]) # TODO: optimize
     return inters / union
 
 
@@ -110,42 +115,40 @@ def layer_init_kaiming_normal(layer):
         constant_(layer.bias, 0)
 
 
-class XavierLinear(Module):
-    '''
-    Simple Linear layer with Xavier init
+# class XavierLinear(Module):
+#     '''
+#     Simple Linear layer with Xavier init
+#
+#     Paper by Xavier Glorot and Yoshua Bengio (2010):
+#     Understanding the difficulty of training deep feedforward neural networks
+#     http://proceedings.mlr.press/v9/glorot10a/glorot10a.pdf
+#     '''
+#     def __init__(self, in_features, out_features, bias=True, device=None):
+#         if device is None:
+#             raise
+#         super(XavierLinear, self).__init__()
+#         self.linear = Linear(in_features, out_features, bias=bias, device=device)
+#         layer_init_kaiming_normal(self.linear)
+#
+#     def forward(self, x):
+#         return self.linear(x)
 
-    Paper by Xavier Glorot and Yoshua Bengio (2010):
-    Understanding the difficulty of training deep feedforward neural networks
-    http://proceedings.mlr.press/v9/glorot10a/glorot10a.pdf
-    '''
-    def __init__(self, in_features, out_features, bias=True, device=None):
-        if device is None:
-            raise
-        super(XavierLinear, self).__init__()
-        self.linear = Linear(in_features, out_features, bias=bias, device=device)
-        layer_init_kaiming_normal(self.linear)
 
-    def forward(self, x):
-        return self.linear(x)
-
-
-class MLP(Module):
+class MLP(Sequential):
     def __init__(self, dim_in_hid_out, act_fn='ReLU', last_act=False, device=None):
         if device is None:
             raise
-        super(MLP, self).__init__()
         layers = []
         for i in range(len(dim_in_hid_out) - 1):
-            layers.append(XavierLinear(dim_in_hid_out[i], dim_in_hid_out[i + 1], device=device))
+            layer = Linear(dim_in_hid_out[i], dim_in_hid_out[i + 1], device=device)
+            layer_init_kaiming_normal(layer)
+            layers.append(layer)
             if i < len(dim_in_hid_out) - 2 or last_act:
                 if act_fn == 'ReLU':
-                    layers.append(ReLU())
+                    layers.append(ReLU(inplace=True))
                 else:
                     raise
-        self.model = Sequential(*layers)
-
-    def forward(self, x):
-        return self.model(x)
+        super().__init__(*layers)
 
 
 def obj_prediction_nms(boxes_per_cls, pred_logits, nms_thresh=0.3):
@@ -159,10 +162,10 @@ def obj_prediction_nms(boxes_per_cls, pred_logits, nms_thresh=0.3):
     is_overlap = nms_overlaps(boxes_per_cls).view(boxes_per_cls.size(0), boxes_per_cls.size(0),
                               boxes_per_cls.size(1)).cpu().numpy() >= nms_thresh
 
-    prob_sampled = F_softmax(pred_logits, 1).cpu().numpy()
+    prob_sampled = F_softmax(pred_logits, dtype=torch_float32, dim=1).to(device='cpu', dtype=pred_logits.dtype).numpy()
     prob_sampled[:, 0] = 0  # set bg to 0
 
-    pred_label = torch_zeros(num_obj, device=pred_logits.device, dtype=torch_int64)
+    pred_label = torch_zeros(num_obj, device=prob_sampled.device, dtype=torch_int64)
 
     for i in range(num_obj):
         box_ind, cls_ind = np_unravel_index(prob_sampled.argmax(), prob_sampled.shape)
@@ -199,6 +202,7 @@ def block_orthogonal(tensor, split_sizes, gain=1.0):
         # let's not initialize empty things to 0s because THAT SOUNDS REALLY BAD
         assert len(block_slice) == 2
         sizes = [x.stop - x.start for x in block_slice]
+        # TODO: optimize this.
         tensor_copy = tensor.new(max(sizes), max(sizes))
         orthogonal_(tensor_copy, gain=gain)
         tensor[block_slice] = tensor_copy[0:sizes[0], 0:sizes[1]]

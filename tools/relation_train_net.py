@@ -21,9 +21,11 @@ from torch import (
     as_tensor as torch_as_tensor,
 )
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
-# from torch.nn.parallel import DistributedDataParallel
-from torch.distributed import init_process_group
+from torch.cuda.amp import autocast, GradScaler
+from torch.nn.parallel import DistributedDataParallel
 from torch.nn.utils import clip_grad_norm_
+from torch.nn import SyncBatchNorm
+from torch.distributed import init_process_group
 from torch.utils.tensorboard import SummaryWriter
 from torch.backends import cudnn
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
@@ -45,16 +47,17 @@ from util_misc import load_gbnet_checkpoint, print_para
 
 # See if we can use apex.DistributedDataParallel instead of the torch default,
 # and enable mixed-precision via apex.amp
-from apex.amp import (
-    initialize as amp_initialize,
-    scale_loss as amp_scale_loss,
-    master_params as amp_master_params,
-)
-from apex.parallel import DistributedDataParallel, convert_syncbn_model
+# from apex.amp import (
+#     initialize as amp_initialize,
+#     scale_loss as amp_scale_loss,
+#     master_params as amp_master_params,
+# )
+# from apex.parallel import DistributedDataParallel, convert_syncbn_model
 
 
 APEX_FUSED_OPTIMIZERS = {'FusedSGD', 'FusedAdam'}
 OPTIMIZERS_WITH_SCHEDULERS = {'SGD', 'FusedSGD'}
+convert_sync_batchnorm = SyncBatchNorm.convert_sync_batchnorm
 
 
 def setup_seed(seed):
@@ -105,6 +108,24 @@ def train(cfg, local_rank, distributed, logger):
 
     using_scheduler = cfg.SOLVER.TYPE in OPTIMIZERS_WITH_SCHEDULERS
     optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1, rl_factor=float(num_batch))
+
+    # Initialize mixed-precision training
+    use_mixed_precision = cfg.DTYPE == "float16"
+    amp_opt_level = 'O1' if use_mixed_precision else 'O0'
+    # model, optimizer = amp_initialize(model, optimizer, opt_level=amp_opt_level)
+
+    if distributed:
+        model = convert_sync_batchnorm(model)
+        # model = convert_syncbn_model(model)
+        # model = DistributedDataParallel(model)
+        model = DistributedDataParallel(
+            model, device_ids=[local_rank], output_device=local_rank,
+            # this should be removed if we update BatchNorm stats
+            broadcast_buffers=False,
+            find_unused_parameters=True,
+        )
+    debug_print(logger, 'end distributed')
+
     scheduler = make_lr_scheduler(cfg, optimizer, logger) if using_scheduler else None
     debug_print(logger, 'instantiating checkpointer')
 
@@ -174,23 +195,6 @@ def train(cfg, local_rank, distributed, logger):
                                      with_optim=False, load_mapping=load_mapping_classifier)
         # debug_print(logger, 'end optimizer and shcedule')
 
-    # Initialize mixed-precision training
-    use_mixed_precision = cfg.DTYPE == "float16"
-    amp_opt_level = 'O1' if use_mixed_precision else 'O0'
-    model, optimizer = amp_initialize(model, optimizer, opt_level=amp_opt_level)
-
-    if distributed:
-        # model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model, process_group)
-        model = convert_syncbn_model(model)
-        model = DistributedDataParallel(model)
-        # model = DistributedDataParallel(
-        #     model, device_ids=[local_rank], output_device=local_rank,
-        #     # this should be removed if we update BatchNorm stats
-        #     broadcast_buffers=False,
-        #     find_unused_parameters=True,
-        # )
-    debug_print(logger, 'end distributed')
-
     train_data_loader = make_data_loader(
         cfg,
         mode='train',
@@ -231,50 +235,65 @@ def train(cfg, local_rank, distributed, logger):
     if mode is None:
         raise ValueError(f'mode is None given use_gt_box={use_gt_box} and use_gt_object_label={use_gt_object_label}')
     val_results = []
+    scaler = GradScaler()
+
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         # if iteration % 1000 == 0:
         #     haaa=0
         if any(len(target) < 1 for target in targets):
             logger.error("Iteration={iteration + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
         data_time = time_time() - end
+        images = images.to(device, non_blocking=True)
+        targets = [target.to(device) for target in targets]
+        model.train()
         iteration += 1
         arguments["iteration"] = iteration
-
-        model.train()
         #fix_eval_modules(eval_modules)
         if clean_classifier:
             fix_eval_modules_no_classifier(model, with_grad_name='_clean')
         else:
             fix_eval_modules(eval_modules)
 
-        images = images.to(device, non_blocking=True)
-        targets = [target.to(device) for target in targets]
+        if cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS:
+            optimizer.zero_grad() # For Apex FusedSGD, FusedAdam, etc
+        else:
+            optimizer.zero_grad(set_to_none=True) # For Apex FusedSGD, FusedAdam, etc
+        with autocast():
+            loss_dict = model(images, targets)
+            losses = sum(loss for loss in loss_dict.values())
 
-        loss_dict = model(images, targets)
+        scaler.scale(losses).backward()
+        scaler.unscale_(optimizer)
+        clip_grad_norm_(model.parameters(), cfg.SOLVER.GRAD_NORM_CLIP)
+        # optimizer's gradients are already unscaled, so scaler.step does not unscale them,
+        # although it still skips optimizer.step() if the gradients contain infs or NaNs.
+        scaler.step(optimizer)
 
-        losses = sum(loss for loss in loss_dict.values())
+        scale_before = scaler.get_scale()
+        # Updates the scale for next iteration.
+        scaler.update()
+
+        scale_after = scaler.get_scale()
+        skip_lr_sched = scale_before > scale_after
+        if skip_lr_sched:
+            logger.info(f'i={iteration}: Skipping scheduler scale_before={scale_before}, scale_after={scale_after}')
 
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = reduce_loss_dict(loss_dict)
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
         meters.update(loss=losses_reduced, **loss_dict_reduced)
-
-        if cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS:
-            optimizer.zero_grad() # For Apex FusedSGD, FusedAdam, etc
-        else:
-            optimizer.zero_grad(set_to_none=True) # For Apex FusedSGD, FusedAdam, etc
         # Note: If mixed precision is not used, this ends up doing nothing
         # Otherwise apply loss scaling for mixed-precision recipe
-        with amp_scale_loss(losses, optimizer) as scaled_losses:
-            scaled_losses.backward()
+        # with amp_scale_loss(losses, optimizer) as scaled_losses:
+        #     scaled_losses.backward()
 
         # add clip_grad_norm from MOTIFS, tracking gradient, used for debug
         verbose = (iteration % cfg.SOLVER.PRINT_GRAD_FREQ) == 0 or print_first_grad # print grad or not
         print_first_grad = False
         # clip_grad_norm(amp_master_params(optimizer), max_norm=cfg.SOLVER.GRAD_NORM_CLIP, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
-        clip_grad_norm_(amp_master_params(optimizer), cfg.SOLVER.GRAD_NORM_CLIP)
+        # clip_grad_norm_(amp_master_params(optimizer), cfg.SOLVER.GRAD_NORM_CLIP)
 
-        optimizer.step()
+        # optimizer.step()
 
         batch_time = time_time() - end
         end = time_time()
@@ -320,7 +339,7 @@ def train(cfg, local_rank, distributed, logger):
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
-        if using_scheduler:
+        if using_scheduler and not skip_lr_sched:
             if cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau":
                 scheduler.step(val_result, epoch=iteration)
                 if scheduler.stage_count >= cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP:

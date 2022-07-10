@@ -10,10 +10,11 @@ from torch import (
     cat as torch_cat,
     float32 as torch_float32,
 )
-from torch.nn import Module, ModuleList, Sequential, Dropout, Softmax, Linear, Conv1d, ReLU, LayerNorm, Embedding
-from torch.nn.functional import softmax as F_softmax, relu as F_relu
+from torch.nn import Module, ModuleList, Sequential, Dropout, Softmax, Linear, Conv1d, ReLU, Embedding
+from torch.nn.functional import softmax as F_softmax, relu_ as F_relu_
 from torch.nn.init import normal_, xavier_normal_, kaiming_normal_
 from torch.nn.utils.rnn import pad_sequence
+from apex.normalization import FusedLayerNorm
 from numpy import inf as np_inf, sqrt as np_sqrt, power as np_power, unravel_index as np_unravel_index
 from maskrcnn_benchmark.modeling.utils import cat
 from .utils_motifs import obj_edge_vectors, to_onehot, encode_box_info
@@ -40,13 +41,15 @@ class ScaledDotProductAttention(Module):
             output (bsz, len_q, dim_v)
             attn (bsz, len_q, len_k)
         """
-        attn = torch_bmm(q, k.transpose(1, 2))
-        attn = attn / self.temperature
+        dtype = q.dtype
+        attn = torch_bmm(q, k.transpose_(1, 2)) # CHANGED
+        del q
+        attn.div_(self.temperature) # CHANGED
 
         if mask is not None:
-            attn = attn.masked_fill(mask, -np_inf)
+            attn.masked_fill_(mask, -np_inf) # CHANGED
 
-        attn = self.softmax(attn)
+        attn = self.softmax(attn.type(torch_float32)).type(dtype) # CHANGED
         attn = self.dropout(attn)
         output = torch_bmm(attn, v)
 
@@ -70,7 +73,7 @@ class MultiHeadAttention(Module):
         normal_(self.w_vs.weight, mean=0, std=np_sqrt(2.0 / (d_model + d_v)))
 
         self.attention = ScaledDotProductAttention(temperature=np_power(d_k, 0.5))
-        self.layer_norm = LayerNorm(d_model)
+        self.layer_norm = FusedLayerNorm(d_model) # CHANGED
 
         self.fc = Linear(n_head * d_v, d_model)
         xavier_normal_(self.fc.weight)
@@ -112,7 +115,7 @@ class MultiHeadAttention(Module):
         output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_q, -1)  # b x lq x (n*dv)
 
         output = self.dropout(self.fc(output))
-        output = self.layer_norm(output + residual)
+        output = self.layer_norm(output.add_(residual)) # CHANGED
         del residual
         return output, attn
 
@@ -124,7 +127,7 @@ class PositionwiseFeedForward(Module):
         super().__init__()
         self.w_1 = Conv1d(d_in, d_hid, 1)  # position-wise
         self.w_2 = Conv1d(d_hid, d_in, 1)  # position-wise
-        self.layer_norm = LayerNorm(d_in)
+        self.layer_norm = FusedLayerNorm(d_in)
         self.dropout = Dropout(dropout)
 
     def forward(self, x):
@@ -136,12 +139,12 @@ class PositionwiseFeedForward(Module):
             output (bsz, len, dim)
         """
         residual = x
-        output = x.transpose(1, 2)
+        output = x.transpose(1, 2) # CANNOT transpose in place - add shape error
         del x
-        output = self.w_2(F_relu(self.w_1(output)))
-        output = output.transpose(1, 2)
+        output = self.w_2(F_relu_(self.w_1(output)))
+        output.transpose_(1, 2) # CHANGED
         output = self.dropout(output)
-        return self.layer_norm(output + residual)
+        return self.layer_norm(output.add_(residual)) # CHANGED
 
 
 class EncoderLayer(Module):
@@ -156,10 +159,10 @@ class EncoderLayer(Module):
     def forward(self, enc_input, non_pad_mask=None, slf_attn_mask=None):
         enc_output, enc_slf_attn = self.slf_attn(
             enc_input, enc_input, enc_input, mask=slf_attn_mask)
-        enc_output *= non_pad_mask
+        enc_output.mul_(non_pad_mask) # CHANGED
 
         enc_output = self.pos_ffn(enc_output)
-        enc_output *= non_pad_mask
+        enc_output.mul_(non_pad_mask) # CHANGED
 
         return enc_output, enc_slf_attn
 
@@ -178,7 +181,7 @@ class TransformerEncoder(Module):
     def forward(self, input_feats, num_objs):
         """
         Args:
-            input_feats [Tensor] (#total_box, d_model) : bounding box features of a batch
+            input_feats [Tensor] (#total_box, d_model) : bounding box features of a batch # torch.float16
             num_objs [list of int] (bsz, ) : number of bounding box of each image
         Returns:
             enc_output [Tensor] (#total_box, d_model)
@@ -190,24 +193,22 @@ class TransformerEncoder(Module):
         bsz = len(num_objs)
         device = input_feats.device
         pad_len = max(num_objs)
-        num_objs_ = torch_as_tensor(num_objs, device=device, dtype=torch_int64).unsqueeze(1).expand(-1, pad_len)
-        slf_attn_mask = torch_arange(pad_len, device=device).view(1, -1).expand(bsz, -1).ge(num_objs_).unsqueeze(
-            1).expand(-1, pad_len, -1)  # (bsz, pad_len, pad_len)
-        non_pad_mask = torch_arange(pad_len, device=device, dtype=torch_float32).view(1, -1).expand(bsz, -1).lt(
-            num_objs_).unsqueeze(-1)  # (bsz, pad_len, 1)
-
-        del num_objs_
+        num_objs_ = torch_as_tensor(num_objs, device=device, dtype=torch_int64).unsqueeze_(1).expand(-1, pad_len) # CHANGED
+        base = torch_arange(pad_len, device=device, dtype=torch_int64).unsqueeze_(0).expand(bsz, -1) # CHANGED
+        slf_attn_mask = base.detach().clone().ge(num_objs_).unsqueeze_(1).expand(-1, pad_len, -1)  # (bsz, pad_len, pad_len) # CHANGED
+        non_pad_mask = base.lt(num_objs_).unsqueeze_(-1)  # (bsz, pad_len, 1) # CHANGED
+        del num_objs_, base # CHANGED
         # -- Forward
         enc_output = input_feats
         del input_feats
         for enc_layer in self.layer_stack:
             enc_output, _ = enc_layer(
-                enc_output,
-                non_pad_mask=non_pad_mask,
-                slf_attn_mask=slf_attn_mask)
+                enc_output, # float16
+                non_pad_mask=non_pad_mask, # bool
+                slf_attn_mask=slf_attn_mask) # bool
 
         del slf_attn_mask
-        return enc_output[non_pad_mask.squeeze(-1)]
+        return enc_output[non_pad_mask.squeeze(-1)] # CHANGED
 
 
 class TransformerContext(Module):
@@ -287,6 +288,9 @@ class TransformerContext(Module):
             torch.Size([1280, 151])
 
         '''
+        # roi_features.dtype = float16 apex
+        # proposals[0].bbox.dtype = float32 apex
+        # breakpoint()
         # labels will be used in DecoderRNN during training
         use_gt_label = self.training or self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL
         obj_labels = cat([proposal.get_field("labels") for proposal in proposals], dim=0) if use_gt_label else None
@@ -300,7 +304,7 @@ class TransformerContext(Module):
             obj_embed = self.obj_embed1(obj_labels)
         else:
             obj_logits = cat([proposal.get_field("predict_logits") for proposal in proposals], dim=0).detach()
-            obj_embed = F_softmax(obj_logits, dim=1) @ self.obj_embed1.weight
+            obj_embed = F_softmax(obj_logits, dtype=torch_float32, dim=1).type_as(obj_logits) @ self.obj_embed1.weight
             del obj_logits
 
         # (Pdb) obj_embed.size()
@@ -319,6 +323,7 @@ class TransformerContext(Module):
         obj_pre_rep = self.lin_obj(obj_pre_rep)
         # (Pdb) obj_pre_rep.size()
         # torch.Size([1280, 768])
+        # breakpoint()
         obj_feats = self.context_obj(obj_pre_rep, num_objs)
         del obj_pre_rep
         # (Pdb) obj_feats.size()
@@ -370,10 +375,11 @@ class TransformerContext(Module):
     def nms_per_cls(self, obj_dists, boxes_per_cls, num_objs):
         obj_dists = obj_dists.split(num_objs, dim=0)
         obj_preds = []
+        dtype = obj_dists[0].dtype
         for i in range(len(num_objs)):
             is_overlap = nms_overlaps(boxes_per_cls[i]).cpu().numpy() >= self.nms_thresh  # (#box, #box, #class)
 
-            out_dists_sampled = F_softmax(obj_dists[i], -1).cpu().numpy()
+            out_dists_sampled = F_softmax(obj_dists[i], dtype=torch_float32, dim=-1).to(device='cpu', dtype=dtype).numpy()
             out_dists_sampled[:, 0] = -1
 
             out_label = obj_dists[i].new(num_objs[i]).fill_(0)

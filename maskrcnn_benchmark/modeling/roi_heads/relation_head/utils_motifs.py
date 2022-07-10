@@ -99,10 +99,11 @@ def to_onehot(vec, num_classes, fill=1000):
     :return:
     """
     vec_size_0 = vec.size(0)
-    onehot_result = vec.new_full((vec_size_0, num_classes), -fill, dtype=torch_float32)
-    arange_inds = torch_arange(0, vec_size_0, dtype=torch_int64, device=vec.device)
+    device = vec.device
+    onehot_result = vec.new_full((vec_size_0, num_classes), -fill, dtype=torch_float32, device=device)
+    arange_inds = torch_arange(0, vec_size_0, dtype=torch_int64, device=device)
 
-    onehot_result.view(-1)[vec.long() + num_classes*arange_inds] = fill
+    onehot_result.view(-1)[arange_inds.mul_(num_classes).add_(vec.long())] = fill
     return onehot_result
 
 
@@ -112,13 +113,13 @@ def get_dropout_mask(dropout_probability, tensor_shape, device):
     """
     binary_mask = (torch_rand(tensor_shape, device=device, dtype=torch_float32) > dropout_probability)
     # Scale mask by 1/keep_prob to preserve output statistics.
-    return binary_mask.to(device, dtype=torch_float32, non_blocking=True).div(1.0 - dropout_probability)
+    return binary_mask.to(device, dtype=torch_float32, non_blocking=True).div_(1.0 - dropout_probability)
 
 
 def center_x(proposals):
     assert proposals[0].mode == 'xyxy'
     boxes = cat([p.bbox for p in proposals], dim=0)
-    c_x = 0.5 * (boxes[:, 0] + boxes[:, 2])
+    c_x = (boxes[:, 0] + boxes[:, 2]).mul_(0.5)
     return c_x.view(-1)
 
 
@@ -134,8 +135,8 @@ def encode_box_info(proposals):
         img_size = proposal.size
         wid = img_size[0]
         hei = img_size[1]
-        wh = boxes[:, 2:] - boxes[:, :2] + 1.0
-        xy = boxes[:, :2] + 0.5 * wh
+        wh = (boxes[:, 2:] - boxes[:, :2]).add_(1.0)
+        xy = (0.5 * wh).add_(boxes[:, :2])
         w, h = wh.split([1,1], dim=-1)
         x, y = xy.split([1,1], dim=-1)
         x1, y1, x2, y2 = boxes.split([1,1,1,1], dim=-1)

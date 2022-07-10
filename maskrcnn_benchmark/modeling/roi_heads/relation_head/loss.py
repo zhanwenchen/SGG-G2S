@@ -161,7 +161,7 @@ class RelationLossComputation(object):
     def conf_mat_loss(self, input, target, conf_mat):
         """
         """
-        input = F_softmax(input, -1)
+        input = F_softmax(input, dtype=torch_float32, dim=-1).type_as(input)
         #conf_mat = F.softmax(conf_mat, -1)
         conf_mat_pro = conf_mat/(conf_mat.sum(-1)[:,None]+1e-8)
         input_conf = input @ conf_mat_pro.T
@@ -178,7 +178,7 @@ class SoftCrossEntropy(Module):
         :param input: (batch, *)
         :param target: (batch, *) same shape as input, each item must be a valid distribution: target[i, :].sum() == 1.
         """
-        logprobs = F_log_softmax(input.view(input.shape[0], -1), dim=1)
+        logprobs = F_log_softmax(input.view(input.shape[0], -1), dtype=torch_float32, dim=1).type_as(input)
         batchloss = - torch_sum(target.view(target.shape[0], -1) * logprobs, dim=1)
         if self.reduction == 'none':
             return batchloss
@@ -204,7 +204,7 @@ class FocalLoss(Module):
         logpt = logpt.view(-1)
         pt = logpt.exp()
 
-        logpt = logpt * self.alpha * (target > 0).float() + logpt * (1 - self.alpha) * (target <= 0).float()
+        logpt = logpt * self.alpha * (target > 0).float() + logpt * (1 - self.alpha) * (target <= 0).float() # TODO: jit
 
         loss = -1 * (1-pt)**self.gamma * logpt
         if self.size_average: return loss.mean()

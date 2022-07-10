@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 from torch.nn import Module, Sequential, Conv2d, ReLU
 from torch.nn.init import normal_, constant_
-from torch.nn.functional import relu as F_relu
+from torch.nn.functional import relu_ as F_relu_
 
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.modeling.backbone import resnet
@@ -98,21 +98,21 @@ class FPN2MLPFeatureExtractor(Module):
         # (Pdb) x.size()
         # torch.Size([1280, 12544])
 
-        x = F_relu(self.fc6(x))
+        x = F_relu_(self.fc6(x))
         # (Pdb) x.size()
         # (Pdb) torch.Size([16196, 4096])
         # (Pdb) x.size()
         # torch.Size([1280, 4096])
 
-        return F_relu(self.fc7(x))
+        return F_relu_(self.fc7(x))
         # (Pdb) torch.Size([16196, 4096])
         # (Pdb) x.size()
         # torch.Size([1280, 4096])
 
     def forward_without_pool(self, x):
         x = x.view(x.size(0), -1)
-        x = F_relu(self.fc6(x))
-        return F_relu(self.fc7(x))
+        x = F_relu_(self.fc6(x))
+        return F_relu_(self.fc7(x))
 
 
 @registry.ROI_BOX_FEATURE_EXTRACTORS.register("FPNXconv1fcFeatureExtractor")
@@ -174,7 +174,7 @@ class FPNXconv1fcFeatureExtractor(Module):
         x = self.pooler(x, proposals)
         x = self.xconvs(x)
         x = x.view(x.size(0), -1)
-        x = F_relu(self.fc6(x))
+        x = F_relu_(self.fc6(x))
         return x
 
 

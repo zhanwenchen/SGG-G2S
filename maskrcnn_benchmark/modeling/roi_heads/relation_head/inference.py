@@ -1,5 +1,11 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from torch import arange as torch_arange, sigmoid as torch_sigmoid, cat as torch_cat, sort as torch_sort
+from torch import (
+    arange as torch_arange,
+    sigmoid as torch_sigmoid,
+    cat as torch_cat,
+    sort as torch_sort,
+    float32 as torch_float32,
+)
 from torch.nn import Module
 from torch.nn.functional import softmax as F_softmax
 
@@ -61,14 +67,17 @@ class PostProcessor(Module):
         else:
             finetune_obj_logits = refine_logits
 
+        later_nms_pred_thres = self.later_nms_pred_thres
         results = []
+        device_obj, dtype_obj = finetune_obj_logits[0].device, finetune_obj_logits[0].dtype
+        dtype_rel = relation_logits[0].dtype
         for i, (rel_logit, obj_logit, rel_pair_idx, box) in enumerate(zip(
             relation_logits, finetune_obj_logits, rel_pair_idxs, boxes
         )):
             if self.attribute_on:
                 att_logit = finetune_att_logits[i]
                 att_prob = torch_sigmoid(att_logit)
-            obj_class_prob = F_softmax(obj_logit, -1)
+            obj_class_prob = F_softmax(obj_logit, dtype=torch_float32, dim=-1).type(dtype_obj)
             obj_class_prob[:, 0] = 0  # set background score to 0
             num_obj_bbox = obj_class_prob.shape[0]
             num_obj_class = obj_class_prob.shape[1]
@@ -78,8 +87,8 @@ class PostProcessor(Module):
                 obj_pred += 1
             else:
                 # NOTE: by kaihua, apply late nms for object prediction
-                obj_pred = obj_prediction_nms(box.get_field('boxes_per_cls'), obj_logit, self.later_nms_pred_thres)
-                obj_score_ind = torch_arange(num_obj_bbox, device=obj_logit.device) * num_obj_class + obj_pred
+                obj_pred = obj_prediction_nms(box.get_field('boxes_per_cls'), obj_logit, later_nms_pred_thres)
+                obj_score_ind = torch_arange(num_obj_bbox, device=device_obj).mul_(num_obj_class).add_(obj_pred)
                 obj_scores = obj_class_prob.view(-1)[obj_score_ind]
 
             assert obj_scores.shape[0] == num_obj_bbox
@@ -90,10 +99,10 @@ class PostProcessor(Module):
             else:
                 # mode==sgdet
                 # apply regression based on finetuned object class
-                device = obj_class.device
+                # device = obj_class.device
                 batch_size = obj_class.shape[0]
                 regressed_box_idxs = obj_class
-                boxlist = BoxList(box.get_field('boxes_per_cls')[torch_arange(batch_size, device=device), regressed_box_idxs], box.size, 'xyxy')
+                boxlist = BoxList(box.get_field('boxes_per_cls')[torch_arange(batch_size, device=device_obj), regressed_box_idxs], box.size, 'xyxy', device=device_obj)
             boxlist.add_field('pred_labels', obj_class) # (#obj, )
             boxlist.add_field('pred_scores', obj_scores) # (#obj, )
 
@@ -104,16 +113,16 @@ class PostProcessor(Module):
             obj_scores0 = obj_scores[rel_pair_idx[:, 0]]
             obj_scores1 = obj_scores[rel_pair_idx[:, 1]]
             if with_binary_loss:
-                rel_class_prob = F_softmax(rel_logit, -1)
-                rel_class_prob_binary = F_softmax(relation_logits_binary[i], -1)
+                rel_class_prob = F_softmax(rel_logit, dtype=torch_float32, dim=-1).type(dtype_rel)
+                rel_class_prob_binary = F_softmax(relation_logits_binary[i], dtype=torch_float32, dim=-1).type_as(relation_logits_binary[i])
                 rel_class_prob1 = rel_class_prob[:, 1:] * rel_class_prob_binary[:, 1][:, None]
                 rel_class_prob = torch_cat([(rel_class_prob[:, 0])[:, None], rel_class_prob1],dim=-1)
             else:
-                rel_class_prob = F_softmax(rel_logit, -1)
+                rel_class_prob = F_softmax(rel_logit, dtype=torch_float32, dim=-1).type(dtype_rel)
             rel_scores, rel_class = rel_class_prob[:, 1:].max(dim=1)
-            rel_class = rel_class + 1
+            rel_class += 1
             # TODO Kaihua: how about using weighted some here?  e.g. rel*1 + obj *0.8 + obj*0.8
-            triple_scores = rel_scores * obj_scores0 * obj_scores1
+            triple_scores = rel_scores.mul_(obj_scores0).mul_(obj_scores1)
             _, sorting_idx = torch_sort(triple_scores.view(-1), dim=0, descending=True)
             rel_pair_idx = rel_pair_idx[sorting_idx]
             rel_class_prob = rel_class_prob[sorting_idx]

@@ -17,6 +17,9 @@ class FastRCNNLossComputation(object):
 
     def __init__(self, cls_agnostic_bbox_reg=False):
         self.cls_agnostic_bbox_reg = cls_agnostic_bbox_reg
+        self.one = torch_as_tensor(1, device='cuda', dtype=torch_int64)
+        self.one_thru_three = torch_as_tensor([0, 1, 2, 3], device='cuda', dtype=torch_int64)
+        self.four_thru_seven = torch_as_tensor([4, 5, 6, 7], device='cuda', dtype=torch_int64)
 
     def assign_label_to_proposals(self, proposals, targets):
         for img_idx, (target, proposal) in enumerate(zip(targets, proposals)):
@@ -64,20 +67,19 @@ class FastRCNNLossComputation(object):
         # get indices that correspond to the regression targets for
         # the corresponding ground truth labels, to be used with
         # advanced indexing
-        sampled_pos_inds_subset = torch_nonzero(labels > 0).squeeze(1)
+        sampled_pos_inds_subset = torch_nonzero(labels > 0).squeeze_(1)
         labels_pos = labels[sampled_pos_inds_subset]
         if self.cls_agnostic_bbox_reg:
-            map_inds = torch_as_tensor([4, 5, 6, 7], device=device)
+            map_inds = self.four_thru_seven.detach().clone()
         else:
-            map_inds = 4 * labels_pos[:, None] + torch_as_tensor([0, 1, 2, 3], device=device)
+            map_inds = self.one_thru_three.detach().clone().add_(labels_pos.unsqueeze(-1).mul_(4))
 
         box_loss = smooth_l1_loss(
-            box_regression[sampled_pos_inds_subset[:, None], map_inds],
+            box_regression[sampled_pos_inds_subset.unsqueeze(-1), map_inds],
             regression_targets[sampled_pos_inds_subset],
-            size_average=False,
-            beta=1,
+            self.one,
         )
-        box_loss /= labels.numel()
+        box_loss.div_(labels.numel())
 
         return classification_loss, box_loss
 

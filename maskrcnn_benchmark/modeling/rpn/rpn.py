@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 from torch import no_grad as torch_no_grad
-from torch.nn.functional import relu as F_relu
+from torch.nn.functional import relu_ as F_relu_
 from torch.nn import Module, Conv2d
 from torch.nn.init import normal_, constant_
 
@@ -66,7 +66,7 @@ class RPNHeadFeatureSingleConv(Module):
 
     def forward(self, x):
         assert isinstance(x, (list, tuple))
-        return [F_relu(self.conv(z)) for z in x]
+        return [F_relu_(self.conv(z)) for z in x]
 
 
 @registry.RPN_HEADS.register("SingleConvRPNHead")
@@ -99,7 +99,7 @@ class RPNHead(Module):
         logits = []
         bbox_reg = []
         for feature in x:
-            t = F_relu(self.conv(feature))
+            t = F_relu_(self.conv(feature))
             logits.append(self.cls_logits(t))
             bbox_reg.append(self.bbox_pred(t))
         return logits, bbox_reg

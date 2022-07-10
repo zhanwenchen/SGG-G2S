@@ -3,6 +3,7 @@ from torch import (
     cat as torch_cat,
     full as torch_full,
     int64 as torch_int64,
+    float32 as torch_float32,
     kthvalue as torch_kthvalue,
     nonzero as torch_nonzero
 )
@@ -66,7 +67,7 @@ class PostProcessor(Module):
                 the extra fields labels and scores
         """
         features, class_logits, box_regression = x
-        class_prob = F_softmax(class_logits, -1)
+        class_prob = F_softmax(class_logits, dtype=torch_float32, dim=-1).type_as(class_logits)
 
         # TODO think about a representation of batch of boxes
         image_shapes = [box.size for box in boxes]

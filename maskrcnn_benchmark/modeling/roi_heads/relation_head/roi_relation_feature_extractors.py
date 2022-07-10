@@ -6,12 +6,19 @@ from torch import (
     int16 as torch_int16,
 )
 from torch.nn import Module, Sequential, Conv2d, ReLU, BatchNorm2d, MaxPool2d
+from torch.jit import script as torch_jit_script
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.modeling.make_layers import make_fc
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_union
 from maskrcnn_benchmark.modeling.roi_heads.box_head.roi_box_feature_extractors import make_roi_box_feature_extractor
 from maskrcnn_benchmark.modeling.roi_heads.attribute_head.roi_attribute_feature_extractors import make_roi_attribute_feature_extractor
 
+
+@torch_jit_script
+def get_rect(dummy_range, proposal):
+    h1h3 = dummy_range >= proposal[:, [0, 1], None].floor().short()
+    h2h4 = dummy_range <= proposal[:, [2, 3], None].ceil().short()
+    return h1h3[:, 0, None, :] & h2h4[:, 0, None, :] & h1h3[:, 1, :, None] & h2h4[:, 1, :, None] # TODO: jit
 
 
 @registry.ROI_RELATION_FEATURE_EXTRACTORS.register("RelationFeatureExtractor")
@@ -57,7 +64,6 @@ class RelationFeatureExtractor(Module):
 
         self.dummy_range = torch_arange(self.rect_size, device='cuda', dtype=torch_int16).view(1, self.rect_size)
 
-
     def forward(self, x, proposals, rel_pair_idxs=None):
         union_proposals = []
         rect_inputs = []
@@ -77,20 +83,22 @@ class RelationFeatureExtractor(Module):
             tail_proposal = tail_proposal.resize((self_rect_size, self_rect_size)).bbox
 
             # use range to construct rectanglesized (rect_size, rect_size)
-            h1h3 = dummy_range >= head_proposal[:, [0, 1], None].floor().short()
-            h2h4 = dummy_range <= head_proposal[:, [2, 3], None].ceil().short()
-            head_rect = h1h3[:, 0, None, :] & h2h4[:, 0, None, :] & h1h3[:, 1, :, None] & h2h4[:, 1, :, None]
-            del head_proposal, h1h3, h2h4
-            t1t3 = dummy_range >= tail_proposal[:, [0, 1], None].floor().short()
-            t2t4 = dummy_range <= tail_proposal[:, [2, 3], None].ceil().short()
-            tail_rect = t1t3[:, 0, None, :] & t2t4[:, 0, None, :] & t1t3[:, 1, :, None] & t2t4[:, 1, :, None]
-            del tail_proposal, t1t3, t2t4
+            head_rect = get_rect(dummy_range, head_proposal)
+            tail_rect = get_rect(dummy_range, tail_proposal)
+            # h1h3 = dummy_range >= head_proposal[:, [0, 1], None].floor().short()
+            # h2h4 = dummy_range <= head_proposal[:, [2, 3], None].ceil().short()
+            # head_rect = h1h3[:, 0, None, :] & h2h4[:, 0, None, :] & h1h3[:, 1, :, None] & h2h4[:, 1, :, None] # TODO: jit
+            # del head_proposal, h1h3, h2h4
+            # t1t3 = dummy_range >= tail_proposal[:, [0, 1], None].floor().short()
+            # t2t4 = dummy_range <= tail_proposal[:, [2, 3], None].ceil().short()
+            # tail_rect = t1t3[:, 0, None, :] & t2t4[:, 0, None, :] & t1t3[:, 1, :, None] & t2t4[:, 1, :, None] # TODO: jit
+            # del tail_proposal, t1t3, t2t4
             # (num_rel, 4, rect_size, rect_size) # torch.Size([651, 2, 27, 27]), torch.Size([110, 2, 27, 27])
             rect_inputs.append(torch_stack((head_rect, tail_rect), dim=1))
             del head_rect, tail_rect
         del rel_pair_idxs, dummy_range
         # rectangle feature. size (total_num_rel, in_channels, POOLER_RESOLUTION, POOLER_RESOLUTION)
-        rect_inputs = torch_cat(rect_inputs, dim=0).float() # original: rect_inputs = 16 * torch.Size([651, 2, 27, 27]), [650, ...], [110, ...], ... => torch.Size([5049, 2, 27, 27])
+        rect_inputs = torch_cat(rect_inputs, dim=0).type_as(x[0]) # original: rect_inputs = 16 * torch.Size([651, 2, 27, 27]), [650, ...], [110, ...], ... => torch.Size([5049, 2, 27, 27])
         rect_features = self.rect_conv(rect_inputs) # torch.Size([5049, 256, 7, 7])
         del rect_inputs
         # union visual feature. size (total_num_rel, in_channels, POOLER_RESOLUTION, POOLER_RESOLUTION)

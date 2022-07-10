@@ -4,7 +4,10 @@ This file contains specific functions for computing losses on the RPN
 file
 """
 from torch import (
-    float32 as torch_float32, nonzero as torch_nonzero, cat as torch_cat
+    float32 as torch_float32,
+    nonzero as torch_nonzero,
+    cat as torch_cat,
+    as_tensor as torch_as_tensor
 )
 from torch.nn.functional import (
     binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits
@@ -37,6 +40,7 @@ class RPNLossComputation(object):
         self.copied_fields = []
         self.generate_labels_func = generate_labels_func
         self.discard_cases = ['not_visibility', 'between_thresholds']
+        self.beta = torch_as_tensor(1.0/9, device='cuda', dtype=torch_float32)
 
     def match_targets_to_anchors(self, anchor, target, copied_fields=[]):
         match_quality_matrix = boxlist_iou(target, anchor)
@@ -106,15 +110,15 @@ class RPNLossComputation(object):
         anchors = [cat_boxlist(anchors_per_image) for anchors_per_image in anchors]
         labels, regression_targets = self.prepare_targets(anchors, targets)
         sampled_pos_inds, sampled_neg_inds = self.fg_bg_sampler(labels)
-        sampled_pos_inds = torch_nonzero(torch_cat(sampled_pos_inds, dim=0)).squeeze(1)
-        sampled_neg_inds = torch_nonzero(torch_cat(sampled_neg_inds, dim=0)).squeeze(1)
+        sampled_pos_inds = torch_nonzero(torch_cat(sampled_pos_inds, dim=0)).squeeze_(1)
+        sampled_neg_inds = torch_nonzero(torch_cat(sampled_neg_inds, dim=0)).squeeze_(1)
 
         sampled_inds = torch_cat([sampled_pos_inds, sampled_neg_inds], dim=0)
 
         objectness, box_regression = \
                 concat_box_prediction_layers(objectness, box_regression)
 
-        objectness = objectness.squeeze()
+        objectness.squeeze_()
 
         labels = torch_cat(labels, dim=0)
         regression_targets = torch_cat(regression_targets, dim=0)
@@ -122,9 +126,8 @@ class RPNLossComputation(object):
         box_loss = smooth_l1_loss(
             box_regression[sampled_pos_inds],
             regression_targets[sampled_pos_inds],
-            beta=1.0 / 9,
-            size_average=False,
-        ) / (sampled_inds.numel())
+            self.beta,
+        ).div_(sampled_inds.numel())
 
         objectness_loss = F_binary_cross_entropy_with_logits(
             objectness[sampled_inds], labels[sampled_inds]

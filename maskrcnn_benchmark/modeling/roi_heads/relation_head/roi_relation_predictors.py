@@ -30,7 +30,7 @@ from torch import (
 from torch.utils.benchmark import Timer, Compare
 from torch.jit import script as torch_jit_script
 from torch.nn import Module, Sequential, Linear, ReLU, GroupNorm
-from torch.nn.functional import dropout as F_dropout, binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits, relu as F_relu, softmax as F_softmax, cross_entropy as F_cross_entropy
+from torch.nn.functional import dropout as F_dropout, binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits, relu_ as F_relu_, softmax as F_softmax, cross_entropy as F_cross_entropy
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.modeling.utils import cat
 from maskrcnn_benchmark.data import get_dataset_statistics
@@ -113,7 +113,7 @@ class TransformerTransferGSCPredictor(Module):
             self.gsc_classify_2 = Linear(self.gsc_classify_dim_1, self.gsc_classify_dim_2)
             layer_init_kaiming_normal(self.gsc_classify_2)
             self.attention_1 = LowRankAttention(self.k, self.in_channels, self.dropout)
-            self.dimension_reduce_1 = Sequential(Linear(2*self.k + self.gsc_classify_dim_1, self.gsc_classify_dim_1), ReLU())
+            self.dimension_reduce_1 = Sequential(Linear(2*self.k + self.gsc_classify_dim_1, self.gsc_classify_dim_1), ReLU(inplace=True))
 
             self.gn = GroupNorm(self.num_groups, self.gsc_classify_dim_1)
 
@@ -200,10 +200,11 @@ class TransformerTransferGSCPredictor(Module):
         del edge_ctx
         # (Pdb) edge_ctx.size()
         # torch.Size([1280, 1536])
-        edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim) # torch.Size([1280, 2, 768])
+        hidden_dim = self.hidden_dim
+        edge_rep = edge_rep.view(edge_rep.size(0), 2, hidden_dim) # torch.Size([1280, 2, 768])
 
-        head_rep = edge_rep[:, 0].contiguous().view(-1, self.hidden_dim) # torch.Size([1280, 768])
-        tail_rep = edge_rep[:, 1].contiguous().view(-1, self.hidden_dim) # torch.Size([1280, 768])
+        head_rep = edge_rep[:, 0].contiguous().view(-1, hidden_dim) # torch.Size([1280, 768])
+        tail_rep = edge_rep[:, 1].contiguous().view(-1, hidden_dim) # torch.Size([1280, 768])
         del edge_rep
 
         num_rels = [r.shape[0] for r in rel_pair_idxs]
@@ -238,6 +239,8 @@ class TransformerTransferGSCPredictor(Module):
             global_features_mapped = global_image_features[new_to_old].to(device)
             del global_image_features, new_to_old, device
 
+        training = self.training
+        dropout = self.dropout
         if self.use_gsc:
             # GSC Context
 
@@ -256,8 +259,8 @@ class TransformerTransferGSCPredictor(Module):
             # 2. arbitarily bottlenecked (like 64)
             # 3. same (4096)
             x_local = self.gsc_classify_1(global_features_mapped) # [506, 4096] => [506, 64]
-            x_local = F_relu(x_local) # TODO: need some sort of layers for repr learn?
-            x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+            x_local = F_relu_(x_local) # TODO: need some sort of layers for repr learn?
+            x_local = F_dropout(x_local, p=dropout, training=training)
             x_global = self.attention_1(global_features_mapped) # torch.Size([506, 100])
             del global_features_mapped
             x = self.dimension_reduce_1(torch_cat((x_global, x_local), dim=1)) # torch.Size([506, 64])
@@ -265,38 +268,38 @@ class TransformerTransferGSCPredictor(Module):
 
             # Second/last pass
             x_local = self.gsc_classify_2(x)
-            x_local = F_relu(x)
-            x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+            x_local = F_relu_(x)
+            x_local = F_dropout(x_local, p=dropout, training=training)
             x_global = self.attention_2(x) # TOOD: or union_features?
             del x
             gsc_rep = self.dimension_reduce_2(torch_cat((x_global, x_local), dim=1))
             del x_local, x_global
 
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096]) # TODO: Use F_sigmoid?
-        visual_rep = union_features * ctx_gate
+        visual_rep = union_features.mul(ctx_gate)
         del ctx_gate
 
         if not self.with_cleanclf:
-            rel_dists = self.ctx_compress(prod_rep) + self.rel_compress(visual_rep)  # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            rel_dists = self.ctx_compress(prod_rep).add_(self.rel_compress(visual_rep))  # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
             del visual_rep, prod_rep
             if self.use_gsc:
-                rel_dists += self.gsc_compress(gsc_rep)
+                rel_dists.add_(self.gsc_compress(gsc_rep))
                 del gsc_rep
             if self.use_bias: # True
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
                 del pair_pred
-                rel_dists += F_dropout(freq_dists_bias, 0.3, training=self.training) # torch.Size([3009, 51])
+                rel_dists.add_(F_dropout(freq_dists_bias, 0.3, training=training)) # torch.Size([3009, 51])
         # the transfer classifier
         if self.with_cleanclf:
-            rel_dists = self.ctx_compress_clean(prod_rep) + self.rel_compress_clean(visual_rep)
+            rel_dists = self.ctx_compress_clean(prod_rep).add_(self.rel_compress_clean(visual_rep))
             del visual_rep, prod_rep
             if self.use_gsc:
-                rel_dists += self.gsc_compress_clean(gsc_rep)
+                rel_dists.add_(self.gsc_compress_clean(gsc_rep))
                 del gsc_rep
             if self.use_bias:
                 freq_dists_bias = self.freq_bias_clean.index_with_labels(pair_pred)
                 del pair_pred
-                rel_dists += F_dropout(freq_dists_bias, 0.3, training=self.training)
+                rel_dists.add_(F_dropout(freq_dists_bias, 0.3, training=training))
         del freq_dists_bias
 
         if self.with_transfer:

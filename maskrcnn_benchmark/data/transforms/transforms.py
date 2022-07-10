@@ -121,6 +121,7 @@ class Normalize(object):
         self.to_bgr255 = to_bgr255
 
     def __call__(self, image, target=None):
+        # TODO: optimize
         if self.to_bgr255:
             image = image[[2, 1, 0]] * 255
         image = F_normalize(image, mean=self.mean, std=self.std)

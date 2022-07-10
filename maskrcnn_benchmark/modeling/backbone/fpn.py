@@ -4,7 +4,7 @@ from torch.nn.init import kaiming_uniform_, constant_
 from torch.nn.functional import (
     interpolate as F_interpolate,
     max_pool2d as F_max_pool2d,
-    relu as F_relu,
+    relu_ as F_relu_,
 )
 
 
@@ -99,5 +99,5 @@ class LastLevelP6P7(Module):
     def forward(self, c5, p5):
         x = p5 if self.use_P5 else c5
         p6 = self.p6(x)
-        p7 = self.p7(F_relu(p6))
+        p7 = self.p7(F_relu_(p6))
         return [p6, p7]
