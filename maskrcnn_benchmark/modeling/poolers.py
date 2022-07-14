@@ -139,7 +139,7 @@ class Pooler(Module):
         rois = self.convert_to_roi_format(boxes)
         assert rois.size(0) > 0
         if num_levels == 1:
-            return self.poolers[0](x[0], rois)
+            return self.poolers[0](x[0].float(), rois.float()).type_as(rois)
 
         levels = self.map_levels(boxes)
         del boxes

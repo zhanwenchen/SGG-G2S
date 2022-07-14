@@ -2,7 +2,7 @@
 if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1
-    export MODEL_NAME="gbnet_debug_float16" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    export MODEL_NAME="gbnet_vgg_1" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
     echo "Started training PredCls model ${MODEL_NAME}"
     MODEL_DIRNAME=./checkpoints/${MODEL_NAME}/
     mkdir ${MODEL_DIRNAME} &&
@@ -10,10 +10,11 @@ if [ $1 == "0" ]; then
     cp -r ./scripts/ ${MODEL_DIRNAME} &&
     cp -r ./maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
     HOST_NODE_ADDR=12345 PYTHONUNBUFFERED=x torchrun --master_port=17293 --nproc_per_node=$NUM_GPUS tools/relation_train_net.py \
-    --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
+    --config-file "configs/e2e_relation_detector_VGG16_1x.yaml" \
     MODEL.ROI_RELATION_HEAD.PREDICTOR GBNetPredictor \
     MODEL.ROI_RELATION_HEAD.USE_GSC False  \
     SOLVER.IMS_PER_BATCH 16 \
+    SOLVER.TYPE 'FusedAdam' \
     MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
     MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
     TEST.IMS_PER_BATCH ${NUM_GPUS} \
@@ -27,8 +28,9 @@ if [ $1 == "0" ]; then
     SOLVER.VAL_PERIOD 2000 \
     SOLVER.CHECKPOINT_PERIOD 2000 \
     GLOVE_DIR ./datasets/vg/ \
-    MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
+    MODEL.PRETRAINED_DETECTOR_CKPT 'https://download.pytorch.org/models/vgg16-397923af.pth' \
     OUTPUT_DIR ./checkpoints/${MODEL_NAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log
+    # MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
     # OUTPUT_DIR ./checkpoints/${MODEL_NAME}
     echo "Finished training PredCls model ${MODEL_NAME}"
     # MODEL.PRETRAINED_MODEL_CKPT /home/zhanwen/bpl_og/checkpoints/${MODEL_NAME}/model_0014000.pth \
