@@ -132,7 +132,8 @@ def train(cfg, local_rank, distributed, logger):
     checkpointer = DetectronCheckpointer(cfg, model, optimizer, scheduler, output_dir, save_to_disk, custom_scheduler=True)
     debug_print(logger, 'finished instantiating checkpointer')
 
-    if not cfg.MODEL.WEIGHT.startswith('catalog://') and cfg.MODEL.PRETRAINED_DETECTOR_CKPT != '':
+    weight = cfg.MODEL.WEIGHT
+    if not (weight.startswith('catalog://') or weight.startswith('https://')) and cfg.MODEL.PRETRAINED_DETECTOR_CKPT != '':
         debug_print(logger, f'{__file__}.train: CONTINUE Learning with {cfg.MODEL.WEIGHT}')
         checkpointer.load(cfg.MODEL.WEIGHT)
         arguments["iteration"] = scheduler.last_epoch
