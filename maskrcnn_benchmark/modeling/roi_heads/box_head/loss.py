@@ -72,7 +72,7 @@ class FastRCNNLossComputation(object):
         if self.cls_agnostic_bbox_reg:
             map_inds = self.four_thru_seven.detach().clone()
         else:
-            map_inds = self.one_thru_three.detach().clone().add_(labels_pos.unsqueeze(-1).mul_(4))
+            map_inds = self.one_thru_three.detach().clone().add(labels_pos.unsqueeze_(-1).mul_(4))
 
         box_loss = smooth_l1_loss(
             box_regression[sampled_pos_inds_subset.unsqueeze(-1), map_inds],
