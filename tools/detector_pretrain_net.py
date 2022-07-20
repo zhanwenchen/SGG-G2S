@@ -11,7 +11,7 @@ import argparse
 from os import environ as os_environ
 from os.path import join as os_path_join
 from time import time as time_time
-import datetime
+from datetime import timedelta
 from random import seed as random_seed
 from torch import (
     cat as torch_cat,
@@ -179,7 +179,7 @@ def train(cfg, local_rank, distributed, logger):
         meters.update(time=batch_time, data=data_time)
 
         eta_seconds = meters.time.global_avg * (max_iter - iteration)
-        eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+        eta_string = str(timedelta(seconds=int(eta_seconds)))
 
         if iteration % 200 == 0 or iteration == max_iter:
             lr_i = optimizer.param_groups[0]["lr"]
@@ -228,7 +228,7 @@ def train(cfg, local_rank, distributed, logger):
         writer.add_scalars(f'{mode}/time', {'time_batch': batch_time, 'time_data': data_time}, iteration)
 
     total_training_time = time_time() - start_training_time
-    total_time_str = str(datetime.timedelta(seconds=total_training_time))
+    total_time_str = str(timedelta(seconds=total_training_time))
     logger.info(
         "Total training time: {} ({:.4f} s / it)".format(
             total_time_str, total_training_time / (max_iter)
@@ -342,7 +342,6 @@ def main():
         help="path to config file",
         type=str,
     )
-    parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument(
         "--skip-test",
         dest="skip_test",
@@ -359,12 +358,14 @@ def main():
     args = parser.parse_args()
 
     num_gpus = int(os_environ["WORLD_SIZE"]) if "WORLD_SIZE" in os_environ else 1
-    args.distributed = num_gpus > 1
+    distributed = num_gpus > 1
 
-    if args.distributed:
-        set_device(args.local_rank)
+    local_rank = int(os_environ['LOCAL_RANK'])
+    if distributed:
+        set_device(local_rank)
         init_process_group(
-            backend="nccl", init_method="env://"
+            backend="nccl", init_method="env://",
+            timeout=timedelta(seconds=1800),
         )
         synchronize()
 
@@ -394,10 +395,10 @@ def main():
     # save overloaded model config in the output directory
     save_config(cfg, output_config_path)
 
-    model = train(cfg, args.local_rank, args.distributed, logger)
+    model = train(cfg, train, distributed, logger)
 
     if not args.skip_test:
-        run_test(cfg, model, args.distributed)
+        run_test(cfg, model, distributed, logger, cfg.SOLVER.MAX_ITER)
 
 
 if __name__ == "__main__":

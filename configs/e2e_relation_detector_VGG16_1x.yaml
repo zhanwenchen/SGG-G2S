@@ -5,7 +5,7 @@ INPUT:
   MAX_SIZE_TEST: 1000
 MODEL:
   META_ARCHITECTURE: "GeneralizedRCNN"
-  WEIGHT: 'https://download.pytorch.org/models/vgg16-397923af.pth'
+  WEIGHT: './checkpoints/pretrained_faster_rcnn/vgg16-397923af.pth'
   BACKBONE:
     CONV_BODY: "VGG-16"
   RESNETS:
