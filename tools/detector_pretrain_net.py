@@ -135,17 +135,15 @@ def train(cfg, local_rank, distributed, logger):
     grad_norm_clip = cfg.SOLVER.GRAD_NORM_CLIP
     summary(model)
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
+        images = images.to(device, non_blocking=True)
+        targets = [target.to(device) for target in targets]
+        data_time = time_time() - end
         model.train()
 
         if any(len(target) < 1 for target in targets):
             logger.error(f"Iteration={iteration + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}" )
-        data_time = time_time() - end
         iteration += 1
         arguments["iteration"] = iteration
-
-        images = images.to(device, non_blocking=True)
-        targets = [target.to(device) for target in targets]
-
 
         with autocast(enabled=using_mixed_precision):
             loss_dict = model(images, targets)
@@ -396,7 +394,7 @@ def main():
     # save overloaded model config in the output directory
     save_config(cfg, output_config_path)
 
-    model = train(cfg, train, distributed, logger)
+    model = train(cfg, local_rank, distributed, logger)
 
     if not args.skip_test:
         run_test(cfg, model, distributed, logger, cfg.SOLVER.MAX_ITER)
