@@ -143,8 +143,6 @@ def train(cfg, local_rank, distributed, logger):
         iteration += 1
         arguments["iteration"] = iteration
 
-        scheduler.step()
-
         images = images.to(device, non_blocking=True)
         targets = [target.to(device) for target in targets]
 
