@@ -23,15 +23,15 @@ class ROIBoxHead(Module):
     def __init__(self, cfg, in_channels):
         super(ROIBoxHead, self).__init__()
         self.cfg = cfg.clone()
-        if self.cfg.MODEL.MASK_ON or self.cfg.MODEL.KEYPOINT_ON or (self.cfg.MODEL.RELATION_ON and self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX and not self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL):
-            self.feature_extractor = make_roi_box_feature_extractor(cfg, in_channels, half_out=self.cfg.MODEL.ATTRIBUTE_ON)
-        if not self.cfg.MODEL.RELATION_ON or (self.cfg.MODEL.RELATION_ON and not self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX):
-            self.predictor = make_roi_box_predictor(
-                cfg, self.feature_extractor.out_channels)
-            self.post_processor = make_roi_box_post_processor(cfg)
-            self.samp_processor = make_roi_box_samp_processor(cfg)
-        if not self.cfg.MODEL.RELATION_ON:
-            self.loss_evaluator = make_roi_box_loss_evaluator(cfg)
+        # if self.cfg.MODEL.MASK_ON or self.cfg.MODEL.KEYPOINT_ON or (self.cfg.MODEL.RELATION_ON and self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX and not self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL):
+        self.feature_extractor = make_roi_box_feature_extractor(cfg, in_channels, half_out=self.cfg.MODEL.ATTRIBUTE_ON)
+        # if not self.cfg.MODEL.RELATION_ON or (self.cfg.MODEL.RELATION_ON and not self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX):
+        self.predictor = make_roi_box_predictor(
+            cfg, self.feature_extractor.out_channels)
+        self.post_processor = make_roi_box_post_processor(cfg)
+        self.samp_processor = make_roi_box_samp_processor(cfg)
+        # if not self.cfg.MODEL.RELATION_ON:
+        self.loss_evaluator = make_roi_box_loss_evaluator(cfg)
 
     def forward(self, features, proposals, targets=None):
         """
