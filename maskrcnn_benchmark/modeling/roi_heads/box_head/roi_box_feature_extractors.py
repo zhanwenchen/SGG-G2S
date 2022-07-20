@@ -2,12 +2,11 @@
 from torch.nn import Module, Sequential, Conv2d, ReLU
 from torch.nn.init import normal_, constant_
 from torch.nn.functional import relu_ as F_relu_
-
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.modeling.backbone import resnet
+from maskrcnn_benchmark.modeling.backbone.load_vgg import load_vgg
 from maskrcnn_benchmark.modeling.poolers import Pooler
-from maskrcnn_benchmark.modeling.make_layers import group_norm
-from maskrcnn_benchmark.modeling.make_layers import make_fc
+from maskrcnn_benchmark.modeling.make_layers import group_norm, make_fc
 
 
 @registry.ROI_BOX_FEATURE_EXTRACTORS.register("ResNet50Conv5ROIFeatureExtractor")
@@ -43,6 +42,68 @@ class ResNet50Conv5ROIFeatureExtractor(Module):
     def forward(self, x, proposals):
         x = self.pooler(x, proposals)
         return self.head(x)
+
+
+@registry.ROI_BOX_FEATURE_EXTRACTORS.register("VGGFeatureExtractor")
+class VGGFeatureExtractor(Module):
+    """
+    Heads for FPN for classification
+    """
+
+    def __init__(self, cfg, in_channels, half_out=False, cat_all_levels=False):
+        super().__init__()
+
+        resolution = cfg.MODEL.ROI_BOX_HEAD.POOLER_RESOLUTION
+        scales = cfg.MODEL.ROI_BOX_HEAD.POOLER_SCALES
+        sampling_ratio = cfg.MODEL.ROI_BOX_HEAD.POOLER_SAMPLING_RATIO
+        pooler = Pooler(
+            output_size=(resolution, resolution),
+            scales=scales,
+            sampling_ratio=sampling_ratio,
+            in_channels=in_channels,
+            cat_all_levels=cat_all_levels,
+        )
+        input_size = in_channels * resolution ** 2
+        representation_size = cfg.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM
+        # use_gn = cfg.MODEL.ROI_BOX_HEAD.USE_GN
+        self.pooler = pooler
+
+        if half_out:
+            out_dim = int(representation_size / 2)
+        else:
+            out_dim = representation_size
+        self.classifier = load_vgg().classifier
+        self.resize_channels = input_size
+        self.out_channels = out_dim
+
+    def forward(self, x, proposals):
+        # (Pdb) x.size()
+        # torch.Size([1280, 256, 7, 7])
+
+        x = self.pooler(x, proposals)
+        del proposals
+        # (Pdb) x.size()
+        # torch.Size([16196, 256, 7, 7])
+        # (Pdb) x.size()
+        # torch.Size([1280, 12544])
+        # (Pdb) x.size()
+        # torch.Size([1280, 256, 7, 7])
+
+        x = x.view(x.size(0), -1)
+
+        # (Pdb) x.size()
+        # torch.Size([16196, 12544])
+        # (Pdb) x.size()
+        # torch.Size([1280, 12544])
+
+        return self.classifier(x)
+        # (Pdb) torch.Size([16196, 4096])
+        # (Pdb) x.size()
+        # torch.Size([1280, 4096])
+
+    def forward_without_pool(self, x):
+        x = x.view(x.size(0), -1)
+        return self.classifier(x)
 
 
 @registry.ROI_BOX_FEATURE_EXTRACTORS.register("FPN2MLPFeatureExtractor")

@@ -7,14 +7,15 @@ from torch import (
     float32 as torch_float32,
     nonzero as torch_nonzero,
     cat as torch_cat,
-    as_tensor as torch_as_tensor
+    as_tensor as torch_as_tensor,
 )
+from torch.nn import SmoothL1Loss
 from torch.nn.functional import (
-    binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits
+    binary_cross_entropy_with_logits as F_binary_cross_entropy_with_logits,
 )
 from .utils import concat_box_prediction_layers
 from ..balanced_positive_negative_sampler import BalancedPositiveNegativeSampler
-from maskrcnn_benchmark.layers import smooth_l1_loss
+# from maskrcnn_benchmark.layers import smooth_l1_loss
 from maskrcnn_benchmark.modeling.matcher import Matcher
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
 from maskrcnn_benchmark.structures.boxlist_ops import cat_boxlist
@@ -40,7 +41,7 @@ class RPNLossComputation(object):
         self.copied_fields = []
         self.generate_labels_func = generate_labels_func
         self.discard_cases = ['not_visibility', 'between_thresholds']
-        self.beta = torch_as_tensor(1.0/9, device='cuda', dtype=torch_float32)
+        self.smooth_l1_loss = SmoothL1Loss(reduction='sum', beta=1.0/9)
 
     def match_targets_to_anchors(self, anchor, target, copied_fields=[]):
         match_quality_matrix = boxlist_iou(target, anchor)
@@ -123,10 +124,15 @@ class RPNLossComputation(object):
         labels = torch_cat(labels, dim=0)
         regression_targets = torch_cat(regression_targets, dim=0)
 
-        box_loss = smooth_l1_loss(
+        # box_loss = smooth_l1_loss(
+        #     box_regression[sampled_pos_inds],
+        #     regression_targets[sampled_pos_inds],
+        #     self.beta,
+        # ).div_(sampled_inds.numel())
+
+        box_loss = self.smooth_l1_loss(
             box_regression[sampled_pos_inds],
             regression_targets[sampled_pos_inds],
-            self.beta,
         ).div_(sampled_inds.numel())
 
         objectness_loss = F_binary_cross_entropy_with_logits(

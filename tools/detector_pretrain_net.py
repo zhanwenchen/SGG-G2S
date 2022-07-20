@@ -18,6 +18,7 @@ from torch import (
     manual_seed as torch_manual_seed,
     device as torch_device,
     as_tensor as torch_as_tensor,
+    isfinite as torch_isfinite,
 )
 from numpy.random import seed as np_random_seed
 from torch.nn import SyncBatchNorm
@@ -28,6 +29,7 @@ from torch.cuda import max_memory_allocated, set_device, manual_seed_all, empty_
 from torch.cuda.amp import autocast, GradScaler
 from torch.backends import cudnn
 from torch.utils.tensorboard import SummaryWriter
+from torchinfo import summary
 from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.data import make_data_loader
 from maskrcnn_benchmark.solver import make_lr_scheduler
@@ -126,8 +128,12 @@ def train(cfg, local_rank, distributed, logger):
     start_training_time = time_time()
     end = time_time()
     val_results = []
-    scaler = GradScaler()
+    using_mixed_precision = cfg.DTYPE == 'float16'
+    scaler = GradScaler(enabled=using_mixed_precision)
 
+    using_apex_optimizer = cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS
+    grad_norm_clip = cfg.SOLVER.GRAD_NORM_CLIP
+    summary(model)
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         model.train()
 
@@ -142,18 +148,20 @@ def train(cfg, local_rank, distributed, logger):
         images = images.to(device, non_blocking=True)
         targets = [target.to(device) for target in targets]
 
-        if cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS:
+
+        with autocast(enabled=using_mixed_precision):
+            loss_dict = model(images, targets)
+            losses = sum(loss for loss in loss_dict.values())
+        assert torch_isfinite(losses).all(), loss_dict
+
+        if using_apex_optimizer:
             optimizer.zero_grad() # For Apex FusedSGD, FusedAdam, etc
         else:
             optimizer.zero_grad(set_to_none=True) # For Apex FusedSGD, FusedAdam, etc
 
-        with autocast():
-            loss_dict = model(images, targets)
-            losses = sum(loss for loss in loss_dict.values())
-
         scaler.scale(losses).backward()
         scaler.unscale_(optimizer)
-        clip_grad_norm_(model.parameters(), cfg.SOLVER.GRAD_NORM_CLIP)
+        clip_grad_norm_(model.parameters(), grad_norm_clip)
         # optimizer's gradients are already unscaled, so scaler.step does not unscale them,
         # although it still skips optimizer.step() if the gradients contain infs or NaNs.
         scaler.step(optimizer)
@@ -167,6 +175,8 @@ def train(cfg, local_rank, distributed, logger):
         if skip_lr_sched:
             logger.info(f'i={iteration}: Skipping scheduler scale_before={scale_before}, scale_after={scale_after}')
 
+        if using_scheduler and not skip_lr_sched:
+            scheduler.step()
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = reduce_loss_dict(loss_dict)
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
@@ -216,14 +226,6 @@ def train(cfg, local_rank, distributed, logger):
         if iteration == max_iter:
             checkpointer.save("model_{:07d}_final".format(iteration), **arguments)
 
-        if using_scheduler and not skip_lr_sched:
-            if cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau":
-                scheduler.step(val_result, epoch=iteration)
-                if scheduler.stage_count >= cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP:
-                    logger.info("Trigger MAX_DECAY_STEP at iteration {}.".format(iteration))
-                    # break
-            else:
-                scheduler.step()
         writer.add_scalars(f'{mode}/loss', {'loss': losses_reduced, **loss_dict_reduced}, iteration)
         writer.add_scalars(f'{mode}/time', {'time_batch': batch_time, 'time_data': data_time}, iteration)
 
@@ -334,6 +336,7 @@ def run_test(cfg, model, distributed, logger, iteration):
 
 
 def main():
+    cudnn.benchmark = True
     parser = argparse.ArgumentParser(description="PyTorch Object Detection Training")
     parser.add_argument(
         "--config-file",
