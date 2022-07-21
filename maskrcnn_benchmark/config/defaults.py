@@ -288,7 +288,6 @@ _C.MODEL.ROI_RELATION_HEAD.PREDICTOR = "MotifPredictor"
 _C.MODEL.ROI_RELATION_HEAD.FEATURE_EXTRACTOR = "RelationFeatureExtractor"
 _C.MODEL.ROI_RELATION_HEAD.POOLING_ALL_LEVELS = True
 _C.MODEL.ROI_RELATION_HEAD.NUM_CLASSES = 51
-# _C.MODEL.ROI_RELATION_HEAD.NUM_REL_CLASSES = 177
 _C.MODEL.ROI_RELATION_HEAD.BATCH_SIZE_PER_IMAGE = 64
 _C.MODEL.ROI_RELATION_HEAD.POSITIVE_FRACTION = 0.25
 _C.MODEL.ROI_RELATION_HEAD.USE_GT_BOX = True
@@ -368,6 +367,8 @@ _C.MODEL.ROI_RELATION_HEAD.REL_PROP = [0.01858, 0.00057, 0.00051, 0.00109, 0.001
 
 _C.MODEL.VGG = CN()
 _C.MODEL.VGG.VGG16_OUT_CHANNELS= 512
+_C.MODEL.VGG.PRETRAIN_STRATEGY = 'backbone' # 'backbone', 'fcs', 'rpn', 'none'
+_C.MODEL.VGG.GBNET_PRETRAINED_DETECTOR_FPATH = '/home/zhanwen/gsc/checkpoints/gbnet_og/vg-24.tar' # 'backbone', 'fcs', 'rpn'
 # ---------------------------------------------------------------------------- #
 # ResNe[X]t options (ResNets = {ResNet, ResNeXt}
 # Note that parts of a resnet may be used for both the backbone and the head
@@ -511,7 +512,7 @@ _C.SOLVER.BIAS_LR_FACTOR = 2
 
 _C.SOLVER.MOMENTUM = 0.9
 
-_C.SOLVER.WEIGHT_DECAY = 0.0005
+_C.SOLVER.WEIGHT_DECAY = 1e-4
 _C.SOLVER.WEIGHT_DECAY_BIAS = 0.0
 _C.SOLVER.CLIP_NORM = 5.0
 

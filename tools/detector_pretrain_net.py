@@ -12,15 +12,12 @@ from os import environ as os_environ
 from os.path import join as os_path_join
 from time import time as time_time
 from datetime import timedelta
-from random import seed as random_seed
 from torch import (
     cat as torch_cat,
-    manual_seed as torch_manual_seed,
     device as torch_device,
     as_tensor as torch_as_tensor,
     isfinite as torch_isfinite,
 )
-from numpy.random import seed as np_random_seed
 from torch.nn import SyncBatchNorm
 from torch.nn.parallel import DistributedDataParallel
 from torch.nn.utils import clip_grad_norm_
@@ -29,7 +26,6 @@ from torch.cuda import max_memory_allocated, set_device, manual_seed_all, empty_
 from torch.cuda.amp import autocast, GradScaler
 from torch.backends import cudnn
 from torch.utils.tensorboard import SummaryWriter
-from torchinfo import summary
 from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.data import make_data_loader
 from maskrcnn_benchmark.solver import make_lr_scheduler
@@ -44,6 +40,8 @@ from maskrcnn_benchmark.utils.imports import import_file
 from maskrcnn_benchmark.utils.logger import setup_logger
 from maskrcnn_benchmark.utils.miscellaneous import mkdir, save_config
 from maskrcnn_benchmark.utils.metric_logger import MetricLogger
+from maskrcnn_benchmark.utils.utils_train import setup_seed
+from util_misc import load_gbnet_vgg_weights, load_gbnet_fcs_weights, load_gbnet_rpn_weights
 
 
 APEX_FUSED_OPTIMIZERS = {'FusedSGD', 'FusedAdam'}
@@ -51,21 +49,8 @@ OPTIMIZERS_WITH_SCHEDULERS = {'SGD', 'FusedSGD'}
 convert_sync_batchnorm = SyncBatchNorm.convert_sync_batchnorm
 
 
-# See if we can use apex.DistributedDataParallel instead of the torch default,
-# and enable mixed-precision via apex.amp
-# try:
-#     from apex import amp
-# except ImportError:
-#     raise ImportError('Use APEX for multi-precision via apex.amp')
-def setup_seed(seed):
-    torch_manual_seed(seed)
-    manual_seed_all(seed)
-    np_random_seed(seed)
-    random_seed(seed)
-    cudnn.deterministic = True
-
-
 def train(cfg, local_rank, distributed, logger):
+    print_etari = 200 # 3   200
     mode = 'pretrain'
     model = build_detection_model(cfg)
     device = torch_device(cfg.MODEL.DEVICE)
@@ -86,7 +71,7 @@ def train(cfg, local_rank, distributed, logger):
             model, device_ids=[local_rank], output_device=local_rank,
             # this should be removed if we update BatchNorm stats
             broadcast_buffers=False,
-            find_unused_parameters=True, # Should be True with a new model
+            find_unused_parameters=False, # Should be True with a new model
         )
 
     arguments = {}
@@ -100,6 +85,27 @@ def train(cfg, local_rank, distributed, logger):
     )
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT, update_schedule=cfg.SOLVER.UPDATE_SCHEDULE_DURING_LOAD)
     arguments.update(extra_checkpoint_data)
+
+    if cfg.MODEL.BACKBONE.CONV_BODY == 'VGG-16':
+        vgg16_pretrain_strategy = cfg.MODEL.VGG.PRETRAIN_STRATEGY
+        fpath = cfg.MODEL.VGG.GBNET_PRETRAINED_DETECTOR_FPATH
+        if vgg16_pretrain_strategy == 'none':
+            pass
+        elif vgg16_pretrain_strategy == 'backbone':
+            state_dict = load_gbnet_vgg_weights(model, fpath)
+            del state_dict
+        elif vgg16_pretrain_strategy == 'fcs':
+            state_dict = load_gbnet_vgg_weights(model, fpath)
+            state_dict = load_gbnet_fcs_weights(model, fpath, state_dict=state_dict)
+            del state_dict
+        elif vgg16_pretrain_strategy == 'rpn':
+            state_dict = load_gbnet_vgg_weights(model, fpath)
+            state_dict = load_gbnet_fcs_weights(model, fpath, state_dict=state_dict)
+            state_dict = load_gbnet_rpn_weights(model, fpath, state_dict=state_dict)
+            del state_dict
+        else:
+            raise NotImplementedError(f'vgg16_pretrain_strategy={vgg16_pretrain_strategy} is not a valid strategy')
+    model.to(device, non_blocking=True)
 
     train_data_loader = make_data_loader(
         cfg,
@@ -133,7 +139,8 @@ def train(cfg, local_rank, distributed, logger):
 
     using_apex_optimizer = cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS
     grad_norm_clip = cfg.SOLVER.GRAD_NORM_CLIP
-    summary(model)
+    to_val = cfg.SOLVER.TO_VAL
+    val_period = cfg.SOLVER.VAL_PERIOD
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         images = images.to(device, non_blocking=True)
         targets = [target.to(device) for target in targets]
@@ -187,7 +194,7 @@ def train(cfg, local_rank, distributed, logger):
         eta_seconds = meters.time.global_avg * (max_iter - iteration)
         eta_string = str(timedelta(seconds=int(eta_seconds)))
 
-        if iteration % 200 == 0 or iteration == max_iter:
+        if iteration % print_etari == 0 or iteration == max_iter:
             lr_i = optimizer.param_groups[0]["lr"]
             mem_i = max_memory_allocated() / 1048576.0
             logger.info(
@@ -211,7 +218,7 @@ def train(cfg, local_rank, distributed, logger):
             writer.add_scalar(f'{mode}/memory', mem_i, iteration)
 
         val_result = None # used for scheduler updating
-        if cfg.SOLVER.TO_VAL and iteration % cfg.SOLVER.VAL_PERIOD == 0:
+        if to_val and iteration % val_period == 0:
             logger.info("Start validating")
             val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir)
             logger.info("Validation Result: %.4f" % val_result)
@@ -332,6 +339,7 @@ def run_test(cfg, model, distributed, logger, iteration):
 
 
 def main():
+    setup_seed(1234)
     cudnn.benchmark = True
     parser = argparse.ArgumentParser(description="PyTorch Object Detection Training")
     parser.add_argument(
@@ -389,7 +397,7 @@ def main():
         logger.info(config_str)
     logger.info("Running with config:\n{}".format(cfg))
 
-    output_config_path = os_path_join(cfg.OUTPUT_DIR, 'config.yml')
+    output_config_path = os_path_join(output_dir, 'config.yml')
     logger.info("Saving config into: {}".format(output_config_path))
     # save overloaded model config in the output directory
     save_config(cfg, output_config_path)

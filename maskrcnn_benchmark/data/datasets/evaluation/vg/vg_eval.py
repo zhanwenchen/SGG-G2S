@@ -33,11 +33,13 @@ def do_vg_evaluation(
             mode = 'sgcls'
     else:
         mode = 'sgdet'
+    if cfg.MODEL.RELATION_ON is False:
+        mode = 'pretrain'
 
     num_rel_category = cfg.MODEL.ROI_RELATION_HEAD.NUM_CLASSES
     multiple_preds = cfg.TEST.RELATION.MULTIPLE_PREDS
     iou_thres = cfg.TEST.RELATION.IOU_THRESHOLD
-    assert mode in {'predcls', 'sgdet', 'sgcls', 'phrdet', 'preddet'}
+    assert mode in {'predcls', 'sgdet', 'sgcls', 'phrdet', 'preddet', 'pretrain'}
 
     groundtruths = []
     for image_id, prediction in enumerate(predictions):
