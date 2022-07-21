@@ -66,15 +66,6 @@ def train(cfg, local_rank, distributed, logger):
     # amp_opt_level = 'O1' if use_mixed_precision else 'O0'
     # model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt_level)
 
-    if distributed:
-        model = convert_sync_batchnorm(model)
-        model = DistributedDataParallel(
-            model, device_ids=[local_rank], output_device=local_rank,
-            # this should be removed if we update BatchNorm stats
-            broadcast_buffers=False,
-            find_unused_parameters=False, # Should be True with a new model
-        )
-
     arguments = {}
     arguments["iteration"] = 0
 
@@ -107,6 +98,15 @@ def train(cfg, local_rank, distributed, logger):
         else:
             raise NotImplementedError(f'vgg16_pretrain_strategy={vgg16_pretrain_strategy} is not a valid strategy')
     model.to(device, non_blocking=True)
+
+    if distributed:
+        model = convert_sync_batchnorm(model)
+        model = DistributedDataParallel(
+            model, device_ids=[local_rank], output_device=local_rank,
+            # this should be removed if we update BatchNorm stats
+            broadcast_buffers=False,
+            find_unused_parameters=False, # Should be True with a new model
+        )
 
     train_data_loader = make_data_loader(
         cfg,
