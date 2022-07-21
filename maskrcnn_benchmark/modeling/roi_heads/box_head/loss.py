@@ -1,14 +1,15 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from torch import as_tensor as torch_as_tensor, int64 as torch_int64, nonzero as torch_nonzero
+from torch import (
+    as_tensor as torch_as_tensor,
+    int64 as torch_int64,
+    nonzero as torch_nonzero,
+    isnan as torch_isnan,
+    cat as torch_cat,
+)
 from torch.nn import SmoothL1Loss
 from torch.nn.functional import cross_entropy as F_cross_entropy
 # from maskrcnn_benchmark.layers import smooth_l1_loss
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
-from maskrcnn_benchmark.modeling.utils import cat
-# from maskrcnn_benchmark.modeling.balanced_positive_negative_sampler import (
-#     BalancedPositiveNegativeSampler
-# )
-
 
 class FastRCNNLossComputation(object):
     """
@@ -57,12 +58,12 @@ class FastRCNNLossComputation(object):
             box_loss (Tensor)
         """
 
-        class_logits = cat(class_logits, dim=0)
-        box_regression = cat(box_regression, dim=0)
+        class_logits = torch_cat(class_logits, dim=0)
+        box_regression = torch_cat(box_regression, dim=0)
         # device = class_logits.device
 
-        labels = cat([proposal.get_field("labels") for proposal in proposals], dim=0)
-        regression_targets = cat([proposal.get_field("regression_targets") for proposal in proposals], dim=0)
+        labels = torch_cat([proposal.get_field("labels") for proposal in proposals], dim=0)
+        regression_targets = torch_cat([proposal.get_field("regression_targets") for proposal in proposals], dim=0)
 
         classification_loss = F_cross_entropy(class_logits, labels)
 
@@ -76,15 +77,15 @@ class FastRCNNLossComputation(object):
         else:
             map_inds = self.one_thru_three.detach().clone().add(labels_pos.unsqueeze_(-1).mul_(4))
 
+        inputs = box_regression[sampled_pos_inds_subset.unsqueeze(-1), map_inds]
+        targets = regression_targets[sampled_pos_inds_subset]
+        assert inputs.shape == targets.shape
+        assert not torch_isnan(inputs).any()
+        assert not torch_isnan(targets).any()
         box_loss = self.smooth_l1_loss(
-            box_regression[sampled_pos_inds_subset.unsqueeze(-1), map_inds],
-            regression_targets[sampled_pos_inds_subset],
+            inputs,
+            targets,
         ).div_(labels.numel())
-        # box_loss = smooth_l1_loss(
-        #     box_regression[sampled_pos_inds_subset.unsqueeze(-1), map_inds],
-        #     regression_targets[sampled_pos_inds_subset],
-        #     self.one,
-        # )
 
         return classification_loss, box_loss
 

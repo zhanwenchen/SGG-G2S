@@ -8,6 +8,7 @@ from torch import (
     nonzero as torch_nonzero,
     cat as torch_cat,
     as_tensor as torch_as_tensor,
+    isnan as torch_isnan,
 )
 from torch.nn import SmoothL1Loss
 from torch.nn.functional import (
@@ -124,16 +125,16 @@ class RPNLossComputation(object):
         labels = torch_cat(labels, dim=0)
         regression_targets = torch_cat(regression_targets, dim=0)
 
-        # box_loss = smooth_l1_loss(
-        #     box_regression[sampled_pos_inds],
-        #     regression_targets[sampled_pos_inds],
-        #     self.beta,
-        # ).div_(sampled_inds.numel())
-
+        inputs = box_regression[sampled_pos_inds]
+        targets = regression_targets[sampled_pos_inds]
+        assert inputs.shape == targets.shape
+        assert not torch_isnan(inputs).any()
+        assert not torch_isnan(targets).any()
         box_loss = self.smooth_l1_loss(
-            box_regression[sampled_pos_inds],
-            regression_targets[sampled_pos_inds],
+            inputs,
+            targets,
         ).div_(sampled_inds.numel())
+        del inputs, targets
 
         objectness_loss = F_binary_cross_entropy_with_logits(
             objectness[sampled_inds], labels[sampled_inds]

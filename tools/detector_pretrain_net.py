@@ -18,6 +18,7 @@ from torch import (
     as_tensor as torch_as_tensor,
     isfinite as torch_isfinite,
 )
+from torch.autograd import set_detect_anomaly
 from torch.nn import SyncBatchNorm
 from torch.nn.parallel import DistributedDataParallel
 from torch.nn.utils import clip_grad_norm_
@@ -340,6 +341,7 @@ def run_test(cfg, model, distributed, logger, iteration):
 
 def main():
     setup_seed(1234)
+    set_detect_anomaly(True)
     cudnn.benchmark = True
     parser = argparse.ArgumentParser(description="PyTorch Object Detection Training")
     parser.add_argument(
@@ -376,7 +378,8 @@ def main():
         )
         synchronize()
 
-    cfg.merge_from_file(args.config_file)
+    config_file = args.config_file
+    cfg.merge_from_file(config_file)
     cfg.merge_from_list(args.opts)
     cfg.freeze()
 
@@ -391,8 +394,8 @@ def main():
     logger.info("Collecting env info (might take some time)")
     logger.info("\n" + collect_env_info())
 
-    logger.info("Loaded configuration file {}".format(args.config_file))
-    with open(args.config_file, "r") as cf:
+    logger.info("Loaded configuration file {}".format(config_file))
+    with open(config_file, "r") as cf:
         config_str = "\n" + cf.read()
         logger.info(config_str)
     logger.info("Running with config:\n{}".format(cfg))
