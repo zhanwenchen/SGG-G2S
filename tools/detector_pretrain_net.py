@@ -58,7 +58,7 @@ def train(cfg, local_rank, distributed, logger):
     model.to(device, non_blocking=True)
 
     using_scheduler = cfg.SOLVER.TYPE in OPTIMIZERS_WITH_SCHEDULERS
-    optimizer = make_optimizer(cfg, model, logger, rl_factor=float(cfg.SOLVER.IMS_PER_BATCH))
+    optimizer = make_optimizer(cfg, model, logger, rl_factor=1.0)
     scheduler = make_lr_scheduler(cfg, optimizer, logger) if using_scheduler else None
 
     # Initialize mixed-precision training

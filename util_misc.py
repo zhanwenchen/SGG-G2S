@@ -62,6 +62,7 @@ def load_gbnet_vgg_weights(model, fpath, state_dict=None):
         model.backbone.body.conv_body[26].bias.copy_(state_dict['features.26.bias'])
         model.backbone.body.conv_body[28].weight.copy_(state_dict['features.28.weight'])
         model.backbone.body.conv_body[28].bias.copy_(state_dict['features.28.bias'])
+    print('loaded model with gbnet vg vgg16 weights')
     return state_dict
  # 'roi_fmap.0.weight',
  # 'roi_fmap.0.bias',
