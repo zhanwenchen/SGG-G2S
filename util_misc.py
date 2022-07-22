@@ -25,7 +25,19 @@ def print_para(model):
 
 
 def load_gbnet_fcs_weights(model, fpath, state_dict=None):
-    pass
+    if state_dict is None:
+        state_dict = torch_load(fpath)['state_dict']
+    with torch_no_grad():
+        model.roi_heads.box.feature_extractor.classifier[0].weight.copy_(state_dict['roi_fmap.0.weight'])
+        model.roi_heads.box.feature_extractor.classifier[0].bias.copy_(state_dict['roi_fmap.0.bias'])
+        model.roi_heads.box.feature_extractor.classifier[3].weight.copy_(state_dict['roi_fmap.3.weight'])
+        model.roi_heads.box.feature_extractor.classifier[3].bias.copy_(state_dict['roi_fmap.3.bias'])
+        model.roi_heads.box.predictor.cls_score.weight.copy_(state_dict['score_fc.weight'])
+        model.roi_heads.box.predictor.cls_score.bias.copy_(state_dict['score_fc.bias'])
+        model.roi_heads.box.predictor.bbox_pred.weight.copy_(state_dict['bbox_fc.weight'])
+        model.roi_heads.box.predictor.bbox_pred.bias.copy_(state_dict['bbox_fc.bias'])
+    print('util_misc: loaded model with gbnet vg vgg16 and fcs weights')
+    return state_dict
 
 
 def load_gbnet_rpn_weights(model, fpath, state_dict=None):
@@ -62,21 +74,9 @@ def load_gbnet_vgg_weights(model, fpath, state_dict=None):
         model.backbone.body.conv_body[26].bias.copy_(state_dict['features.26.bias'])
         model.backbone.body.conv_body[28].weight.copy_(state_dict['features.28.weight'])
         model.backbone.body.conv_body[28].bias.copy_(state_dict['features.28.bias'])
-    print('loaded model with gbnet vg vgg16 weights')
+    print('util_misc: loaded model with gbnet vg vgg16 weights')
     return state_dict
- # 'roi_fmap.0.weight',
- # 'roi_fmap.0.bias',
- # 'roi_fmap.3.weight',
- # 'roi_fmap.3.bias',
- # 'score_fc.weight',
- # 'score_fc.bias',
- # 'bbox_fc.weight',
- # 'bbox_fc.bias',
- # 'rpn_head.anchors',
- # 'rpn_head.conv.0.weight',
- # 'rpn_head.conv.0.bias',
- # 'rpn_head.conv.2.weight',
- # 'rpn_head.conv.2.bias']
+
 
 def load_gbnet_relation(model, fpath):
     state_dict = torch_load(fpath)['state_dict']

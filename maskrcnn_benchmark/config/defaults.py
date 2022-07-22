@@ -367,7 +367,7 @@ _C.MODEL.ROI_RELATION_HEAD.REL_PROP = [0.01858, 0.00057, 0.00051, 0.00109, 0.001
 
 _C.MODEL.VGG = CN()
 _C.MODEL.VGG.VGG16_OUT_CHANNELS= 512
-_C.MODEL.VGG.PRETRAIN_STRATEGY = 'backbone' # 'backbone', 'fcs', 'rpn', 'none'
+_C.MODEL.VGG.PRETRAIN_STRATEGY = '' # 'backbone', 'fcs', 'rpn', 'none'
 _C.MODEL.VGG.GBNET_PRETRAINED_DETECTOR_FPATH = '/home/zhanwen/gsc/checkpoints/gbnet_og/vg-24.tar' # 'backbone', 'fcs', 'rpn'
 # ---------------------------------------------------------------------------- #
 # ResNe[X]t options (ResNets = {ResNet, ResNeXt}
