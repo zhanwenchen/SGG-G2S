@@ -1,5 +1,6 @@
 conda create -n sgb python=3.8
 conda activate sgb
+# conda install pytorch torchvision torchaudio cudatoolkit=11.6 -c pytorch -c conda-forge
 # CUDA 11.4 Not working for Pytorch 1.11.0. Try 1.10.1.
 # The only way 1.10.1 works is if you install it first before anything else.
 # Verify with import torch; torch.cuda.is_available(). Should be true.
@@ -35,6 +36,7 @@ cd gsc
 # symbolic links, so that you can modify
 # the files if you want and won't need to
 # re-build it
+# download csrc folder from cpp_update branch because it is only there.
 python setup.py build develop
 
 unset INSTALL_DIR
