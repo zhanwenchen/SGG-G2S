@@ -110,8 +110,8 @@ def train(cfg, local_rank, distributed, logger):
     optimizer = make_optimizer(cfg, model, logger, slow_heads=slow_heads, slow_ratio=0.1, rl_factor=float(num_batch))
 
     # Initialize mixed-precision training
-    use_mixed_precision = cfg.DTYPE == "float16"
-    amp_opt_level = 'O1' if use_mixed_precision else 'O0'
+    # use_mixed_precision = cfg.DTYPE == "float16"
+    # amp_opt_level = 'O1' if use_mixed_precision else 'O0'
     # model, optimizer = amp_initialize(model, optimizer, opt_level=amp_opt_level)
 
     if distributed:
@@ -122,7 +122,7 @@ def train(cfg, local_rank, distributed, logger):
             model, device_ids=[local_rank], output_device=local_rank,
             # this should be removed if we update BatchNorm stats
             broadcast_buffers=False,
-            find_unused_parameters=True,
+            find_unused_parameters=False, # Should be True with a new model
         )
     debug_print(logger, 'end distributed')
 

@@ -1,5 +1,14 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from torch import max as torch_max, min as torch_min, from_numpy as torch_from_numpy, cat as torch_cat
+from math import inf as math_inf
+from torch import (
+    max as torch_max,
+    min as torch_min,
+    from_numpy as torch_from_numpy,
+    cat as torch_cat,
+    min as torch_min,
+    max as torch_max,
+)
+from torch.jit import script as torch_jit_script
 from scipy.linalg import block_diag
 from .bounding_box import BoxList
 
@@ -85,6 +94,33 @@ def boxlist_iou(boxlist1, boxlist2):
 
     iou = inter / (area1[:, None] + area2 - inter)
     return iou
+
+
+# @torch_jit_script
+# def boxes_iou(box1, box2):
+#     N = box1.size(0)
+#     M = box2.size(0)
+#     b1x1 = box1[:, 0].unsqueeze(1)  # [N,1]
+#     b1y1 = box1[:, 1].unsqueeze(1)
+#     b1x2 = box1[:, 2].unsqueeze(1)
+#     b1y2 = box1[:, 3].unsqueeze(1)
+#     b2x1 = box2[:, 0].unsqueeze(0)  # [1,N]
+#     b2y1 = box2[:, 1].unsqueeze(0)
+#     b2x2 = box2[:, 2].unsqueeze(0)
+#     b2y2 = box2[:, 3].unsqueeze(0)
+#     ltx = torch_max(b1x1, b2x1)  # [N,M]
+#     lty = torch_max(b1y1, b2y1)
+#     rbx = torch_min(b1x2, b2x2)
+#     rby = torch_min(b1y2, b2y2)
+#     TO_REMOVE = 1
+#     w = (rbx - ltx + TO_REMOVE).clamp(min=0, max=math_inf)  # [N,M]
+#     h = (rby - lty + TO_REMOVE).clamp(min=0, max=math_inf)  # [N,M]
+#     inter = w* h  # [N,M]
+#
+#     area1 = (b1x2- b1x1 + TO_REMOVE) * (b1y2 - b1y1 + TO_REMOVE)  # [N,1]
+#     area2 = (b2x2- b2x1 + TO_REMOVE) * (b2y2 - b2y1 + TO_REMOVE)  # [1,M]
+#     iou = inter / (area1 + area2 - inter)
+#     return iou
 
 
 def boxlist_union(boxlist1, boxlist2):

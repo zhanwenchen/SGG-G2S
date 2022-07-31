@@ -23,25 +23,30 @@ def encode_jit(reference_boxes, proposals, weights):
         proposals (Tensor): boxes to be encoded
     """
     wx, wy, ww, wh = weights[0], weights[1], weights[2], weights[3]
+    del weights
 
     TO_REMOVE = 1  # TODO remove
     ex_widths = (proposals[:, 2] - proposals[:, 0]).add_(TO_REMOVE)
     ex_heights = (proposals[:, 3] - proposals[:, 1]).add_(TO_REMOVE)
     ex_ctr_x = ex_widths.mul(0.5).add_(proposals[:, 0])
     ex_ctr_y = ex_heights.mul(0.5).add_(proposals[:, 1])
+    del proposals
 
     gt_widths = (reference_boxes[:, 2] - reference_boxes[:, 0]).add_(TO_REMOVE)
     gt_heights = (reference_boxes[:, 3] - reference_boxes[:, 1]).add_(TO_REMOVE)
     gt_ctr_x = gt_widths.mul(0.5).add_(reference_boxes[:, 0])
     gt_ctr_y = gt_heights.mul(0.5).add_(reference_boxes[:, 1])
 
-    targets_dx = (gt_ctr_x - ex_ctr_x).div_(ex_widths).mul_(wx)
-    targets_dy = (gt_ctr_y - ex_ctr_y).div_(ex_heights).mul_(wy)
-    targets_dw = (gt_widths / ex_widths).log_().mul_(ww)
-    targets_dh = (gt_heights / ex_heights).log_().mul_(wh)
-
-    targets = torch_stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
-    return targets
+    # addcdiv
+    targets_dx = gt_ctr_x.sub_(ex_ctr_x).div_(ex_widths).mul_(wx)
+    del ex_ctr_x, wx
+    targets_dy = gt_ctr_y.sub_(ex_ctr_y).div_(ex_heights).mul_(wy)
+    del ex_ctr_y, wy
+    targets_dw = gt_widths.div_(ex_widths).log_().mul_(ww)
+    del ex_widths, ww
+    targets_dh = gt_heights.div_(ex_heights).log_().mul_(wh)
+    del ex_heights, wh
+    return torch_stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
 
 
 @torch_jit_script

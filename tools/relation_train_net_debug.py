@@ -87,6 +87,7 @@ def train(cfg, local_rank, distributed, logger):
             broadcast_buffers=False,
             find_unused_parameters=True,
         )
+
     debug_print(logger, 'end distributed')
     arguments = {}
     arguments["iteration"] = 0

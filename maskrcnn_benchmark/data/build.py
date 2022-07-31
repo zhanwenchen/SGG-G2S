@@ -61,6 +61,7 @@ def get_dataset_statistics(cfg):
     }
     logger.info('Save data statistics to: ' + str(save_file))
     logger.info('-'*100)
+
     torch_save(result, save_file)
     return result
 

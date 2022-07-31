@@ -103,6 +103,10 @@ def do_vg_evaluation(
             cocolike_predictions.append(
                 np_column_stack((image_id, box, score, label))
             )
+        try:
+            assert cocolike_predictions
+        except:
+            breakpoint()
             # logger.info(cocolike_predictions)
         cocolike_predictions = np_concatenate(cocolike_predictions, 0)
         # evaluate via coco API

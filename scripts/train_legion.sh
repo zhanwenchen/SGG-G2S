@@ -29,7 +29,7 @@ if [ $1 == "0" ]; then
     SOLVER.CHECKPOINT_PERIOD 2000 \
     GLOVE_DIR ./datasets/vg/ \
     MODEL.PRETRAINED_DETECTOR_CKPT 'https://download.pytorch.org/models/vgg16-397923af.pth' \
-    OUTPUT_DIR ./checkpoints/${MODEL_NAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log
+    OUTPUT_DIR ${MODEL_DIRNAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log
     # MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
     # OUTPUT_DIR ./checkpoints/${MODEL_NAME}
     echo "Finished training PredCls model ${MODEL_NAME}"
