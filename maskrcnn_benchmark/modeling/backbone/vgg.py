@@ -16,28 +16,16 @@ OR:
 Custom implementations may be written in user code and hooked in via the
 `register_*` functions.
 """
-from collections import namedtuple
-
-import torch
-import torch.nn.functional as F
-from torch import nn
-
-import torchvision.models as models
-from maskrcnn_benchmark.layers import FrozenBatchNorm2d
-from maskrcnn_benchmark.layers import Conv2d
-from maskrcnn_benchmark.layers import DFConv2d
-from maskrcnn_benchmark.modeling.make_layers import group_norm
-from maskrcnn_benchmark.utils.registry import Registry
+from torch.nn import Module
+from maskrcnn_benchmark.modeling.backbone.load_vgg import load_vgg
 
 
-class VGG16(nn.Module):
+class VGG16(Module):
     def __init__(self, cfg):
-        super(VGG16, self).__init__()
-        vgg = models.vgg16(pretrained=True)
-        self.conv_body = nn.Sequential(*list(vgg.features._modules.values())[:-1])
+        super().__init__()
+        # vgg = vgg16(pretrained=True)
+        self.conv_body = load_vgg().features
+        # self.conv_body = Sequential(*list(vgg.features._modules.values())[:-1])
 
     def forward(self, x):
-        output = []
-        output.append(self.conv_body(x))
-        return output
-
+        return [self.conv_body(x)]

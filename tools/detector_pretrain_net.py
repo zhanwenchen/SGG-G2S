@@ -9,10 +9,13 @@ from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:sk
 
 import argparse
 import os
-import time
-import datetime
-
+from os.path import join as os_path_join
+from os import environ as os_environ
+from time import time as time_time
+from datetime import timedelta
 import torch
+from torch.cuda import max_memory_allocated
+from torch.utils.tensorboard import SummaryWriter
 from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.data import make_data_loader
 from maskrcnn_benchmark.solver import make_lr_scheduler
@@ -38,11 +41,12 @@ except ImportError:
 
 
 def train(cfg, local_rank, distributed, logger):
+    mode = 'pretrain'
     model = build_detection_model(cfg)
     device = torch.device(cfg.MODEL.DEVICE)
     model.to(device)
 
-    optimizer = make_optimizer(cfg, model, logger, rl_factor=float(cfg.SOLVER.IMS_PER_BATCH))
+    optimizer = make_optimizer(cfg, model, logger, rl_factor=1.0)
     scheduler = make_lr_scheduler(cfg, optimizer)
 
     # Initialize mixed-precision training
@@ -83,22 +87,26 @@ def train(cfg, local_rank, distributed, logger):
 
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
+    writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_train'))
+
     if cfg.SOLVER.PRE_VAL:
         logger.info("Validate before training")
-        run_val(cfg, model, val_data_loaders, distributed)
+        run_val(cfg, model, val_data_loaders, distributed, logger, writer, 0, output_dir)
 
     logger.info("Start training")
     meters = MetricLogger(delimiter="  ")
     max_iter = len(train_data_loader)
     start_iter = arguments["iteration"]
-    start_training_time = time.time()
-    end = time.time()
+    start_training_time = time_time()
+    end = time_time()
+    to_val = cfg.SOLVER.TO_VAL
+    val_period = cfg.SOLVER.VAL_PERIOD
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         model.train()
-        
+
         if any(len(target) < 1 for target in targets):
             logger.error(f"Iteration={iteration + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}" )
-        data_time = time.time() - end
+        data_time = time_time() - end
         iteration = iteration + 1
         arguments["iteration"] = iteration
 
@@ -116,21 +124,23 @@ def train(cfg, local_rank, distributed, logger):
         losses_reduced = sum(loss for loss in loss_dict_reduced.values())
         meters.update(loss=losses_reduced, **loss_dict_reduced)
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         # Note: If mixed precision is not used, this ends up doing nothing
         # Otherwise apply loss scaling for mixed-precision recipe
         with amp.scale_loss(losses, optimizer) as scaled_losses:
             scaled_losses.backward()
         optimizer.step()
 
-        batch_time = time.time() - end
-        end = time.time()
+        batch_time = time_time() - end
+        end = time_time()
         meters.update(time=batch_time, data=data_time)
 
         eta_seconds = meters.time.global_avg * (max_iter - iteration)
-        eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+        eta_string = str(timedelta(seconds=int(eta_seconds)))
 
         if iteration % 200 == 0 or iteration == max_iter:
+            lr_i = optimizer.param_groups[0]["lr"]
+            mem_i = max_memory_allocated() / 1048576.0
             logger.info(
                 meters.delimiter.join(
                     [
@@ -144,32 +154,38 @@ def train(cfg, local_rank, distributed, logger):
                     eta=eta_string,
                     iter=iteration,
                     meters=str(meters),
-                    lr=optimizer.param_groups[0]["lr"],
-                    memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
+                    lr=lr_i,
+                    memory=mem_i,
                 )
             )
+            writer.add_scalar(f'{mode}/lr', lr_i, iteration)
+            writer.add_scalar(f'{mode}/memory', mem_i, iteration)
 
-        if cfg.SOLVER.TO_VAL and iteration % cfg.SOLVER.VAL_PERIOD == 0:
+
+        if to_val and iteration % val_period == 0:
             logger.info("Start validating")
-            run_val(cfg, model, val_data_loaders, distributed)
+            run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir)
 
         if iteration % checkpoint_period == 0:
             checkpointer.save("model_{:07d}".format(iteration), **arguments)
         if iteration == max_iter:
-            checkpointer.save("model_final", **arguments)
+            checkpointer.save("model_{:07d}_final", **arguments)
 
-    total_training_time = time.time() - start_training_time
-    total_time_str = str(datetime.timedelta(seconds=total_training_time))
+        writer.add_scalars(f'{mode}/loss', {'loss': losses_reduced, **loss_dict_reduced}, iteration)
+        writer.add_scalars(f'{mode}/time', {'time_batch': batch_time, 'time_data': data_time}, iteration)
+
+    total_training_time = time_time() - start_training_time
+    total_time_str = str(timedelta(seconds=total_training_time))
     logger.info(
         "Total training time: {} ({:.4f} s / it)".format(
             total_time_str, total_training_time / (max_iter)
         )
     )
-
+    writer.close()
     return model
 
 
-def run_val(cfg, model, val_data_loaders, distributed):
+def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir):
     if distributed:
         model = model.module
     torch.cuda.empty_cache()  # TODO check if it helps
@@ -182,7 +198,7 @@ def run_val(cfg, model, val_data_loaders, distributed):
         iou_types = iou_types + ("relations", )
     if cfg.MODEL.ATTRIBUTE_ON:
         iou_types = iou_types + ("attributes", )
-        
+
     dataset_names = cfg.DATASETS.VAL
     for dataset_name, val_data_loader in zip(dataset_names, val_data_loaders):
         inference(
@@ -195,12 +211,16 @@ def run_val(cfg, model, val_data_loaders, distributed):
             device=cfg.MODEL.DEVICE,
             expected_results=cfg.TEST.EXPECTED_RESULTS,
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
-            output_folder=None,
+            output_folder=os_path_join(output_dir, 'inference_val', dataset_name),
+            logger=logger,
+            writer=writer,
+            iteration=iteration,
         )
         synchronize()
 
 
-def run_test(cfg, model, distributed):
+def run_test(cfg, model, distributed, logger, iteration):
+    writer = SummaryWriter(log_dir=os_path_join(cfg.OUTPUT_DIR, 'tensorboard_test'))
     if distributed:
         model = model.module
     torch.cuda.empty_cache()  # TODO check if it helps
@@ -221,8 +241,8 @@ def run_test(cfg, model, distributed):
             mkdir(output_folder)
             output_folders[idx] = output_folder
     data_loaders_val = make_data_loader(
-        cfg, 
-        mode='test', 
+        cfg,
+        mode='test',
         is_distributed=distributed
         )
     for output_folder, dataset_name, data_loader_val in zip(output_folders, dataset_names, data_loaders_val):
@@ -237,6 +257,9 @@ def run_test(cfg, model, distributed):
             expected_results=cfg.TEST.EXPECTED_RESULTS,
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
             output_folder=output_folder,
+            logger=logger,
+            writer=writer,
+            iteration=iteration,
         )
         synchronize()
 
@@ -269,8 +292,9 @@ def main():
     num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     args.distributed = num_gpus > 1
 
+    local_rank = int(os_environ['LOCAL_RANK'])
     if args.distributed:
-        torch.cuda.set_device(args.local_rank)
+        torch.cuda.set_device(local_rank)
         torch.distributed.init_process_group(
             backend="nccl", init_method="env://"
         )
@@ -302,10 +326,10 @@ def main():
     # save overloaded model config in the output directory
     save_config(cfg, output_config_path)
 
-    model = train(cfg, args.local_rank, args.distributed, logger)
+    model = train(cfg, local_rank, args.distributed, logger)
 
     if not args.skip_test:
-        run_test(cfg, model, args.distributed)
+        run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER)
 
 
 if __name__ == "__main__":

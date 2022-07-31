@@ -1,6 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-import os
-
+from os.path import join as os_path_join, dirname as os_path_dirname
 from yacs.config import CfgNode as CN
 
 
@@ -301,6 +300,17 @@ _C.MODEL.ROI_RELATION_HEAD.CONTEXT_OBJ_LAYER = 1  # assert >= 1
 _C.MODEL.ROI_RELATION_HEAD.CONTEXT_REL_LAYER = 1  # assert >= 1
 _C.MODEL.ROI_RELATION_HEAD.USE_GSC = False
 
+_C.MODEL.ROI_RELATION_HEAD.GBNET = CN()
+_C.MODEL.ROI_RELATION_HEAD.GBNET.USE_EMBEDDING = True
+_C.MODEL.ROI_RELATION_HEAD.GBNET.EMB_PATH = '/home/zhanwen/gsc/datasets/vg/gbnet/graphs/001/emb_mtx.pkl'
+_C.MODEL.ROI_RELATION_HEAD.GBNET.USE_KNOWLEDGE = True
+_C.MODEL.ROI_RELATION_HEAD.GBNET.KB_PATH = '/home/zhanwen/gsc/datasets/vg/gbnet/graphs/005/all_edges.pkl'
+_C.MODEL.ROI_RELATION_HEAD.GBNET.HIDDEN_DIM = 1024
+_C.MODEL.ROI_RELATION_HEAD.GBNET.REFINE_OBJ_CLS = False
+_C.MODEL.ROI_RELATION_HEAD.GBNET.TIME_STEP_NUM = 3
+_C.MODEL.ROI_RELATION_HEAD.GBNET.REL_COUNTS_PATH = '/home/zhanwen/gsc/datasets/vg/gbnet/graphs/001/pred_counts.pkl'
+# _C.MODEL.ROI_RELATION_HEAD.GBNET.CONF_MAT_FREQ_TRAIN = ''
+
 _C.MODEL.ROI_RELATION_HEAD.TRANSFORMER = CN()
 # for TransformerPredictor only
 _C.MODEL.ROI_RELATION_HEAD.TRANSFORMER.DROPOUT_RATE = 0.1
@@ -357,6 +367,8 @@ _C.MODEL.ROI_RELATION_HEAD.REL_PROP = [0.01858, 0.00057, 0.00051, 0.00109, 0.001
 
 _C.MODEL.VGG = CN()
 _C.MODEL.VGG.VGG16_OUT_CHANNELS= 512
+_C.MODEL.VGG.PRETRAIN_STRATEGY = '' # 'backbone', 'fcs', 'rpn', 'none'
+_C.MODEL.VGG.GBNET_PRETRAINED_DETECTOR_FPATH = '/home/zhanwen/gsc/checkpoints/gbnet_og/vg-24.tar' # 'backbone', 'fcs', 'rpn'
 # ---------------------------------------------------------------------------- #
 # ResNe[X]t options (ResNets = {ResNet, ResNeXt}
 # Note that parts of a resnet may be used for both the backbone and the head
@@ -500,7 +512,7 @@ _C.SOLVER.BIAS_LR_FACTOR = 2
 
 _C.SOLVER.MOMENTUM = 0.9
 
-_C.SOLVER.WEIGHT_DECAY = 0.0005
+_C.SOLVER.WEIGHT_DECAY = 1e-4
 _C.SOLVER.WEIGHT_DECAY_BIAS = 0.0
 _C.SOLVER.CLIP_NORM = 5.0
 
@@ -528,6 +540,7 @@ _C.SOLVER.GRAD_NORM_CLIP = 5.0
 _C.SOLVER.PRINT_GRAD_FREQ = 5000
 # whether validate and validate period
 _C.SOLVER.TO_VAL = True
+_C.SOLVER.TYPE = "SGD"
 _C.SOLVER.PRE_VAL = True
 _C.SOLVER.VAL_PERIOD = 2500
 
@@ -595,8 +608,8 @@ _C.TEST.VAL_FLAG = False
 _C.OUTPUT_DIR = "."
 _C.GLOVE_DIR = "."
 
-_C.PATHS_CATALOG = os.path.join(os.path.dirname(__file__), "paths_catalog.py")
-_C.PATHS_DATA = os.path.join(os.path.dirname(__file__), "../data/datasets")
+_C.PATHS_CATALOG = os_path_join(os_path_dirname(__file__), "paths_catalog.py")
+_C.PATHS_DATA = os_path_join(os_path_dirname(__file__), "../data/datasets")
 
 # ---------------------------------------------------------------------------- #
 # Precision options

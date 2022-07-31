@@ -2,6 +2,7 @@
 from collections import OrderedDict
 
 from torch import nn
+from torch.nn import Sequential
 
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.modeling.make_layers import conv_with_kaiming_uniform
@@ -14,10 +15,9 @@ from . import vgg
 def build_vgg_fpn_backbone(cfg):
     body = vgg.VGG16(cfg)
     out_channels = cfg.MODEL.VGG.VGG16_OUT_CHANNELS
-    model = nn.Sequential(OrderedDict([("body", body)]))
+    model = Sequential(OrderedDict([("body", body)]))
     model.out_channels = out_channels
     return model
-
 
 @registry.BACKBONES.register("R-50-C4")
 @registry.BACKBONES.register("R-50-C5")
