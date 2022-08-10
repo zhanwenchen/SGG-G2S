@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 if [ $1 == "0" ]; then
-    export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
-    export NUM_GPUS=1
-    echo "TRAINING Predcls"
-    MODEL_NAME="v1b4_2" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    export CUDA_VISIBLE_DEVICES=0,1,2,3 #3,4 #,4 #3,4
+    export NUM_GPUS=4
+    MODEL_NAME="v1b4_gscfe_1" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    echo "TRAINING Predcls model ${MODEL_NAME}"
     MODEL_DIRNAME=./checkpoints/${MODEL_NAME}/
     mkdir ${MODEL_DIRNAME} &&
     cp -r ./tools/ ${MODEL_DIRNAME} &&
@@ -29,7 +29,7 @@ if [ $1 == "0" ]; then
     GLOVE_DIR ./datasets/vg/ \
     MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
     OUTPUT_DIR ./checkpoints/${MODEL_NAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log
-    # MODEL.PRETRAINED_MODEL_CKPT /home/zhanwen/bpl_og/checkpoints/${MODEL_NAME}/model_0014000.pth \
+    echo "Finished training Predcls model ${MODEL_NAME}"
 elif [ $1 == "1" ]; then
     export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
     export NUM_GPUS=1
