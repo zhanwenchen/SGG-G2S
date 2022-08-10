@@ -33,3 +33,5 @@ dist/
 checkpoints/
 checkpoints_best/
 *glove*
+
+my_secrets.py

@@ -4,8 +4,9 @@ from .lr_scheduler import WarmupMultiStepLR, WarmupReduceLROnPlateau
 
 
 def make_optimizer(cfg, model, logger, slow_heads=None, slow_ratio=5.0, rl_factor=1.0,
-                   wofinetune_params=None, finetune_rate=100):
+                   wofinetune_params=None, finetune_rate=100, return_lrs_by_name=False):
     params = []
+    lrs_by_name = {}
     for key, value in model.named_parameters():
         if not value.requires_grad:
             continue
@@ -25,10 +26,14 @@ def make_optimizer(cfg, model, logger, slow_heads=None, slow_ratio=5.0, rl_facto
                 lr = lr
             else:
                 lr = lr / finetune_rate
-        params += [{"params": [value], "lr": lr * rl_factor, "weight_decay": weight_decay}]
-        logger.info("params {} lr: {}.".format(key, str(lr * rl_factor)))
+        lr_final = lr * rl_factor
+        lrs_by_name[key] = lr_final
+        params += [{"params": [value], "lr": lr_final, "weight_decay": weight_decay}]
+        logger.info("params {} lr: {}.".format(key, str(lr_final)))
 
     optimizer = SGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
+    if return_lrs_by_name:
+        return optimizer, lrs_by_name
     return optimizer
 
 
