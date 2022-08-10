@@ -39,6 +39,10 @@ class ROIRelationHead(Module):
         # parameters
         self.use_union_box = self.cfg.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
 
+        # caching
+        self.use_gt_box = self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX
+        self.attribute_on = self.cfg.MODEL.ATTRIBUTE_ON
+
     def forward(self, features, proposals, targets=None, logger=None, boxes_global=None):
         """
         Arguments:
@@ -53,10 +57,13 @@ class ROIRelationHead(Module):
             losses (dict[Tensor]): During training, returns the losses for the
                 head. During testing, returns an empty dict.
         """
-        if self.training:
+        training = self.training
+        attribute_on = self.attribute_on
+
+        if training:
             # relation subsamples and assign ground truth label during training
             with torch_no_grad():
-                if self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
+                if self.use_gt_box:
                     proposals, rel_labels, rel_pair_idxs, rel_binarys = self.samp_processor.gtbox_relsample(proposals, targets)
                 else:
                     proposals, rel_labels, rel_pair_idxs, rel_binarys = self.samp_processor.detect_relsample(proposals, targets)
@@ -76,7 +83,7 @@ class ROIRelationHead(Module):
         global_image_features = self.gsc_feature_extractor(features, boxes_global) # torch.Size([16, 4096]) # TODO: if this works, then I won't need to implement the features 5=>1 reduction myself and then can move on to the linear? layers design and feature concat.
         del boxes_global
 
-        if self.cfg.MODEL.ATTRIBUTE_ON:
+        if attribute_on:
             att_features = self.att_feature_extractor(features, proposals)
             roi_features = torch_cat((roi_features, att_features), dim=-1)
 
@@ -90,7 +97,7 @@ class ROIRelationHead(Module):
         refine_logits, relation_logits, add_losses = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=logger, global_image_features=global_image_features)
         del global_image_features, union_features, rel_binarys
         # for test
-        if not self.training:
+        if not training:
             result = self.post_processor((relation_logits, refine_logits), rel_pair_idxs, proposals)
             return roi_features, result, {}
         del rel_pair_idxs
@@ -98,7 +105,7 @@ class ROIRelationHead(Module):
         loss_relation, loss_refine = self.loss_evaluator(proposals, rel_labels, relation_logits, refine_logits)
         del rel_labels
 
-        if self.cfg.MODEL.ATTRIBUTE_ON and isinstance(loss_refine, (list, tuple)):
+        if attribute_on and isinstance(loss_refine, (list, tuple)):
             output_losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine[0], loss_refine_att=loss_refine[1])
         else:
             output_losses = dict(loss_rel=loss_relation, loss_refine_obj=loss_refine)
