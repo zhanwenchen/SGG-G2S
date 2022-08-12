@@ -526,7 +526,7 @@ def main():
 
     if not args.skip_test:
         with experiment.test():
-            mr50 = run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER)
+            mr50 = run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER, experiment)
             logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
             experiment.log_metric('mR@50', mr50, epoch=cfg.SOLVER.MAX_ITER)
 
