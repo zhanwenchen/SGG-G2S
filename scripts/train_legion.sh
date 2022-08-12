@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 if [ $1 == "0" ]; then
+    export SEED=1234
     export CUDA_VISIBLE_DEVICES=4,5,6,7
     export NUM_GPUS=4
     export MODEL_NAME="v1b4_gscfe_2"
@@ -15,6 +16,7 @@ if [ $1 == "0" ]; then
     MODEL.ROI_RELATION_HEAD.USE_GSC True  \
     SOLVER.IMS_PER_BATCH 64 \
     SOLVER.MAX_ITER 30000 \
+    SOLVER.BASE_LR 1e-3 \
     MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
     MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
     TEST.IMS_PER_BATCH ${NUM_GPUS} \
@@ -22,7 +24,6 @@ if [ $1 == "0" ]; then
     MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
     MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
     DTYPE "float32" \
-    SOLVER.BASE_LR 1e-3 \
     SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
     SOLVER.STEPS "(10000, 16000)" \
     SOLVER.VAL_PERIOD 2000 \
