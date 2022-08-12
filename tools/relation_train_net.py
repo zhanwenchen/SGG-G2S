@@ -21,6 +21,7 @@ from torch import (
     manual_seed as torch_manual_seed,
     device as torch_device,
     as_tensor as torch_as_tensor,
+    no_grad as torch_no_grad,
 )
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
 from torch.nn.parallel import DistributedDataParallel
@@ -180,7 +181,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
             model, device_ids=[local_rank], output_device=local_rank,
             # this should be removed if we update BatchNorm stats
             broadcast_buffers=False,
-            find_unused_parameters=True,
+            find_unused_parameters=False,
         )
     debug_print(logger, 'end distributed')
 
@@ -224,6 +225,12 @@ def train(cfg, local_rank, distributed, logger, experiment):
         mode = 'sgdet'
     if mode is None:
         raise ValueError(f'mode is None given use_gt_box={use_gt_box} and use_gt_object_label={use_gt_object_label}')
+
+    # caching loop variables
+    to_val = cfg.SOLVER.TO_VAL
+    val_period = cfg.SOLVER.VAL_PERIOD
+    using_WarmupReduceLROnPlateau = cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau"
+    max_decay_step = cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         with experiment.train():
             # if iteration % 1000 == 0:
@@ -304,7 +311,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
                 checkpointer.save("model_{:07d}_final".format(iteration), **arguments)
 
             val_result = None # used for scheduler updating
-        if cfg.SOLVER.TO_VAL and iteration % cfg.SOLVER.VAL_PERIOD == 0:
+        if to_val and iteration % val_period == 0:
             with experiment.validate():
                 logger.info("Start validating")
                 val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment)
@@ -312,9 +319,9 @@ def train(cfg, local_rank, distributed, logger, experiment):
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
-        if cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau":
+        if using_WarmupReduceLROnPlateau:
             scheduler.step(val_result, epoch=iteration)
-            if scheduler.stage_count >= cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP:
+            if scheduler.stage_count >= max_decay_step:
                 logger.info("Trigger MAX_DECAY_STEP at iteration {}.".format(iteration))
                 # break
         else:
@@ -346,6 +353,8 @@ def fix_eval_modules_no_classifier(module, with_grad_name='_clean'):
             param.requires_grad = False
         # DO NOT use module.eval(), otherwise the module will be in the test mode, i.e., all self.training condition is set to False
 
+
+@torch_no_grad()
 def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment):
     model_name = os_environ.get('MODEL_NAME')
     debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
@@ -397,6 +406,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
     return val_result
 
 
+@torch_no_grad()
 def run_test(cfg, model, distributed, logger, iteration, experiment):
     model_name = os_environ.get('MODEL_NAME')
     debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
@@ -457,7 +467,7 @@ def run_test(cfg, model, distributed, logger, iteration, experiment):
 
 def main():
     setrlimit(RLIMIT_NOFILE, (4096, getrlimit(RLIMIT_NOFILE)[1]))
-    setup_seed(20)
+    setup_seed(os_environ['SEED'])
     parser = argparse.ArgumentParser(description="PyTorch Relation Detection Training")
     parser.add_argument(
         "--config-file",
