@@ -467,7 +467,7 @@ def run_test(cfg, model, distributed, logger, iteration, experiment):
 
 def main():
     setrlimit(RLIMIT_NOFILE, (4096, getrlimit(RLIMIT_NOFILE)[1]))
-    setup_seed(os_environ['SEED'])
+    setup_seed(int(os_environ['SEED']))
     parser = argparse.ArgumentParser(description="PyTorch Relation Detection Training")
     parser.add_argument(
         "--config-file",
