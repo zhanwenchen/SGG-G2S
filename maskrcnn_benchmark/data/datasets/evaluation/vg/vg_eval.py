@@ -17,6 +17,7 @@ def do_vg_evaluation(
         iou_types=None,
         writer=None,
         iteration=None,
+        experiment=None,
 ):
     # get zeroshot triplet
     zeroshot_triplet = torch_load("maskrcnn_benchmark/data/datasets/evaluation/vg/zeroshot_triplet.pytorch",
@@ -113,6 +114,7 @@ def do_vg_evaluation(
         mAp = coco_eval.stats[1]
 
         writer.add_scalar(f'{mode}/mAp', mAp, iteration)
+        experiment.log_metric('mAP', mAp, iteration=iteration)
         result_str += 'Detection evaluation mAp=%.4f\n' % mAp
         result_str += '=' * 100 + '\n'
 
@@ -170,18 +172,26 @@ def do_vg_evaluation(
         result_str_i, writer_dict_i = eval_recall.generate_print_string(mode)
         result_str += result_str_i
         writer.add_scalars(f'{mode}/eval_recall', writer_dict_i, iteration)
+        for k, v in writer_dict_i.items():
+            experiment.log_metric(k, v, iteration=iteration)
 
         result_str_i, writer_dict_i = eval_mean_recall.generate_print_string(mode)
         result_str += result_str_i
         writer.add_scalars(f'{mode}/eval_mean_recall', writer_dict_i, iteration)
+        for k, v in writer_dict_i.items():
+            experiment.log_metric(k, v, iteration=iteration)
 
         result_str_i, writer_dict_i = eval_nog_recall.generate_print_string(mode)
         result_str += result_str_i
         writer.add_scalars(f'{mode}/eval_nog_recall', writer_dict_i, iteration)
+        for k, v in writer_dict_i.items():
+            experiment.log_metric(k, v, iteration=iteration)
 
         result_str_i, writer_dict_i = eval_zeroshot_recall.generate_print_string(mode)
         result_str += result_str_i
         writer.add_scalars(f'{mode}/eval_zeroshot_recall', writer_dict_i, iteration)
+        for k, v in writer_dict_i.items():
+            experiment.log_metric(k, v, iteration=iteration)
 
         if mode != 'sgdet':
             result_str_i, fig = eval_conf_mat.generate_print_string(mode)
@@ -195,6 +205,8 @@ def do_vg_evaluation(
             result_str_i, writer_dict_i = eval_pair_accuracy.generate_print_string(mode)
             result_str += result_str_i
             writer.add_scalars(f'{mode}/eval_pair_accuracy', writer_dict_i, iteration)
+            for k, v in writer_dict_i.items():
+                experiment.log_metric(k, v, iteration=iteration)
         result_str += '=' * 100 + '\n'
 
     logger.info(result_str)

@@ -202,9 +202,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
     if cfg.SOLVER.PRE_VAL and val_before:
         with experiment.validate():
             logger.info("Validate before training")
-            loss_val = run_val(cfg, model, val_data_loaders, distributed, logger, writer, 0, output_dir)
+            _ = run_val(cfg, model, val_data_loaders, distributed, logger, writer, 0, output_dir, experiment)
             logger.info("Finished validation before training")
-            experiment.log_metric('loss', loss_val, epoch=0)
             experiment.log_epoch_end(0)
     logger.info("Start training")
     meters = MetricLogger(delimiter="  ")
@@ -309,9 +308,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
         if cfg.SOLVER.TO_VAL and iteration % cfg.SOLVER.VAL_PERIOD == 0:
             with experiment.validate():
                 logger.info("Start validating")
-                val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir)
+                val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment)
                 logger.info("Validation Result: %.4f" % val_result)
-                experiment.log_metric('mR@50', val_result, epoch=iteration)
                 val_results.append(val_result)
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
@@ -350,7 +348,7 @@ def fix_eval_modules_no_classifier(module, with_grad_name='_clean'):
             param.requires_grad = False
         # DO NOT use module.eval(), otherwise the module will be in the test mode, i.e., all self.training condition is set to False
 
-def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir):
+def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment):
     model_name = os_environ.get('MODEL_NAME')
     debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
     if distributed:
@@ -383,6 +381,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
                             logger=logger,
                             writer=writer,
                             iteration=iteration,
+                            experiment=experiment,
                         )
                         # return_all=return_all,
         synchronize()
@@ -400,7 +399,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
     return val_result
 
 
-def run_test(cfg, model, distributed, logger, iteration):
+def run_test(cfg, model, distributed, logger, iteration, experiment):
     model_name = os_environ.get('MODEL_NAME')
     debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
     writer = SummaryWriter(log_dir=os_path_join(cfg.OUTPUT_DIR, 'tensorboard_test'))
@@ -440,6 +439,7 @@ def run_test(cfg, model, distributed, logger, iteration):
             logger=logger,
             writer=writer,
             iteration=iteration,
+            experiment=experiment,
         )
         synchronize()
         val_result.append(dataset_result)
