@@ -4,26 +4,34 @@ This is useful when doing distributed training.
 """
 
 from pickle import dumps as pickle_dumps, loads as pickle_loads
+from packaging.version import parse as version_parse
 from torch import (
     stack as torch_stack,
     cat as torch_cat,
     no_grad as torch_no_grad,
+    ByteStorage as torch_ByteStorage,
+    __version__ as torch___version__,
 )
 from torch.cuda import (
-    ByteStorage as torch_cuda_ByteStorage,
     ByteTensor as torch_cuda_ByteTensor,
     LongTensor as torch_cuda_LongTensor,
+    ByteStorage as torch_cuda_ByteStorage,
 )
-torch_cuda_ByteStorage_from_buffer = torch_cuda_ByteStorage.from_buffer
 from torch.distributed import (
     is_available as dist_is_available,
     is_initialized as dist_is_initialized,
     get_world_size as dist_get_world_size,
     get_rank as dist_get_rank,
+    reduce as dist_reduce,
     barrier as dist_barrier,
     all_gather as dist_all_gather,
-    reduce as dist_reduce,
 )
+
+
+if version_parse(torch___version__) < version_parse('1.11'):
+    from_buffer = torch_ByteStorage.from_buffer
+else:
+    from_buffer = torch_cuda_ByteStorage.from_buffer
 
 
 def get_world_size():
@@ -78,12 +86,14 @@ def all_gather(data):
 
     # serialized to a Tensor
     buffer = pickle_dumps(data)
-    storage = torch_cuda_ByteStorage_from_buffer(buffer)
-    tensor = torch_cuda_ByteTensor(storage).to(to_device)
-
+    del data
+    storage = from_buffer(buffer)
+    del buffer
+    tensor = torch_cuda_ByteTensor(storage, device=to_device)
+    del storage
     # obtain Tensor size of each rank
-    local_size = torch_cuda_LongTensor([tensor.numel()]).to(to_device)
-    size_list = [torch_cuda_LongTensor([0]).to(to_device) for _ in range(world_size)]
+    local_size = torch_cuda_LongTensor([tensor.numel()], device=to_device)
+    size_list = [torch_cuda_LongTensor([0], device=to_device) for _ in range(world_size)]
     dist_all_gather(size_list, local_size)
     size_list = [int(size.item()) for size in size_list]
     max_size = max(size_list)
@@ -93,9 +103,9 @@ def all_gather(data):
     # gathering tensors of different shapes
     tensor_list = []
     for _ in size_list:
-        tensor_list.append(torch_cuda_ByteTensor(size=(max_size,)).to(to_device))
+        tensor_list.append(torch_cuda_ByteTensor(size=(max_size,), device=to_device))
     if local_size != max_size:
-        padding = torch_cuda_ByteTensor(size=(max_size - local_size,)).to(to_device)
+        padding = torch_cuda_ByteTensor(size=(max_size - local_size,), device=to_device)
         tensor = torch_cat((tensor, padding), dim=0)
     dist_all_gather(tensor_list, tensor)
 
@@ -132,5 +142,4 @@ def reduce_dict(input_dict, average=True):
             # only main process gets accumulated, so only divide by
             # world_size in this case
             values /= world_size
-        reduced_dict = dict(zip(names, values))
-    return reduced_dict
+        return dict(zip(names, values))
