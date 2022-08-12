@@ -85,7 +85,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
         slow_heads = []
 
     device = torch_device(cfg.MODEL.DEVICE)
-    model.to(device)
+    model.to(device, non_blocking=True)
 
     num_batch = cfg.SOLVER.IMS_PER_BATCH
 
@@ -168,7 +168,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
                     checkpointer.load(cfg.MODEL.PRETRAINED_MODEL_CKPT, update_schedule=False,
                                      with_optim=False, load_mapping=load_mapping_classifier)
         # debug_print(logger, 'end optimizer and shcedule')
-    model.to(device)
+    model.to(device, non_blocking=True)
 
     # Initialize mixed-precision training
     use_mixed_precision = cfg.DTYPE == "float16"
@@ -224,7 +224,6 @@ def train(cfg, local_rank, distributed, logger, experiment):
         mode = 'sgdet'
     if mode is None:
         raise ValueError(f'mode is None given use_gt_box={use_gt_box} and use_gt_object_label={use_gt_object_label}')
-    val_results = []
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         with experiment.train():
             # if iteration % 1000 == 0:
@@ -242,7 +241,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
             else:
                 fix_eval_modules(eval_modules)
 
-            images = images.to(device)
+            images = images.to(device, non_blocking=True)
             targets = [target.to(device) for target in targets]
 
             loss_dict = model(images, targets)
@@ -310,7 +309,6 @@ def train(cfg, local_rank, distributed, logger, experiment):
                 logger.info("Start validating")
                 val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment)
                 logger.info("Validation Result: %.4f" % val_result)
-                val_results.append(val_result)
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
