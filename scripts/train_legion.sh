@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 if [ $1 == "0" ]; then
-    export CUDA_VISIBLE_DEVICES=0,1,2,3 #3,4 #,4 #3,4
+    export CUDA_VISIBLE_DEVICES=4,5,6,7
     export NUM_GPUS=4
-    MODEL_NAME="v1b4_gscfe_1" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
+    export MODEL_NAME="v1b4_gscfe_2"
     echo "TRAINING Predcls model ${MODEL_NAME}"
     MODEL_DIRNAME=./checkpoints/${MODEL_NAME}/
     mkdir ${MODEL_DIRNAME} &&
@@ -13,7 +13,8 @@ if [ $1 == "0" ]; then
     tools/relation_train_net.py \
     --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
     MODEL.ROI_RELATION_HEAD.USE_GSC True  \
-    SOLVER.IMS_PER_BATCH 16 \
+    SOLVER.IMS_PER_BATCH 64 \
+    SOLVER.MAX_ITER 30000 \
     MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
     MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
     TEST.IMS_PER_BATCH ${NUM_GPUS} \
@@ -21,7 +22,7 @@ if [ $1 == "0" ]; then
     MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
     MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
     DTYPE "float32" \
-    SOLVER.MAX_ITER 20000 SOLVER.BASE_LR 1e-3 \
+    SOLVER.BASE_LR 1e-3 \
     SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
     SOLVER.STEPS "(10000, 16000)" \
     SOLVER.VAL_PERIOD 2000 \
