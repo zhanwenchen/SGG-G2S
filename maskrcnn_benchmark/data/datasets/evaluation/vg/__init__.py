@@ -10,6 +10,7 @@ def vg_evaluation(
     iou_types=None,
     writer=None,
     iteration=None,
+    experiment=None,
     **_
 ):
     if writer is None:
@@ -26,4 +27,5 @@ def vg_evaluation(
         iou_types=iou_types,
         writer=writer,
         iteration=iteration,
+        experiment=experiment,
     )
