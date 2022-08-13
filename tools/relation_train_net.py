@@ -312,6 +312,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
 
             val_result = None # used for scheduler updating
         if to_val and iteration % val_period == 0:
+            model.eval()
             with experiment.validate():
                 logger.info("Start validating")
                 val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment)
@@ -535,6 +536,7 @@ def main():
     model = train(cfg, local_rank, args.distributed, logger, experiment)
 
     if not args.skip_test:
+        model.eval()
         with experiment.test():
             mr50 = run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER, experiment)
             logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
