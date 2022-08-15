@@ -3,7 +3,7 @@ if [ $1 == "0" ]; then
     export SEED=1234
     export CUDA_VISIBLE_DEVICES=4,5,6,7
     export NUM_GPUS=4
-    export MODEL_NAME="v1b4_gscfe_2"
+    export MODEL_NAME="v1b4_gscfe_3_test"
     echo "TRAINING Predcls model ${MODEL_NAME}"
     MODEL_DIRNAME=./checkpoints/${MODEL_NAME}/
     mkdir ${MODEL_DIRNAME} &&
@@ -14,6 +14,7 @@ if [ $1 == "0" ]; then
     tools/relation_train_net.py \
     --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
     MODEL.ROI_RELATION_HEAD.USE_GSC True  \
+    SOLVER.TYPE FusedSGD \
     SOLVER.IMS_PER_BATCH 64 \
     SOLVER.MAX_ITER 30000 \
     SOLVER.BASE_LR 1e-3 \
