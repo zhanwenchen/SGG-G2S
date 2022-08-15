@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 if [ $1 == "0" ]; then
-    export CUDA_VISIBLE_DEVICES=0
-    export NUM_GPUS=1
-    MODEL_NAME="union_only_v2b1_1"
-    MODEL_CHECKPOINT_NAME="model_0016000.pth"
+    export CUDA_VISIBLE_DEVICES=2,3
+    export NUM_GPUS=2
+    MODEL_NAME="v1b4_gscfe_2"
+    MODEL_CHECKPOINT_NAME="model_0012000.pth"
     echo "Testing Predcls model ${MODEL_NAME} at ${MODEL_CHECKPOINT_NAME}"
-    python  -u  -m torch.distributed.launch --master_port 10035 --nproc_per_node=$NUM_GPUS \
+    python  -u  -m torch.distributed.launch --master_port 20035 --nproc_per_node=$NUM_GPUS \
         tools/relation_test_net.py \
         --config-file "checkpoints/${MODEL_NAME}/config.yml" \
         MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
