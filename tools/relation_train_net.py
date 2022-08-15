@@ -11,7 +11,7 @@ import argparse
 from os import environ as os_environ
 from os.path import join as os_path_join
 from time import time as time_time
-import datetime
+from datetime import timedelta as datetime_timedelta
 import random
 from resource import RLIMIT_NOFILE, getrlimit, setrlimit
 from comet_ml import API, Experiment, ExistingExperiment
@@ -236,6 +236,9 @@ def train(cfg, local_rank, distributed, logger, experiment):
     val_period = cfg.SOLVER.VAL_PERIOD
     using_WarmupReduceLROnPlateau = cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau"
     max_decay_step = cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP
+    using_apex_solvers = cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS
+    max_norm = cfg.SOLVER.GRAD_NORM_CLIP
+    print_grad_freq = cfg.SOLVER.PRINT_GRAD_FREQ
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         with experiment.train():
             # if iteration % 1000 == 0:
@@ -266,7 +269,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
             meters.update(loss=losses_reduced, **loss_dict_reduced)
             experiment.log_metrics(loss_dict_reduced, epoch=iteration)
 
-            if cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS:
+            if using_apex_solvers:
                 optimizer.zero_grad() # For Apex FusedSGD, FusedAdam, etc
             else:
                 optimizer.zero_grad(set_to_none=True) # For Apex FusedSGD, FusedAdam, etc
@@ -276,9 +279,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
                 scaled_losses.backward()
 
             # add clip_grad_norm from MOTIFS, tracking gradient, used for debug
-            verbose = (iteration % cfg.SOLVER.PRINT_GRAD_FREQ) == 0 or print_first_grad # print grad or not
-            print_first_grad = False
-            clip_grad_norm([(n, p) for n, p in model.named_parameters() if p.requires_grad], max_norm=cfg.SOLVER.GRAD_NORM_CLIP, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
+            verbose = (iteration % print_grad_freq) == 0 # print grad or not
+            clip_grad_norm([(n, p) for n, p in model.named_parameters() if p.requires_grad], max_norm=max_norm, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
 
             optimizer.step()
 
@@ -287,7 +289,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
             meters.update(time=batch_time, data=data_time)
 
             eta_seconds = meters.time.global_avg * (max_iter - iteration)
-            eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+            eta_string = str(datetime_timedelta(seconds=int(eta_seconds)))
 
             if iteration % print_etari == 0 or iteration == max_iter:
                 lr_i = optimizer.param_groups[-1]["lr"]
@@ -340,7 +342,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
         experiment.log_epoch_end(iteration)
 
     total_training_time = time_time() - start_training_time
-    total_time_str = str(datetime.timedelta(seconds=total_training_time))
+    total_time_str = str(datetime_timedelta(seconds=total_training_time))
     logger.info(
         "Total training time: {} ({:.4f} s / it)".format(
             total_time_str, total_training_time / (max_iter)
