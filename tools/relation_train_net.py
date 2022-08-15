@@ -239,6 +239,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
     using_apex_solvers = cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS
     max_norm = cfg.SOLVER.GRAD_NORM_CLIP
     print_grad_freq = cfg.SOLVER.PRINT_GRAD_FREQ
+    max_iter = cfg.SOLVER.MAX_ITER
+    model_name = os_environ['MODEL_NAME']
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         with experiment.train():
             # if iteration % 1000 == 0:
@@ -322,11 +324,15 @@ def train(cfg, local_rank, distributed, logger, experiment):
 
             val_result = None # used for scheduler updating
         if to_val and iteration % val_period == 0:
-            model.eval()
             with experiment.validate():
                 logger.info("Start validating")
                 val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment)
                 logger.info("Validation Result: %.4f" % val_result)
+                if val_result > 0.17 and iteration < max_iter:
+                    with experiment.test():
+                        mr50 = run_test(cfg, model, distributed, logger, iteration, experiment)
+                        logger.info(f'Finished testing model {model_name} at iteration={iteration}')
+                        experiment.log_metric('mR@50', mr50, epoch=iteration)
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
@@ -544,7 +550,6 @@ def main():
     model = train(cfg, local_rank, args.distributed, logger, experiment)
 
     if not args.skip_test:
-        model.eval()
         with experiment.test():
             mr50 = run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER, experiment)
             logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
