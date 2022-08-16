@@ -1,4 +1,4 @@
-from os import makedirs as os_makedirs
+from os import makedirs as os_makedirs, environ as os_environ
 from os.path import join as os_path_join, abspath as os_path_abspath, exists as os_path_exists
 from json import dump as json_dump
 from torch import load as torch_load, save as torch_save, device as torch_device, zeros as torch_zeros, nonzero as torch_nonzero, LongTensor as torch_LongTensor, float32 as torch_float32
@@ -19,6 +19,10 @@ def do_vg_evaluation(
         iteration=None,
         experiment=None,
 ):
+    if experiment is None:
+        model_name = os_environ['MODEL_NAME']
+        experiment = get_experiment(model_name)
+        experiment.set_name(model_name)
     # get zeroshot triplet
     zeroshot_triplet = torch_load("maskrcnn_benchmark/data/datasets/evaluation/vg/zeroshot_triplet.pytorch",
                                   map_location=torch_device("cpu")).long().numpy()
