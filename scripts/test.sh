@@ -2,7 +2,7 @@
 if [ $1 == "0" ]; then
     export CUDA_VISIBLE_DEVICES=2,3
     export NUM_GPUS=2
-    MODEL_NAME="v1b4_gscfe_2"
+    export MODEL_NAME="v1b4_gscfe_2"
     MODEL_CHECKPOINT_NAME="model_0012000.pth"
     echo "Testing Predcls model ${MODEL_NAME} at ${MODEL_CHECKPOINT_NAME}"
     python  -u  -m torch.distributed.launch --master_port 20035 --nproc_per_node=$NUM_GPUS \
