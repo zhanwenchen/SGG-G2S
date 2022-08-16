@@ -6,6 +6,7 @@ from numpy import mean as np_mean, ones as np_ones, asarray as np_asarray, colum
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from maskrcnn_benchmark.data.datasets.evaluation.vg.sgg_eval import SGRecall, SGNoGraphConstraintRecall, SGZeroShotRecall, SGPairAccuracy, SGMeanRecall, SGConfMat
+from maskrcnn_benchmark.utils.comet import get_experiment
 
 
 def do_vg_evaluation(
