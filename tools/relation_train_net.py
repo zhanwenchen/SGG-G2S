@@ -21,6 +21,7 @@ from torch import (
     manual_seed as torch_manual_seed,
     device as torch_device,
     as_tensor as torch_as_tensor,
+    no_grad as torch_no_grad,
 )
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
 from torch.nn import SyncBatchNorm
@@ -186,7 +187,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
             model, device_ids=[local_rank], output_device=local_rank,
             # this should be removed if we update BatchNorm stats
             broadcast_buffers=False,
-            find_unused_parameters=False,
+            find_unused_parameters=True,
         )
     debug_print(logger, 'end distributed')
 
@@ -371,6 +372,7 @@ def fix_eval_modules_no_classifier(module, with_grad_name='_clean'):
         # DO NOT use module.eval(), otherwise the module will be in the test mode, i.e., all self.training condition is set to False
 
 
+@torch_no_grad()
 def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment):
     model_name = os_environ.get('MODEL_NAME')
     debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
@@ -422,6 +424,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
     return val_result
 
 
+@torch_no_grad()
 def run_test(cfg, model, distributed, logger, iteration, experiment):
     model_name = os_environ.get('MODEL_NAME')
     debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
