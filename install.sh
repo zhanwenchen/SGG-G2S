@@ -1,16 +1,17 @@
-conda create -n sgb python=3.8
-conda activate sgb
+conda create -n gsc python=3.8
+conda activate gsc
 # conda install pytorch torchvision torchaudio cudatoolkit=11.6 -c pytorch -c conda-forge
 # CUDA 11.4 Not working for Pytorch 1.11.0. Try 1.10.1.
 # The only way 1.10.1 works is if you install it first before anything else.
 # Verify with import torch; torch.cuda.is_available(). Should be true.
-conda install pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 cudatoolkit=11.3 -c pytorch -c conda-forge
+conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
+# conda install pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 cudatoolkit=11.3 -c pytorch -c conda-forge
 conda install ipython ninja yacs cython matplotlib tqdm
 # TODO: build h5py with parallel support
 
 pip install opencv-python setuptools==59.5.0 scipy tensorboard
 
-mkdir ~/sgb && cd ~/sgb
+mkdir ~/gsc && cd ~/gsc
 export INSTALL_DIR=$(pwd)
 echo $INSTALL_DIR
 
