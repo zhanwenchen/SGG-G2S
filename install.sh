@@ -6,7 +6,7 @@ conda activate gsc
 # Verify with import torch; torch.cuda.is_available(). Should be true.
 conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
 # conda install pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 cudatoolkit=11.3 -c pytorch -c conda-forge
-conda install ipython ninja yacs cython matplotlib tqdm
+conda install ipython ninja yacs cython matplotlib tqdm h5py
 # TODO: build h5py with parallel support
 
 pip install opencv-python setuptools==59.5.0 scipy tensorboard
