@@ -7,6 +7,7 @@
 #SBATCH -J pytorchtest
 #SBATCH -o pytorchtest-%A.out
 #SBATCH -e pytorchtest-%A.err
+#SBACTH --exclude=udc-an28-1,udc-an28-7
 
 module purge
 module load anaconda/2020.11-py3.8
@@ -17,6 +18,7 @@ export SEED=1234
 export NUM_GPUS=2
 export MODEL_NAME="v1b4_sggen_riv_1"
 export TORCHELASTIC_MAX_RESTARTS=0
+
 echo "TRAINING SGGen model ${MODEL_NAME}"
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 mkdir ${MODEL_DIRNAME} &&
@@ -29,7 +31,7 @@ torchrun --nproc_per_node=$NUM_GPUS \
   MODEL.ROI_RELATION_HEAD.USE_GSC True  \
   MODEL.ROI_RELATION_HEAD.USE_GSC_FE False  \
   SOLVER.TYPE SGD \
-  SOLVER.IMS_PER_BATCH 64\
+  SOLVER.IMS_PER_BATCH 128\
   SOLVER.MAX_ITER 30000 \
   SOLVER.BASE_LR 1e-3 \
   MODEL.ROI_RELATION_HEAD.USE_GT_BOX False \
