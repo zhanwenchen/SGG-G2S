@@ -1,7 +1,7 @@
 from os import environ as os_environ
 from hashlib import sha1
 from comet_ml import API, Experiment, ExistingExperiment
-from my_secrets import COMET_API_KEY, COMET_PROJECT_NAME, COMET_WORKSPACE
+from maskrcnn_benchmark.utils.my_secrets import COMET_API_KEY, COMET_PROJECT_NAME, COMET_WORKSPACE
 
 
 def get_experiment(run_id):
