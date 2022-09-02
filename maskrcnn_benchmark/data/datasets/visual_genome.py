@@ -27,7 +27,7 @@ from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
 
 
 BOX_SCALE = 1024  # Scale at which we have the boxes
-DICT_FILE_FPATH = '/home/zhanwen/datasets/visual_genome/VG-SGG-dicts-with-attri-info.json'
+DICT_FILE_FPATH = '/scratch/pct4et/datasets/visual_genome/VG-SGG-dicts-with-attri-info.json'
 
 
 class VGDataset(Dataset):
