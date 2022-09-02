@@ -29,6 +29,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
 from torch.utils.tensorboard import SummaryWriter
 from torch.backends import cudnn
+from torch.distributed.elastic.multiprocessing.errors import record
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
 from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.data import make_data_loader
@@ -483,6 +484,7 @@ def run_test(cfg, model, distributed, logger, iteration, experiment):
     return val_result
 
 
+@record
 def main():
     setrlimit(RLIMIT_NOFILE, (4096, getrlimit(RLIMIT_NOFILE)[1]))
     setup_seed(int(os_environ['SEED']))
