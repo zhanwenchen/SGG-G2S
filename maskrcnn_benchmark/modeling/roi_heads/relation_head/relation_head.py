@@ -34,7 +34,7 @@ class ROIRelationHead(Module):
         self.post_processor = make_roi_relation_post_processor(cfg)
         self.loss_evaluator = make_roi_relation_loss_evaluator(cfg)
         self.samp_processor = make_roi_relation_samp_processor(cfg)
-        use_gsc_fe = cfg.MODEL.USE_GSC_FE
+        use_gsc_fe = cfg.MODEL.ROI_RELATION_HEAD.USE_GSC_FE
         self.use_gsc_fe = use_gsc_fe
         if use_gsc_fe is True:
             self.gsc_feature_extractor = make_roi_box_feature_extractor(cfg, in_channels, half_out=self.cfg.MODEL.ATTRIBUTE_ON)
