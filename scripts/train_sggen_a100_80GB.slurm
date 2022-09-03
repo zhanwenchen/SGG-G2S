@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:a100:2
 #SBATCH -t 24:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem==32768
+#SBATCH --mem=32768
 #SBATCH -J pytorchtest
 #SBATCH -o pytorchtest-%A.out
 #SBATCH -e pytorchtest-%A.err
