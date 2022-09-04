@@ -11,7 +11,7 @@ conda install ipython ninja yacs cython matplotlib tqdm h5py
 
 pip install opencv-python setuptools==59.5.0 scipy tensorboard comet-ml
 
-mkdir ~/gsc && cd ~/gsc
+mkdir ~/gsc_install && cd ~/gsc_install
 export INSTALL_DIR=$(pwd)
 echo $INSTALL_DIR
 
@@ -31,7 +31,6 @@ pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp
 # TODO: Edit out the raise RuntimeError in setup.py if there's a minor version mismatch.
 
 # install PyTorch Detection
-cd $INSTALL_DIR
 git clone git@github.com:zhanwenchen/SGG-G2S.git gsc
 cd gsc
 git checkout v1b4
