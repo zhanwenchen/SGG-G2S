@@ -9,7 +9,7 @@ conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
 conda install ipython ninja yacs cython matplotlib tqdm h5py
 # TODO: build h5py with parallel support
 
-pip install opencv-python setuptools==59.5.0 scipy tensorboard
+pip install opencv-python setuptools==59.5.0 scipy tensorboard comet-ml
 
 mkdir ~/gsc && cd ~/gsc
 export INSTALL_DIR=$(pwd)
