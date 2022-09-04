@@ -1,3 +1,4 @@
+from os import environ as os_environ
 from os.path import join as os_path_join, exists as os_path_exists
 from json import load as json_load, dump as json_dump
 from collections import defaultdict
@@ -27,7 +28,7 @@ from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
 
 
 BOX_SCALE = 1024  # Scale at which we have the boxes
-DICT_FILE_FPATH = '/scratch/pct4et/datasets/visual_genome/VG-SGG-dicts-with-attri-info.json'
+DICT_FILE_FPATH = f'{os_environ["DATA_DIR_VG_RCNN"]}/visual_genome/VG-SGG-dicts-with-attri-info.json'
 
 
 class VGDataset(Dataset):

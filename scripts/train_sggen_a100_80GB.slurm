@@ -15,7 +15,8 @@ module purge
 module load anaconda/2020.11-py3.8
 
 source activate gsc
-export PROJECT_DIR=/scratch/pct4et/gsc
+export PROJECT_DIR=/project/sds-rise/zhanwen/gsc
+export DATA_DIR_VG_RCNN=/project/sds-rise/zhanwen/datasets
 export SEED=1234
 export NUM_GPUS=2
 export MODEL_NAME="v1b4_sggen_riv_1"

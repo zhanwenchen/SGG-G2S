@@ -1,12 +1,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 """Centralized catalog of paths."""
-
-import os
-import copy
+from os import environ as os_environ
+from os.path import join as os_path_join
+from copy import deepcopy as copy_deepcopy
 
 
 class DatasetCatalog(object):
-    DATA_DIR = "/scratch/pct4et/datasets"
+    DATA_DIR = os_environ['DATA_DIR_VG_RCNN']
     DATASETS = {
         "coco_2017_train": {
             "img_dir": "coco/train2017",
@@ -125,8 +125,8 @@ class DatasetCatalog(object):
             data_dir = DatasetCatalog.DATA_DIR
             attrs = DatasetCatalog.DATASETS[name]
             args = dict(
-                root=os.path.join(data_dir, attrs["img_dir"]),
-                ann_file=os.path.join(data_dir, attrs["ann_file"]),
+                root=os_path_join(data_dir, attrs["img_dir"]),
+                ann_file=os_path_join(data_dir, attrs["ann_file"]),
             )
             return dict(
                 factory="COCODataset",
@@ -136,7 +136,7 @@ class DatasetCatalog(object):
             data_dir = DatasetCatalog.DATA_DIR
             attrs = DatasetCatalog.DATASETS[name]
             args = dict(
-                data_dir=os.path.join(data_dir, attrs["data_dir"]),
+                data_dir=os_path_join(data_dir, attrs["data_dir"]),
                 split=attrs["split"],
             )
             return dict(
@@ -149,9 +149,9 @@ class DatasetCatalog(object):
             name, split = name[:p], name[p+1:]
             assert name in DatasetCatalog.DATASETS and split in {'train', 'val', 'test'}
             data_dir = DatasetCatalog.DATA_DIR
-            args = copy.deepcopy(DatasetCatalog.DATASETS[name])
+            args = copy_deepcopy(DatasetCatalog.DATASETS[name])
             for k, v in args.items():
-                args[k] = os.path.join(data_dir, v)
+                args[k] = os_path_join(data_dir, v)
             args['split'] = split
             # IF MODEL.RELATION_ON is True, filter images with empty rels
             # else set filter to False, because we need all images for pretraining detector
