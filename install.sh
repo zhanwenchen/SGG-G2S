@@ -25,6 +25,8 @@ python setup.py build_ext install
 cd $INSTALL_DIR
 git clone https://github.com/NVIDIA/apex.git
 cd apex
+module load gcc/9.2.0
+module load cuda/11.4.2
 pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp_ext" --global-option="--cuda_ext" ./
 # TODO: Edit out the raise RuntimeError in setup.py if there's a minor version mismatch.
 
