@@ -34,7 +34,7 @@ pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp
 cd $INSTALL_DIR
 git clone git@github.com:zhanwenchen/SGG-G2S.git gsc
 cd gsc
-
+git checkout v1b4
 # the following will install the lib with
 # symbolic links, so that you can modify
 # the files if you want and won't need to
