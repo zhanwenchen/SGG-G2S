@@ -1,4 +1,5 @@
-conda create -n gsc python=3.8
+# ijob -A sds-rise -p gpu --gres=gpu:a100:1 -c 12
+conda create -n gsc python=3.8 # use gsc_a100 for example, but maybe even node-specific
 conda activate gsc
 # conda install pytorch torchvision torchaudio cudatoolkit=11.6 -c pytorch -c conda-forge
 # CUDA 11.4 Not working for Pytorch 1.11.0. Try 1.10.1.
