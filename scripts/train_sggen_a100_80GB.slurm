@@ -20,7 +20,6 @@ export BATCH_SIZE=128
 export MAX_ITER=30000
 export LR=1e-3
 export PROJECT_DIR=/home/pct4et/gsc
-echo ". /opt/conda/etc/profile.d/conda.sh" >> $SINGULARITY_ENVIRONMENT
-echo "conda activate gsc_docker" >> $SINGULARITY_ENVIRONMENT
+export SINGULARITYENV_PREPEND_PATH="/home/pct4et/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
 
 singularity exec --nv docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_sggen.sh
