@@ -1,8 +1,10 @@
-source activate gsc_docker
+source /opt/conda/etc/profile.d/conda.sh
+conda activate gsc_docker
 export TORCHELASTIC_MAX_RESTARTS=0
 export DATA_DIR_VG_RCNN=/project/sds-rise/zhanwen/datasets
 export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 echo "TRAINING SGGen model ${MODEL_NAME}"
+cd ${PROJECT_DIR}
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 mkdir ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/tools/ ${MODEL_DIRNAME} &&
