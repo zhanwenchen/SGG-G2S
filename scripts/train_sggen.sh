@@ -1,5 +1,4 @@
-source /opt/conda/etc/profile.d/conda.sh
-conda activate gsc_docker
+/opt/conda/bin/activate gsc_docker
 export TORCHELASTIC_MAX_RESTARTS=0
 export DATA_DIR_VG_RCNN=/project/sds-rise/zhanwen/datasets
 export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
