@@ -27,6 +27,7 @@ from torch.cuda import max_memory_allocated, set_device, manual_seed_all
 from torch.nn import SyncBatchNorm
 from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
+from torch.multiprocessing import set_sharing_strategy
 from torch.utils.tensorboard import SummaryWriter
 from torch.backends import cudnn
 from torch.distributed.elastic.multiprocessing.errors import record
@@ -486,6 +487,7 @@ def run_test(cfg, model, distributed, logger, iteration, experiment):
 
 @record
 def main():
+    set_sharing_strategy('file_system')
     setrlimit(RLIMIT_NOFILE, (4096, getrlimit(RLIMIT_NOFILE)[1]))
     setup_seed(int(os_environ['SEED']))
     parser = argparse.ArgumentParser(description="PyTorch Relation Detection Training")
