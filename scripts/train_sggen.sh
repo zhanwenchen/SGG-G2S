@@ -1,6 +1,5 @@
 source activate gsc_docker
 export TORCHELASTIC_MAX_RESTARTS=0
-export PROJECT_DIR=/project/sds-rise/zhanwen/gsc
 export DATA_DIR_VG_RCNN=/project/sds-rise/zhanwen/datasets
 export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 echo "TRAINING SGGen model ${MODEL_NAME}"
