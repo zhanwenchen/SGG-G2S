@@ -19,6 +19,6 @@ export MODEL_NAME="v1b4_sggen_riv_1"
 export BATCH_SIZE=128
 export MAX_ITER=30000
 export LR=1e-3
-export PROJECT_DIR=/project/sds-rise/zhanwen/gsc
+export PROJECT_DIR=/home/pct4et/gsc
 
 singularity exec --nv docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_sggen.sh
