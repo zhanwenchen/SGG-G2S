@@ -1,5 +1,3 @@
-echo ". /opt/conda/etc/profile.d/conda.sh" >> $SINGULARITY_ENVIRONMENT
-echo "conda activate gsc_docker" >> $SINGULARITY_ENVIRONMENT
 export TORCHELASTIC_MAX_RESTARTS=0
 export DATA_DIR_VG_RCNN=/project/sds-rise/zhanwen/datasets
 export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
