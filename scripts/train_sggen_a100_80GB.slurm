@@ -2,11 +2,11 @@
 
 #SBATCH -A sds-rise
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:a100:2
-#SBATCH --ntasks-per-node=2
+#SBATCH --gres=gpu:a100:4
+#SBATCH --ntasks-per-node=4 # need to match number of gpus
 #SBATCH -t 24:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=128GB
+#SBATCH --mem=256GB # need to match batch size.
 #SBATCH -J pytorchtest
 #SBATCH -o pytorchtest-%A.out
 #SBATCH -e pytorchtest-%A.err
@@ -17,7 +17,7 @@ module load singularity
 
 export SEED=1234
 export MODEL_NAME="v1b4_sggen_riv_1"
-export BATCH_SIZE=128
+export BATCH_SIZE=256
 export MAX_ITER=30000
 export LR=1e-3
 export PROJECT_DIR=/home/pct4et/gsc
