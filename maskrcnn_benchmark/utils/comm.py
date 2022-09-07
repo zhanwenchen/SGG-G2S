@@ -2,10 +2,21 @@
 This file contains primitives for multi-gpu communication.
 This is useful when doing distributed training.
 """
+
+from functools import lru_cache
+from pickle import dumps as pickle_dumps, loads as pickle_loads
+from packaging.version import parse as version_parse
 from torch import (
     stack as torch_stack,
+    cat as torch_cat,
     no_grad as torch_no_grad,
+    ByteStorage as torch_ByteStorage,
     __version__ as torch___version__,
+)
+from torch.cuda import (
+    current_device,
+    ByteTensor as torch_cuda_ByteTensor,
+    LongTensor as torch_cuda_LongTensor,
 )
 from torch.distributed import (
     is_available as dist_is_available,
@@ -16,6 +27,9 @@ from torch.distributed import (
     barrier as dist_barrier,
     all_gather_object as dist_all_gather_object,
 )
+
+
+from_buffer = torch_ByteStorage.from_buffer
 
 
 def get_world_size():
