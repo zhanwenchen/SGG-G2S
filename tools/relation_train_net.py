@@ -529,9 +529,7 @@ def main():
     cfg.freeze()
 
     output_dir = cfg.OUTPUT_DIR
-    if os_path_exists(output_dir)
-        raise OSError(f'{output_dir} exists')
-    else:
+    if output_dir:
         mkdir(output_dir)
 
     logger = setup_logger("maskrcnn_benchmark", output_dir, get_rank())
