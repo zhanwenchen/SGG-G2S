@@ -57,7 +57,7 @@ export LOGDIR=${PROJECT_DIR}/log
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 
 if [ -d "$MODEL_DIRNAME" ]; then
-  error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${MODEL_NAME}_${SLURM_JOB_ID}.log
+  error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.log
 else
   module purge
   module load singularity
