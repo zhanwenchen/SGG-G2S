@@ -3,6 +3,7 @@ This file contains primitives for multi-gpu communication.
 This is useful when doing distributed training.
 """
 
+from functools import lru_cache
 from pickle import dumps as pickle_dumps, loads as pickle_loads
 from packaging.version import parse as version_parse
 from torch import (
@@ -13,6 +14,7 @@ from torch import (
     __version__ as torch___version__,
 )
 from torch.cuda import (
+    current_device,
     ByteTensor as torch_cuda_ByteTensor,
     LongTensor as torch_cuda_LongTensor,
 )
@@ -23,7 +25,7 @@ from torch.distributed import (
     get_rank as dist_get_rank,
     reduce as dist_reduce,
     barrier as dist_barrier,
-    all_gather as dist_all_gather,
+    all_gather_object as dist_all_gather_object,
 )
 
 
@@ -67,50 +69,21 @@ def synchronize():
 
 def all_gather(data):
     """
-    Run all_gather on arbitrary picklable data (not necessarily tensors)
+    Run all_gather on arbitrary picklable data (not necessarily tensors).
     Args:
         data: any picklable object
+        group: a torch process group. By default, will use a group which
+            contains all ranks on gloo backend.
     Returns:
         list[data]: list of data gathered from each rank
     """
-    to_device = "cuda"
-    #to_device = torch.device("cpu")
-
     world_size = get_world_size()
     if world_size == 1:
         return [data]
 
-    # serialized to a Tensor
-    buffer = pickle_dumps(data)
-    del data
-    storage = from_buffer(buffer)
-    del buffer
-    tensor = torch_cuda_ByteTensor(storage, device=to_device)
-    del storage
-    # obtain Tensor size of each rank
-    local_size = torch_cuda_LongTensor([tensor.numel()], device=to_device)
-    size_list = [torch_cuda_LongTensor([0], device=to_device) for _ in range(world_size)]
-    dist_all_gather(size_list, local_size)
-    size_list = [int(size.item()) for size in size_list]
-    max_size = max(size_list)
-
-    # receiving Tensor from all ranks
-    # we pad the tensor because torch all_gather does not support
-    # gathering tensors of different shapes
-    tensor_list = []
-    for _ in size_list:
-        tensor_list.append(torch_cuda_ByteTensor(size=(max_size,), device=to_device))
-    if local_size != max_size:
-        padding = torch_cuda_ByteTensor(size=(max_size - local_size,), device=to_device)
-        tensor = torch_cat((tensor, padding), dim=0)
-    dist_all_gather(tensor_list, tensor)
-
-    data_list = []
-    for size, tensor in zip(size_list, tensor_list):
-        buffer = tensor.cpu().numpy().tobytes()[:size]
-        data_list.append(pickle_loads(buffer))
-
-    return data_list
+    output = [None for _ in range(world_size)]
+    dist_all_gather_object(output, data)
+    return output
 
 
 def reduce_dict(input_dict, average=True):
