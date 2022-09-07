@@ -1,7 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from torch.optim import SGD
-from torch.distributed.optim import ZeroRedundancyOptimizer
+from apex.optimizers import FusedAdam, FusedSGD
+from torch.optim import Adam, SGD
 from .lr_scheduler import WarmupMultiStepLR, WarmupReduceLROnPlateau
+from .adabound import AdaBound
 
 
 OPTIMIZERS_WITH_SCHEDULERS = {'SGD', 'FusedSGD'}
@@ -49,17 +50,19 @@ def make_optimizer(cfg, model, logger, slow_heads=None, slow_ratio=5.0, rl_facto
             else:
                 non_fc_params.append(p)
                 lrs_by_name[key] = lr
+        # fc_params = [p for n,p in model.named_parameters() if n.startswith('fc') and p.requires_grad]
+        # non_fc_params = [p for n,p in model.named_parameters() if not n.startswith('fc') and p.requires_grad]
         params = [{'params': fc_params, 'lr': lr / 10.0}, {'params': non_fc_params}]
-
+    if optimizer_type == 'Adam':
+        optimizer = Adam(params, lr=cfg.SOLVER.BASE_LR, eps=1e-3) # From GB-Net
+    if optimizer_type == 'FusedAdam':
+        optimizer = FusedAdam(params, lr=cfg.SOLVER.BASE_LR, eps=1e-3) # From GB-Net
     if optimizer_type == 'SGD':
-        optimizer_class = SGD
-
-    optimizer = ZeroRedundancyOptimizer(
-        params,
-        optimizer_class=optimizer_class,
-        lr=cfg.SOLVER.BASE_LR,
-        momentum=cfg.SOLVER.MOMENTUM,
-    )
+        optimizer = SGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
+    if optimizer_type == 'FusedSGD':
+        optimizer = FusedSGD(params, lr=cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM)
+    if optimizer_type == 'AdaBound':
+        optimizer = AdaBound(params, lr=cfg.SOLVER.BASE_LR)
 
     if return_lrs_by_name:
         return optimizer, lrs_by_name
