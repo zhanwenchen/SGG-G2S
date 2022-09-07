@@ -529,7 +529,7 @@ def main():
     cfg.freeze()
 
     output_dir = cfg.OUTPUT_DIR
-    if os_path_exists(output_dir):
+    if os_path_exists(output_dir)
         raise OSError(f'{output_dir} exists')
     else:
         mkdir(output_dir)
