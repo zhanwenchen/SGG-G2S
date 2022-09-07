@@ -4,9 +4,9 @@
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:a100:4
 #SBATCH --ntasks-per-node=4 # need to match number of gpus
-#SBATCH -t 24:00:00
-#SBATCH --cpus-per-task=10
-#SBATCH --mem=200GB # need to match batch size.
+#SBATCH -t 48:00:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=160GB # need to match batch size.
 #SBATCH -J pytorchtest
 #SBATCH -o /home/pct4et/gsc/log/pytorchtest-%A.out
 #SBATCH -e /home/pct4et/gsc/log/pytorchtest-%A.err
