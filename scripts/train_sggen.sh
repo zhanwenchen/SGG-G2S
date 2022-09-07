@@ -1,9 +1,28 @@
+timestamp() {
+  date +"%Y-%m-%d %T"
+}
+
+error_exit()
+{
+#   ----------------------------------------------------------------
+#   Function for exit due to fatal program error
+#       Accepts 1 argument:
+#           string containing descriptive error message
+#   Source: http://linuxcommand.org/lc3_wss0140.php
+#   ----------------------------------------------------------------
+    echo "$(timestamp) ERROR ${PROGNAME}: ${1:-"Unknown Error"}" 1>&2
+    echo "$(timestamp) ERROR ${PROGNAME}: Exiting Early."
+    exit 1
+}
 export TORCHELASTIC_MAX_RESTARTS=0
 export DATA_DIR_VG_RCNN=/project/sds-rise/zhanwen/datasets
 export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 echo "TRAINING SGGen model ${MODEL_NAME}"
 cd ${PROJECT_DIR}
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
+if [ -d "$MODEL_DIRNAME" ]; then
+  error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.log
+fi
 mkdir ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/tools/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/scripts/ ${MODEL_DIRNAME} &&
