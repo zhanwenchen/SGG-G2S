@@ -1,4 +1,59 @@
 #!/bin/bash
+timestamp() {
+  date +"%Y-%m-%d %T"
+}
+
+error_exit()
+{
+#   ----------------------------------------------------------------
+#   Function for exit due to fatal program error
+#       Accepts 1 argument:
+#           string containing descriptive error message
+#   Source: http://linuxcommand.org/lc3_wss0140.php
+#   ----------------------------------------------------------------
+    echo "$(timestamp) ERROR ${PROGNAME}: ${1:-"Unknown Error"}" 1>&2
+    echo "$(timestamp) ERROR ${PROGNAME}: Exiting Early."
+    exit 1
+}
+
+error_check()
+{
+#   ----------------------------------------------------------------
+#   This function simply checks a passed return code and if it is
+#   non-zero it returns 1 (error) to the calling script.  This was
+#   really only created because I needed a method to store STDERR in
+#   other scripts and also check $? but also leave open the ability
+#   to add in other stuff, too.
+#
+#   Accepts 1 arguments:
+#       return code from prior command, usually $?
+#  ----------------------------------------------------------------
+    TO_CHECK=${1:-0}
+
+    if [ "$TO_CHECK" != '0' ]; then
+        return 1
+    fi
+
+}
+
+export PROJECT_DIR=/home/pct4et/gsc
+export MODEL_NAME="v1b4_sggen_riv_1"
+MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
+
+if [ -d "$MODEL_DIRNAME" ]; then
+  read -n1 -p "Remove ${MODEL_DIRNAME} and continue? (Y/n) " confirm
+
+  if ! echo $confirm | grep '^[Yy]\?$'; then
+    error_exit "Aborted: ${MODEL_DIRNAME} exists."
+  fi
+
+  rm -rf $MODEL_DIRNAME
+
+  RETCODE=$?
+
+  error_check ${RETCODE} || { echo "Removed ${MODEL_DIRNAME}"; error_exit "ERROR removing ${MODEL_DIRNAME}"; }
+fi
+
 
 #SBATCH -A sds-rise
 #SBATCH --partition=gpu
@@ -10,17 +65,17 @@
 #SBATCH -J pytorchtest
 #SBATCH -o pytorchtest-%A.out
 #SBATCH -e pytorchtest-%A.err
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=pct4et@virginia.edu
 #SBACTH --exclude=udc-an28-1,udc-an28-7
 
 module purge
 module load singularity
 
 export SEED=1234
-export MODEL_NAME="v1b4_sggen_riv_1"
 export BATCH_SIZE=256
 export MAX_ITER=30000
 export LR=1e-3
-export PROJECT_DIR=/home/pct4et/gsc
 export SINGULARITYENV_PREPEND_PATH="/home/pct4et/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
 
 
