@@ -17,6 +17,7 @@ from torch.cuda import (
     current_device,
     ByteTensor as torch_cuda_ByteTensor,
     LongTensor as torch_cuda_LongTensor,
+    ByteStorage as torch_cuda_ByteStorage,
 )
 from torch.distributed import (
     is_available as dist_is_available,
@@ -29,7 +30,10 @@ from torch.distributed import (
 )
 
 
-from_buffer = torch_ByteStorage.from_buffer
+if version_parse(torch___version__) < version_parse('1.11'):
+    from_buffer = torch_ByteStorage.from_buffer
+else:
+    from_buffer = torch_cuda_ByteStorage.from_buffer
 
 
 def get_world_size():
