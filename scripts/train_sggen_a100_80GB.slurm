@@ -8,8 +8,8 @@
 #SBATCH --cpus-per-task=10
 #SBATCH --mem=200GB # need to match batch size.
 #SBATCH -J pytorchtest
-#SBATCH -o pytorchtest-%A.out
-#SBATCH -e pytorchtest-%A.err
+#SBATCH -o /home/pct4et/gsc/log/pytorchtest-%A.out
+#SBATCH -e /home/pct4et/gsc/log/pytorchtest-%A.err
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=pct4et@virginia.edu
 #SBACTH --exclude=udc-an28-1,udc-an28-7
@@ -53,20 +53,11 @@ error_check()
 
 export PROJECT_DIR=/home/pct4et/gsc
 export MODEL_NAME="v1b4_sggen_riv_1"
+export LOGDIR=${PROJECT_DIR}/log
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 
 if [ -d "$MODEL_DIRNAME" ]; then
-  read -n1 -p "Remove ${MODEL_DIRNAME} and continue? (Y/n) " confirm
-
-  if ! echo $confirm | grep '^[Yy]\?$'; then
-    error_exit "Aborted: ${MODEL_DIRNAME} exists."
-  fi
-
-  rm -rf $MODEL_DIRNAME
-
-  RETCODE=$?
-
-  error_check ${RETCODE} || { echo "Removed ${MODEL_DIRNAME}"; error_exit "ERROR removing ${MODEL_DIRNAME}"; }
+  error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${MODEL_NAME}_${SLURM_JOB_ID}.log
 fi
 
 module purge
