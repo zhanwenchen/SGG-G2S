@@ -38,7 +38,8 @@ class ROIRelationHead(Module):
         self.use_gsc_fe = use_gsc_fe
         if use_gsc_fe is True:
             self.gsc_feature_extractor = make_roi_box_feature_extractor(cfg, in_channels, half_out=self.cfg.MODEL.ATTRIBUTE_ON)
-
+        else:
+            self.gsc_feature_extractor = self.box_feature_extractor
         # parameters
         self.use_union_box = self.cfg.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
 
@@ -83,11 +84,7 @@ class ROIRelationHead(Module):
         roi_features = self.box_feature_extractor(features, proposals)
         # (Pdb) roi_features.size()
         # torch.Size([1280, 4096])
-        if self.use_gsc_fe is True:
-            global_image_features = self.gsc_feature_extractor(features, boxes_global) # torch.Size([16, 4096]) # TODO: if this works, then I won't need to implement the features 5=>1 reduction myself and then can move on to the linear? layers design and feature concat.
-        else:
-            global_image_features = self.box_feature_extractor(features, boxes_global)
-
+        global_image_features = self.gsc_feature_extractor(features, boxes_global) #
         del boxes_global
         if attribute_on:
             att_features = self.att_feature_extractor(features, proposals)

@@ -131,6 +131,10 @@ def train(cfg, local_rank, distributed, logger, experiment):
             "roi_heads.relation.union_feature_extractor.feature_extractor" : "roi_heads.box.feature_extractor",
         }
 
+        if cfg.MODEL.ROI_RELATION_HEAD.USE_GSC_FE is True:
+            print(f'relation_train_net.py: using GSC_FE')
+            load_mapping["roi_heads.relation.gsc_feature_extractor.feature_extractor"] = "roi_heads.box.feature_extractor"
+
         if cfg.MODEL.ATTRIBUTE_ON:
             load_mapping["roi_heads.relation.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
             load_mapping["roi_heads.relation.union_feature_extractor.att_feature_extractor"] = "roi_heads.attribute.feature_extractor"
