@@ -60,8 +60,8 @@ fi
 #SBATCH --gres=gpu:a100:4
 #SBATCH --ntasks-per-node=4 # need to match number of gpus
 #SBATCH -t 24:00:00
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=256GB # need to match batch size.
+#SBATCH --cpus-per-task=10
+#SBATCH --mem=200GB # need to match batch size.
 #SBATCH -J pytorchtest
 #SBATCH -o pytorchtest-%A.out
 #SBATCH -e pytorchtest-%A.err
