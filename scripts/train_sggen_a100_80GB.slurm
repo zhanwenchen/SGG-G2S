@@ -1,4 +1,19 @@
 #!/bin/bash
+
+#SBATCH -A sds-rise
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:a100:4
+#SBATCH --ntasks-per-node=4 # need to match number of gpus
+#SBATCH -t 24:00:00
+#SBATCH --cpus-per-task=10
+#SBATCH --mem=200GB # need to match batch size.
+#SBATCH -J pytorchtest
+#SBATCH -o pytorchtest-%A.out
+#SBATCH -e pytorchtest-%A.err
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=pct4et@virginia.edu
+#SBACTH --exclude=udc-an28-1,udc-an28-7
+
 timestamp() {
   date +"%Y-%m-%d %T"
 }
@@ -53,21 +68,6 @@ if [ -d "$MODEL_DIRNAME" ]; then
 
   error_check ${RETCODE} || { echo "Removed ${MODEL_DIRNAME}"; error_exit "ERROR removing ${MODEL_DIRNAME}"; }
 fi
-
-
-#SBATCH -A sds-rise
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:a100:4
-#SBATCH --ntasks-per-node=4 # need to match number of gpus
-#SBATCH -t 24:00:00
-#SBATCH --cpus-per-task=10
-#SBATCH --mem=200GB # need to match batch size.
-#SBATCH -J pytorchtest
-#SBATCH -o pytorchtest-%A.out
-#SBATCH -e pytorchtest-%A.err
-#SBATCH --mail-type=ALL
-#SBATCH --mail-user=pct4et@virginia.edu
-#SBACTH --exclude=udc-an28-1,udc-an28-7
 
 module purge
 module load singularity
