@@ -65,6 +65,7 @@ else
   export BATCH_SIZE=64
   export MAX_ITER=15000
   export LR=1e-3
+  export USE_GSC_FE=True
   export SINGULARITYENV_PREPEND_PATH="/home/pct4et/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
 
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:/home/pct4et/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_predcls.sh
