@@ -7,9 +7,9 @@
 #SBATCH -t 24:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB # need to match batch size.
-#SBATCH -J v1b5_predcls_2GPU_riv_1
-#SBATCH -o /home/pct4et/gsc/log/v1b5_predcls_2GPU_riv_1-%A.out
-#SBATCH -e /home/pct4et/gsc/log/v1b5_predcls_2GPU_riv_1-%A.err
+#SBATCH -J v1b5_predcls_2GPU_riv_1 # TODO: CHANGE THIS
+#SBATCH -o /home/pct4et/gsc/log/%x-%A.out
+#SBATCH -e /home/pct4et/gsc/log/%x-%A.err
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=pct4et@virginia.edu
 
@@ -51,7 +51,7 @@ error_check()
 }
 
 export PROJECT_DIR=/home/pct4et/gsc
-export MODEL_NAME="v1b5_predcls_2GPU_riv_1"
+export MODEL_NAME="${SLURM_JOB_ID}_${SLURM_JOB_NAME}"
 export LOGDIR=${PROJECT_DIR}/log
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 
