@@ -1,85 +1,35 @@
-#!/usr/bin/env bash
-if [ $1 == "0" ]; then
-    export SEED=1234
-    # export CUDA_VISIBLE_DEVICES=4,5,6,7
-    export NUM_GPUS=4
-    export MODEL_NAME="v1b4_gscfe_3_test"
-    echo "TRAINING Predcls model ${MODEL_NAME}"
-    MODEL_DIRNAME=./checkpoints/${MODEL_NAME}/
-    mkdir ${MODEL_DIRNAME} &&
-    cp -r ./tools/ ${MODEL_DIRNAME} &&
-    cp -r ./scripts/ ${MODEL_DIRNAME} &&
-    cp -r ./maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
-    torchrun --master_port 10050 --nproc_per_node=$NUM_GPUS \
-    tools/relation_train_net.py \
-    --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
-    MODEL.ROI_RELATION_HEAD.USE_GSC True  \
-    SOLVER.TYPE FusedSGD \
-    SOLVER.IMS_PER_BATCH 64 \
-    SOLVER.MAX_ITER 30000 \
-    SOLVER.BASE_LR 1e-3 \
-    MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
-    MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
-    TEST.IMS_PER_BATCH ${NUM_GPUS} \
-    SOLVER.PRE_VAL True \
-    MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
-    MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
-    DTYPE "float32" \
-    SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
-    SOLVER.STEPS "(10000, 16000)" \
-    SOLVER.VAL_PERIOD 2000 \
-    SOLVER.CHECKPOINT_PERIOD 2000 \
-    GLOVE_DIR ./datasets/vg/ \
-    MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-    OUTPUT_DIR ./checkpoints/${MODEL_NAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log
-    echo "Finished training Predcls model ${MODEL_NAME}"
-elif [ $1 == "1" ]; then
-    export CUDA_VISIBLE_DEVICES=0 #3,4 #,4 #3,4
-    export NUM_GPUS=1
-    echo "TRAINING SGcls"
-    MODEL_NAME="transformer_sgcls_dist15_2k_confmat_woInit"
-    mkdir ./checkpoints/${MODEL_NAME}/
-    cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/data/datasets/visual_genome.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/roi_relation_predictors.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/model_transformer.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/layers/gcn/gcn_layers.py ./checkpoints/${MODEL_NAME}/
-    python -u -m torch.distributed.launch --master_port 10020 --nproc_per_node=$NUM_GPUS \
-    tools/relation_train_net.py \
-    --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
-    MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
-    MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
-    MODEL.ROI_RELATION_HEAD.PREDICTOR TransformerTransferPredictor \
-    MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS True \
-    DTYPE "float32" \
-    SOLVER.IMS_PER_BATCH 8 TEST.IMS_PER_BATCH $NUM_GPUS \
-    SOLVER.MAX_ITER 16000 SOLVER.BASE_LR 1e-3 \
-    SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
-    SOLVER.STEPS "(10000, 16000)" SOLVER.VAL_PERIOD 2000 \
-    SOLVER.CHECKPOINT_PERIOD 2000 GLOVE_DIR ./datasets/vg/ \
-    MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-    OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
-    MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER True \
-    MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER True  \
-    MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0;
-elif [ $1 == "2" ]; then
-  export SEED=1234
-  # export CUDA_VISIBLE_DEVICES=4,5,6,7
-  export NUM_GPUS=4
-  export MODEL_NAME="v1b4_sggen_riv_1"
-  echo "TRAINING SGGen model ${MODEL_NAME}"
-  MODEL_DIRNAME=./checkpoints/${MODEL_NAME}/
-  mkdir ${MODEL_DIRNAME} &&
-  cp -r ./tools/ ${MODEL_DIRNAME} &&
-  cp -r ./scripts/ ${MODEL_DIRNAME} &&
-  cp -r ./maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
-  torchrun --master_port 10050 --nproc_per_node=$NUM_GPUS \
-  tools/relation_train_net.py \
+#!/bin/bash
+
+#SBATCH -A sds-rise
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:a100:2
+#SBATCH -t 24:00:00
+#SBATCH -J pytorchtest
+#SBATCH -o pytorchtest-%A.out
+#SBATCH -e pytorchtest-%A.err
+
+module purge
+module load anaconda/2020.11-py3.8
+
+source activate gsc
+export PROJECT_DIR=/project/sds-rise/zhanwen/gsc
+export SEED=1234
+export NUM_GPUS=2
+export MODEL_NAME="v1b4_sggen_riv_1"
+export TORCHELASTIC_MAX_RESTARTS=0
+echo "TRAINING SGGen model ${MODEL_NAME}"
+MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
+mkdir ${MODEL_DIRNAME} &&
+cp -r ${PROJECT_DIR}/tools/ ${MODEL_DIRNAME} &&
+cp -r ${PROJECT_DIR}/scripts/ ${MODEL_DIRNAME} &&
+cp -r ${PROJECT_DIR}/maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
+torchrun --nproc_per_node=$NUM_GPUS \
+  ${PROJECT_DIR}/tools/relation_train_net.py \
   --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
   MODEL.ROI_RELATION_HEAD.USE_GSC True  \
   MODEL.ROI_RELATION_HEAD.USE_GSC_FE False  \
-  SOLVER.TYPE FusedSGD \
-  SOLVER.IMS_PER_BATCH 128 \
+  SOLVER.TYPE SGD \
+  SOLVER.IMS_PER_BATCH 64\
   SOLVER.MAX_ITER 30000 \
   SOLVER.BASE_LR 1e-3 \
   MODEL.ROI_RELATION_HEAD.USE_GT_BOX False \
@@ -93,8 +43,7 @@ elif [ $1 == "2" ]; then
   SOLVER.STEPS "(10000, 16000)" \
   SOLVER.VAL_PERIOD 2000 \
   SOLVER.CHECKPOINT_PERIOD 2000 \
-  GLOVE_DIR ./datasets/vg/ \
-  MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-  OUTPUT_DIR ./checkpoints/${MODEL_NAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log
-  echo "Finished training SGGen model ${MODEL_NAME}"
-fi
+  GLOVE_DIR ${PROJECT_DIR}/datasets/vg/ \
+  MODEL.PRETRAINED_DETECTOR_CKPT ${PROJECT_DIR}/checkpoints/pretrained_faster_rcnn/model_final.pth \
+  OUTPUT_DIR ${PROJECT_DIR}/checkpoints/${MODEL_NAME} 2>&1 | tee ${PROJECT_DIR}/${MODEL_DIRNAME}/log_train.log
+echo "Finished training SGGen model ${MODEL_NAME}"

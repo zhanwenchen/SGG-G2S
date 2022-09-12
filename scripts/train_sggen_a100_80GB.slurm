@@ -6,10 +6,10 @@
 #SBATCH --ntasks-per-node=4 # need to match number of gpus
 #SBATCH -t 48:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=160GB # need to match batch size.
-#SBATCH -J v1b4_pre_gscfe_riv_1
-#SBATCH -o /home/pct4et/gsc/log/v1b4_pre_gscfe_riv_1-%A.out
-#SBATCH -e /home/pct4et/gsc/log/v1b4_pre_gscfe_riv_1-%A.err
+#SBATCH --mem=128GB # need to match batch size.
+#SBATCH -J v1b4_sggen_4x_1e-4_riv_1
+#SBATCH -o /home/pct4et/gsc/log/v1b4_sggen_4x_1e-4_riv_1-%A.out
+#SBATCH -e /home/pct4et/gsc/log/v1b4_sggen_4x_1e-4_riv_1-%A.err
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=pct4et@virginia.edu
 #SBACTH --exclude=udc-an28-1,udc-an28-7
@@ -52,7 +52,7 @@ error_check()
 }
 
 export PROJECT_DIR=/home/pct4et/gsc
-export MODEL_NAME="v1b4_pre_gscfe_riv_1"
+export MODEL_NAME="v1b4_sggen_4x_1e-4_riv_1"
 export LOGDIR=${PROJECT_DIR}/log
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 
@@ -65,7 +65,7 @@ else
   export SEED=1234
   export BATCH_SIZE=256
   export MAX_ITER=15000
-  export LR=1e-3
+  export LR=1e-4
   export SINGULARITYENV_PREPEND_PATH="/home/pct4et/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
 
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:/home/pct4et/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_sggen.sh
