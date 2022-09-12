@@ -31,7 +31,7 @@ torchrun --nproc_per_node=$NUM_GPUS \
   ${PROJECT_DIR}/tools/relation_train_net.py \
   --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
   MODEL.ROI_RELATION_HEAD.USE_GSC True  \
-  MODEL.ROI_RELATION_HEAD.USE_GSC_FE False  \
+  MODEL.ROI_RELATION_HEAD.USE_GSC_FE True  \
   SOLVER.TYPE SGD \
   SOLVER.IMS_PER_BATCH ${BATCH_SIZE} \
   SOLVER.MAX_ITER ${MAX_ITER} \
