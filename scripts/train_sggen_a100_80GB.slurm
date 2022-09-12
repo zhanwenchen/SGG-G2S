@@ -7,7 +7,7 @@
 #SBATCH -t 48:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB # need to match batch size.
-#SBATCH -J v1b5_sggen_4x_1e-4_riv_1 TODO: CHANGE THIS
+#SBATCH -J v1b5_sggen_4x_1e-4_riv_1 # TODO: CHANGE THIS
 #SBATCH -o /home/pct4et/gsc/log/%x-%A.out
 #SBATCH -e /home/pct4et/gsc/log/%x-%A.err
 #SBATCH --mail-type=ALL
