@@ -24,6 +24,7 @@ if [ -d "$MODEL_DIRNAME" ]; then
   error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.out
 fi
 mkdir ${MODEL_DIRNAME} &&
+cp -r ${PROJECT_DIR}/.git/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/tools/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/scripts/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
