@@ -6,7 +6,6 @@ Basic training script for PyTorch
 # Set up custom environment before nearly anything else is imported
 # NOTE: this should be the first import (no not reorder)
 
-from math import sqrt
 import argparse
 from os import environ as os_environ
 from os.path import join as os_path_join
@@ -98,7 +97,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
 
     arguments = {}
 
-    optimizer, lrs_by_name = make_optimizer(cfg, model, logger, rl_factor=int(os_environ.get("NUM_GPUS", 1)) * sqrt(num_batch), return_lrs_by_name=True)
+    optimizer, lrs_by_name = make_optimizer(cfg, model, logger, rl_factor=float(num_batch), return_lrs_by_name=True)
     hyperparameters = {'batch_size': num_batch, **lrs_by_name}
     if not isinstance(experiment, ExistingExperiment):
         experiment.log_parameters(hyperparameters)
