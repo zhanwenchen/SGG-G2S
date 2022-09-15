@@ -24,7 +24,6 @@ from torch import (
     no_grad as torch_no_grad,
 )
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
-from torch.nn import SyncBatchNorm
 from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
 from torch.multiprocessing import set_sharing_strategy
@@ -54,11 +53,6 @@ try:
     from apex.amp import initialize as amp_initialize, scale_loss as amp_scale_loss
 except ImportError:
     raise ImportError('Use APEX for multi-precision via apex.amp')
-
-
-APEX_FUSED_OPTIMIZERS = {'FusedSGD', 'FusedAdam'}
-OPTIMIZERS_WITH_SCHEDULERS = {'SGD', 'FusedSGD'}
-convert_sync_batchnorm = SyncBatchNorm.convert_sync_batchnorm
 
 
 def setup_seed(seed):
@@ -278,10 +272,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
             meters.update(loss=losses_reduced, **loss_dict_reduced)
             experiment.log_metrics(loss_dict_reduced, epoch=iteration)
 
-            if using_apex_solvers:
-                optimizer.zero_grad() # For Apex FusedSGD, FusedAdam, etc
-            else:
-                optimizer.zero_grad(set_to_none=True) # For Apex FusedSGD, FusedAdam, etc
+            optimizer.zero_grad(set_to_none=True)
             # Note: If mixed precision is not used, this ends up doing nothing
             # Otherwise apply loss scaling for mixed-precision recipe
             with amp_scale_loss(losses, optimizer) as scaled_losses:
