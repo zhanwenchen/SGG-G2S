@@ -54,6 +54,9 @@ except ImportError:
     raise ImportError('Use APEX for multi-precision via apex.amp')
 
 
+convert_sync_batchnorm = SyncBatchNorm.convert_sync_batchnorm
+
+
 def setup_seed(seed):
     torch_manual_seed(seed)
     manual_seed_all(seed)
@@ -236,7 +239,6 @@ def train(cfg, local_rank, distributed, logger, experiment):
     val_period = cfg.SOLVER.VAL_PERIOD
     using_WarmupReduceLROnPlateau = cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau"
     max_decay_step = cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP
-    using_apex_solvers = cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS
     max_norm = cfg.SOLVER.GRAD_NORM_CLIP
     print_grad_freq = cfg.SOLVER.PRINT_GRAD_FREQ
     max_iter = cfg.SOLVER.MAX_ITER
