@@ -54,9 +54,6 @@ except ImportError:
     raise ImportError('Use APEX for multi-precision via apex.amp')
 
 
-convert_sync_batchnorm = SyncBatchNorm.convert_sync_batchnorm
-
-
 def setup_seed(seed):
     torch_manual_seed(seed)
     manual_seed_all(seed)
