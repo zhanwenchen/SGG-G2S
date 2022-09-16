@@ -548,7 +548,7 @@ def main():
     experiment = get_experiment(model_name)
     experiment.set_name(model_name)
 
-    model = train(cfg, local_rank, args.distributed, logger, experiment)
+    train(cfg, local_rank, args.distributed, logger, experiment)
 
     # if not args.skip_test:
     #     with experiment.test():
