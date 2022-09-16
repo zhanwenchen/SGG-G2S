@@ -319,16 +319,17 @@ def train(cfg, local_rank, distributed, logger, experiment):
                 checkpointer.save("model_{:07d}_final".format(iteration), **arguments)
 
             val_result = None # used for scheduler updating
-        if to_val and iteration % val_period == 0:
+        if (to_val and iteration % val_period) or (iteration == max_iter):
             with experiment.validate():
-                logger.info("Start validating")
+                logger.info(f'Start validating model {model_name} at iteration={iteration}.')
                 val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment)
-                logger.info("Validation Result: %.4f" % val_result)
-                if val_result > 0.17 and iteration < max_iter:
-                    with experiment.test():
-                        mr50 = run_test(cfg, model, distributed, logger, iteration, experiment)
-                        logger.info(f'Finished testing model {model_name} at iteration={iteration}')
-                        experiment.log_metric('mR@50', mr50, epoch=iteration)
+                logger.info(f'Finished validating model {model_name} at iteration={iteration}. mR@50={val_result}')
+                experiment.log_metric('val_mR@50', val_result, epoch=iteration)
+            with experiment.test():
+                logger.info(f'Start testing model {model_name} at iteration={iteration}.')
+                mr50 = run_test(cfg, model, distributed, logger, iteration, experiment)
+                logger.info(f'Finished testing model {model_name} at iteration={iteration}. mR@50={mr50}')
+                experiment.log_metric('test_mR@50', mr50, epoch=iteration)
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
@@ -549,11 +550,11 @@ def main():
 
     model = train(cfg, local_rank, args.distributed, logger, experiment)
 
-    if not args.skip_test:
-        with experiment.test():
-            mr50 = run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER, experiment)
-            logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
-            experiment.log_metric('mR@50', mr50, epoch=cfg.SOLVER.MAX_ITER)
+    # if not args.skip_test:
+    #     with experiment.test():
+    #         mr50 = run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER, experiment)
+    #         logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
+    #         experiment.log_metric('mR@50', mr50, epoch=cfg.SOLVER.MAX_ITER)
 
     logger.info(f'Finished training model {model_name} at a total of {cfg.SOLVER.MAX_ITER} iterations')
 
