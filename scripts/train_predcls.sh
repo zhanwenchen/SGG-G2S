@@ -15,7 +15,6 @@ error_exit()
     exit 1
 }
 export TORCHELASTIC_MAX_RESTARTS=0
-export DATA_DIR_VG_RCNN=/project/sds-rise/zhanwen/datasets
 export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 echo "TRAINING PredCls model ${MODEL_NAME}"
 cd ${PROJECT_DIR}
@@ -30,7 +29,7 @@ cp -r ${PROJECT_DIR}/scripts/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
 torchrun --nproc_per_node=$NUM_GPUS \
   ${PROJECT_DIR}/tools/relation_train_net.py \
-  --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
+  --config-file ${CONFIG_FILE} \
   MODEL.ROI_RELATION_HEAD.USE_GSC True  \
   MODEL.ROI_RELATION_HEAD.USE_GSC_FE ${USE_GSC_FE}  \
   SOLVER.TYPE SGD \
