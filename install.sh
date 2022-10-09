@@ -44,6 +44,7 @@ python setup.py build develop
 
 unset INSTALL_DIR
 
+# NOTE: Or just follow soumith's gist: https://gist.github.com/soumith/01da3874bf014d8a8c53406c2b95d56b
 # conda install -c conda-forge overrides --no-deps
 conda uninstall --force pillow pil jpeg libtiff libjpeg-turbo
 pip   uninstall -y         pillow pil jpeg libtiff libjpeg-turbo
@@ -51,6 +52,7 @@ conda install -c conda-forge libjpeg-turbo --no-deps
 wget https://github.com/uploadcare/pillow-simd/archive/refs/tags/9.0.1.zip
 cd pillow-simd-9.0.1/
 CC="cc -mavx2" python setup.py install
-conda install -c conda-forge --no-deps jpeg libtiff overrides tensorboard
+conda install -c conda-forge --no-deps jpeg libtiff 
+pip install overrides tensorboard
 python -c 'import PIL; print(PIL.__version__)'
 python -c 'import PIL.features; print(PIL.features.check_feature("libjpeg_turbo"))'
