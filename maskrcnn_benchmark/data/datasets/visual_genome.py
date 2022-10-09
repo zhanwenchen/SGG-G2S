@@ -1,5 +1,6 @@
 from os import environ as os_environ
 from os.path import join as os_path_join, exists as os_path_exists
+from pickle import load as pickle_load, dump as pickle_dump
 from json import load as json_load, dump as json_dump
 from collections import defaultdict
 from random import random as random_random
@@ -22,13 +23,14 @@ from numpy import all as np_all, log as np_log, where as np_where,  array as np_
                   int32 as np_int32, int64 as np_int64, float as np_float, bool as np_bool
 from numpy.random import choice as np_random_choice
 from tqdm import tqdm
-
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
 
 
 BOX_SCALE = 1024  # Scale at which we have the boxes
-DICT_FILE_FPATH = f'{os_environ["DATA_DIR_VG_RCNN"]}/visual_genome/VG-SGG-dicts-with-attri-info.json'
+VG_DIRPATH = os_path_join(os_environ['DATA_DIR_VG_RCNN'], 'visual_genome')
+DICT_FILE_FPATH = os_path_join(VG_DIRPATH, 'VG-SGG-dicts-with-attri-info.json')
+STATISTICS_FPATH = os_path_join(VG_DIRPATH, 'statistics.pkl')
 
 
 class VGDataset(Dataset):
@@ -89,24 +91,72 @@ class VGDataset(Dataset):
         #    while(random_random() > self.img_info[index]['anti_prop']):
         #        index = int(random_random() * len(self.filenames))
 
-        img = Image_open(self.filenames[index]).convert("RGB")
-        if img.size[0] != self.img_info[index]['width'] or img.size[1] != self.img_info[index]['height']:
+        img_info = self.img_info[index]
+        # img = Image_open(self.filenames[index]).convert("RGB") # TODO: inplace? # TODO: contextlib
+        # with Image_open(self.filenames[index]) as img:
+        #     img = img.convert("RGB") # TODO: inplace? # TODO: contextlib
+        img = Image_open(self.filenames[index])
+        img_width, img_height = img.size
+        img.draft("RGB", (img_width, img_height))
+        if img.mode == 'L':
+            print(f'visual_genome: force converting {img.filename} to RGB')
+            img = img.convert("RGB")
+
+        if img_width != img_info['width'] or img_height != img_info['height']:
             print('=' * 20, ' ERROR index ', str(index), ' ', str(img.size), ' ', str(self.img_info[index]['width']),
                   ' ', str(self.img_info[index]['height']), ' ', '=' * 20)
+        # img_np = np_array(img)
+        # TODO: use PIL draft.
+        # with Image_open(self.filenames[index]) as im:
+        #     print("original =", im.mode, im.size)
+        #
+        #     im.draft("RGB", (img_width, img_height))
+        #     print("draft =", im.mode, im.size)
+        #
+        #     breakpoint()
 
+
+
+        # im_np = np_array(im)
+        #
+        # try:
+        #     assert np_array_equal(img_np, im_np)
+        # except:
+        #     print('after convert')
+        #     breakpoint()
+        # breakpoint()
         flip_img = (random_random() > 0.5) and self.flip_aug and (self.split == 'train')
 
         target = self.get_groundtruth(index, flip_img)
 
         if flip_img:
-            img = img.transpose(method=Image_FLIP_LEFT_RIGHT)
+            img = img.transpose(method=Image_FLIP_LEFT_RIGHT) # TODO: inplace?
+            # im = im.transpose(method=Image_FLIP_LEFT_RIGHT) # TODO: inplace?
+            # try:
+            #     assert np_array_equal(img, im)
+            # except:
+            #     print('after flip')
+            #     breakpoint()
 
         if self.transforms is not None:
             img, target = self.transforms(img, target)
+            # img_lol, target_lol = self.transforms(img_np, target)
+            # im, targety = self.transforms(im, deepcopy(target))
+            # try:
+            #     assert np_array_equal(img, im)
+            # except:
+            #     print('after transforms')
+            #     breakpoint()
+
 
         return img, target, index
 
     def get_statistics(self):
+        if os_path_exists(STATISTICS_FPATH):
+            print(f'visual_genome.VGDataset.get_statistics: loading existing statistics from {STATISTICS_FPATH} with hash NotImplementedError')
+            with open(STATISTICS_FPATH, 'rb') as f:
+                result = pickle_load(f)
+            return result
         fg_matrix, bg_matrix = get_VG_statistics(img_dir=self.img_dir, roidb_file=self.roidb_file,
                                                  dict_file=self.dict_file,
                                                  image_file=self.image_file, must_overlap=True)
@@ -123,6 +173,9 @@ class VGDataset(Dataset):
             'rel_classes': self.ind_to_predicates,
             'att_classes': self.ind_to_attributes,
         }
+        with open(STATISTICS_FPATH, 'wb') as f:
+            print(f'visual_genome.VGDataset.get_statistics: saving statistics from {STATISTICS_FPATH} with hash NotImplementedError')
+            pickle_dump(result, f)
         return result
 
 
@@ -135,10 +188,11 @@ class VGDataset(Dataset):
         return self.img_info[index]
 
 
-    def get_groundtruth(self, index, evaluation=False, flip_img=False):
+    def get_groundtruth(self, index, evaluation=False, flip_img=False, using_attributes=False):
         img_info = self.get_img_info(index)
         w, h = img_info['width'], img_info['height']
         # important: recover original box from BOX_SCALE
+        # TODO: use cuda device at box loading
         box = self.gt_boxes[index] / BOX_SCALE * max(w, h)
         box = torch_from_numpy(box).reshape(-1, 4)  # guard against no boxes
         if flip_img:
@@ -147,8 +201,8 @@ class VGDataset(Dataset):
 
         target = BoxList(box, (w, h), 'xyxy')  # xyxy
 
-        target.add_field("labels", torch_from_numpy(self.gt_classes[index]))
-        target.add_field("attributes", torch_from_numpy(self.gt_attributes[index]))
+        target.add_field("labels", torch_as_tensor(self.gt_classes[index], dtype=torch_int64))
+        if using_attributes: target.add_field("attributes", torch_from_numpy(self.gt_attributes[index]))
 
         relation = self.relationships[index].copy()  # (num_rel, 3)
         if self.filter_duplicate_rels:

@@ -29,6 +29,7 @@ class GeneralizedRCNN(nn.Module):
         self.backbone = build_backbone(cfg)
         self.rpn = build_rpn(cfg, self.backbone.out_channels)
         self.roi_heads = build_roi_heads(cfg, self.backbone.out_channels)
+        self.use_gsc = cfg.MODEL.ROI_RELATION_HEAD.USE_GSC
 
     def forward(self, images, targets=None, logger=None):
         """
@@ -49,7 +50,8 @@ class GeneralizedRCNN(nn.Module):
         if self.training and targets is None:
             raise ValueError("In training mode, targets should be passed")
         images = to_image_list(images) # (Pdb) images.tensors.size() torch.Size([16, 3, 608, 1024])
-        boxes_global = [BoxList([[0, 0, *image_size]], image_size, device=images.tensors.device) for image_size in images.image_sizes]
+        if self.use_gsc:
+            boxes_global = [BoxList([[0, 0, *image_size]], image_size, device=images.tensors.device) for image_size in images.image_sizes]
         features = self.backbone(images.tensors)
         # (Pdb) len(features)
         # 5

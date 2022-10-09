@@ -34,12 +34,10 @@ class ROIRelationHead(Module):
         self.post_processor = make_roi_relation_post_processor(cfg)
         self.loss_evaluator = make_roi_relation_loss_evaluator(cfg)
         self.samp_processor = make_roi_relation_samp_processor(cfg)
-        use_gsc_fe = cfg.MODEL.ROI_RELATION_HEAD.USE_GSC_FE
-        self.use_gsc_fe = use_gsc_fe
+        self.use_gsc = use_gsc_fe = cfg.MODEL.ROI_RELATION_HEAD.USE_GSC
+        self.use_gsc_fe = use_gsc_fe = cfg.MODEL.ROI_RELATION_HEAD.USE_GSC_FE
         if use_gsc_fe is True:
             self.gsc_feature_extractor = make_roi_box_feature_extractor(cfg, in_channels, half_out=self.cfg.MODEL.ATTRIBUTE_ON)
-        else:
-            self.gsc_feature_extractor = self.box_feature_extractor
         # parameters
         self.use_union_box = self.cfg.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
 
@@ -74,7 +72,6 @@ class ROIRelationHead(Module):
         else:
             rel_labels, rel_binarys = None, None
             rel_pair_idxs = self.samp_processor.prepare_test_pairs(features[0].device, proposals)
-
         # (Pdb) len(features)
         # 5
         # (Pdb) features[0].size()
@@ -82,9 +79,14 @@ class ROIRelationHead(Module):
 
         # use box_head to extract features that will be fed to the later predictor processing
         roi_features = self.box_feature_extractor(features, proposals)
-        # (Pdb) roi_features.size()
         # torch.Size([1280, 4096])
-        global_image_features = self.gsc_feature_extractor(features, boxes_global) #
+        if self.use_gsc is True:
+            if self.use_gsc_fe is True:
+                global_image_features = self.gsc_feature_extractor(features, boxes_global) #
+            else:
+                global_image_features = self.box_feature_extractor(features, boxes_global) #
+        else:
+            global_image_features = None
         del boxes_global
         if attribute_on:
             att_features = self.att_feature_extractor(features, proposals)

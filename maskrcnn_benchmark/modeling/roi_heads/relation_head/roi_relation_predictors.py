@@ -1,126 +1,212 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from numpy import unravel_index as np_unravel_index
+import numpy as np
 from torch import (
-    cat as torch_cat, no_grad as torch_no_grad,
+    cat as torch_cat,
     as_tensor as torch_as_tensor,
-    empty_like as torch_empty_like, empty as torch_empty,
-    int64 as torch_int64,
     float32 as torch_float32,
-    # abs as torch_abs,
+    stack as torch_stack,
+    equal
 )
-from torch.nn import Module, Linear, ReLU, BatchNorm2d, Dropout
-from torch.nn.functional import softmax as F_softmax
-from torch.cuda import current_device
+# from torch.nn import Module, Linear, ModuleList, Sequential, GroupNorm, ReLU, BatchNorm2d
+from torch.nn import Module, Linear, ReLU, BatchNorm1d
+from torch.nn.functional import dropout as F_dropout
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.data import get_dataset_statistics
+from maskrcnn_benchmark.layers.gcn._utils import adj_normalize
 from .model_motifs import FrequencyBias
-# from .model_transformer import TransformerContext, TransformerEncoder
-from .utils_relation import layer_init_kaiming_normal, nms_overlaps
-from .utils_motifs import to_onehot
+from .model_transformer import TransformerContext
+from .utils_relation import layer_init_kaiming_normal
+from .axial_attention import AxialAttention
 
 
 @registry.ROI_RELATION_PREDICTOR.register("PairwisePredictor")
 class PairwisePredictor(Module):
-    def __init__(self, cfg, in_channels):
-        super().__init__()
-        self.device = device = current_device()
+    def __init__(self, config, in_channels):
+        super(PairwisePredictor, self).__init__()
+        self.attribute_on = config.MODEL.ATTRIBUTE_ON
+        # load parameters
+        self.num_obj_cls = config.MODEL.ROI_BOX_HEAD.NUM_CLASSES
+        self.num_att_cls = config.MODEL.ROI_ATTRIBUTE_HEAD.NUM_ATTRIBUTES
+        self.num_rel_cls = config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES
+        self.dropout_rate = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.DROPOUT_RATE
 
-        self.use_gt_object_label = cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL
+        assert in_channels is not None
+        self.use_vision = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
+        self.use_bias = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS
+        self.with_knowdist = False
+        self.devices = config.MODEL.DEVICE
+        self.with_transfer = config.MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER
+        self.with_cleanclf = config.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER
+        # load class dict
+        statistics = get_dataset_statistics(config)
+        obj_classes, rel_classes, att_classes = statistics['obj_classes'], statistics['rel_classes'], statistics[
+            'att_classes']
+        assert self.num_obj_cls == len(obj_classes)
+        assert self.num_att_cls == len(att_classes)
+        assert self.num_rel_cls == len(rel_classes)
+        self.val_alpha = config.MODEL.ROI_RELATION_HEAD.VAL_ALPHA
 
-        # Data Dimensions
-        num_obj_cls = cfg.MODEL.ROI_BOX_HEAD.NUM_CLASSES
-        num_rel_cls = cfg.MODEL.ROI_RELATION_HEAD.NUM_CLASSES
+        # module construct
+        self.hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
+        self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
+        self.v_dim = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.VAL_DIM
+        self.k_dim = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.KEY_DIM
+        self.inner_dim = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.INNER_DIM
+        self.num_head = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.NUM_HEAD
+        self.edge_layer = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.REL_LAYER
 
-        # Common nn dims
-        hidden_dim = cfg.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
-        pooling_dim = cfg.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
-        self.post_cat = Linear(hidden_dim * 2, pooling_dim, device=device)
+        # module construct
+        self.context_layer = TransformerContext(config, obj_classes, rel_classes, in_channels)
+
+        # post decoding
+        self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
+        # layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
+        layer_init_kaiming_normal(self.post_emb)
+
+        if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
+            self.union_single_not_match = True
+            self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+            layer_init_kaiming_normal(self.up_dim)
+        else:
+            self.union_single_not_match = False
+
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
         layer_init_kaiming_normal(self.post_cat)
-        self.out_obj = Linear(hidden_dim, num_obj_cls)
-        layer_init_kaiming_normal(self.out_obj)
-        self.dropout = Dropout(p=0.3)
-        statistics = get_dataset_statistics(cfg)
-        self.use_bias = cfg.MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS
-        if self.use_bias:
-            # convey statistics into FrequencyBias to avoid loading again
-            self.freq_bias = FrequencyBias(cfg, statistics)
 
-        self.f_obj = Linear(pooling_dim, hidden_dim, device=device)
-        self.act_obj = ReLU()
-        self.bn_obj = BatchNorm2d(hidden_dim, device=device) # TODO: BatchNorm3d?
+        # LRGA stuff
+        # TODO: put LRGA in its own class
+        self.time_step_num = config.MODEL.ROI_RELATION_HEAD.LRGA.TIME_STEP_NUM
+        self.k = config.MODEL.ROI_RELATION_HEAD.LRGA.K
+        self.num_groups = config.MODEL.ROI_RELATION_HEAD.LRGA.NUM_GROUPS
+        self.dropout = config.MODEL.ROI_RELATION_HEAD.LRGA.DROPOUT
+        self.in_channels = self.pooling_dim
 
-        # Pairwise-specific nn dims
-        f_nn_type = cfg.MODEL.ROI_RELATION_HEAD.PAIRWISE.F_NN_TYPE
-        self.use_pairwise_l1 = use_pairwise_l1 = cfg.MODEL.ROI_RELATION_HEAD.PAIRWISE.USE_PAIRWISE_L1
-        self.use_pairwise_l2 = use_pairwise_l2 = cfg.MODEL.ROI_RELATION_HEAD.PAIRWISE.USE_PAIRWISE_L2
-        self.use_pairwise_l3 = use_pairwise_l3 = cfg.MODEL.ROI_RELATION_HEAD.PAIRWISE.USE_PAIRWISE_L3
-        # pairwise_l1
-        self.act_pairwise_raw = ReLU()
-        self.bn_raw = BatchNorm2d(hidden_dim, device=device) # TODO: BatchNorm3d?
-        # pairwise l2
-        self.act_pairwise_obj_ctx = ReLU()
-        self.bn_pairwise_obj_ctx = BatchNorm2d(hidden_dim, device=device) # TODO: BatchNorm3d?
-        # pairwise l3
-        self.act_pairwise_ctx_subj_obj = ReLU()
-        self.bn_pairwise_ctx_subj_obj = BatchNorm2d(hidden_dim, device=device) # TODO: BatchNorm3d?
-        # try different kinds of neural networks:
-        if f_nn_type == 'linear':
-            if use_pairwise_l1:
-                self.f_ab_raw = Linear(in_channels, hidden_dim, device=device) # dtype=?
-                layer_init_kaiming_normal(self.f_ab_raw)
-            if use_pairwise_l2:
-                self.f_ab_obj_ctx = Linear(1, 1, device=device)
-                layer_init_kaiming_normal(self.f_ab_obj_ctx)
-            if use_pairwise_l3:
-                self.f_ab_obj_ctx_subj_obj = Linear(1, 1, device=device)
-                layer_init_kaiming_normal(self.f_ab_obj_ctx_subj_obj)
-        elif f_nn_type == 'mha':
-            raise NotImplementedError(f'{f_nn_type} is not implementated')
-        elif f_nn_type == 'lra':
-            raise NotImplementedError(f'{f_nn_type} is not implementated')
-        elif f_nn_type == 'gnn':
-            raise NotImplementedError(f'{f_nn_type} is not implementated')
-        elif f_nn_type == 'scl':
-            raise NotImplementedError(f'{f_nn_type} is not implementated')
-        else:
-            raise NotImplementedError(f'{f_nn_type} is not implementated')
-        # ROI feature fusion of many derived only from roi features
-        self.fusion_method_roi = fusion_method_roi = cfg.MODEL.ROI_RELATION_HEAD.PAIRWISE.FUSION_METHOD_ROI
-        if fusion_method_roi == 'plus':
-            self.after_fusion = Linear(1, 1, device=device)
-            self.bn_after_fusion = BatchNorm2d(1, device=device)
-            # ctx_pairwise_rois = obj_features_subject + obj_features_object + pairwise_ctx_raw + pairwise_ctx_obj_ctx + pairwise_ctx_obj_ctx_subj_obj
-            # ctx_pairwise_rois = self.bn_after_fusion(self.act_after_fusion(self.after_fusion(ctx_pairwise_rois)))
-        elif fusion_method_roi == 'concat':
-            self.after_fusion = Linear(1, 1, device=device)
-            self.bn_after_fusion = BatchNorm2d(1, device=device)
-            # ctx_pairwise_rois = torch_cat([obj_features_subject, obj_features_object, pairwise_ctx_raw, pairwise_ctx_obj_ctx, pairwise_ctx_obj_ctx_subj_obj])
-            # ctx_pairwise_rois = self.bn_after_fusion(self.act_after_fusion(self.after_fusion(ctx_pairwise_rois)))
-        self.act_after_fusion = ReLU()
+        # self.use_gsc = config.MODEL.ROI_RELATION_HEAD.USE_GSC
+        # if self.use_gsc:
+        #     self.gsc_classify_dim_1 = 64
+        #     self.gsc_classify_1 = Linear(self.pooling_dim, self.gsc_classify_dim_1)
+        #     layer_init_kaiming_normal(self.gsc_classify_1)
+        #     self.gsc_classify_dim_2 = 1024
+        #     self.gsc_classify_2 = Linear(self.gsc_classify_dim_1, self.gsc_classify_dim_2)
+        #     layer_init_kaiming_normal(self.gsc_classify_2)
+        #     self.attention_1 = LowRankAttention(self.k, self.in_channels, self.dropout)
+        #     self.dimension_reduce_1 = Sequential(Linear(2*self.k + self.gsc_classify_dim_1, self.gsc_classify_dim_1), ReLU())
+        #
+        #     self.gn = GroupNorm(self.num_groups, self.gsc_classify_dim_1)
+        #
+        #     self.attention_2 = LowRankAttention(self.k, self.gsc_classify_dim_1, self.dropout)
+        #     self.dimension_reduce_2 = Sequential(Linear(2*self.k + self.gsc_classify_dim_1, self.gsc_classify_dim_2))
+        #
+        #     self.gsc_compress = Linear(self.gsc_classify_dim_2, self.num_rel_cls)
+        #     layer_init_kaiming_normal(self.gsc_compress)
 
-        # Final fusion from features derived from both roi features and union features
-        self.rel_compress = Linear(pooling_dim, num_rel_cls, device=device)
-        layer_init_kaiming_normal(self.rel_compress)
-        self.ctx_compress = Linear(hidden_dim * 2, num_rel_cls, device=device)
-        layer_init_kaiming_normal(self.ctx_compress)
+        # initialize layer parameters
+        if self.with_cleanclf is False:
+            self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
+            # self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
+            self.ctx_compress = Linear(self.hidden_dim, self.num_rel_cls)
+            layer_init_kaiming_normal(self.rel_compress)
+            layer_init_kaiming_normal(self.ctx_compress)
+            if self.use_bias:
+                # convey statistics into FrequencyBias to avoid loading again
+                self.freq_bias = FrequencyBias(config, statistics)
 
-        self.fusion_method_final = fusion_method_final = cfg.MODEL.ROI_RELATION_HEAD.PAIRWISE.FUSION_METHOD_FINAL
-        if fusion_method_final == 'add':
-            self.fusion_final = Linear(pooling_dim, num_rel_cls, device=device)
-        elif fusion_method_final == 'concat':
-            self.fusion_final = Linear(pooling_dim, num_rel_cls, device=device)
-        else:
-            raise NotImplementedError(f'{fusion_method_final} is not implementated')
-        layer_init_kaiming_normal(self.fusion_final)
+        # the transfer classifier
+        if self.with_cleanclf:
+            self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
+            layer_init_kaiming_normal(self.rel_compress_clean)
+            self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
+            layer_init_kaiming_normal(self.ctx_compress_clean)
+            if self.use_gsc:
+                self.gsc_compress_clean = Linear(self.gsc_classify_dim_2, self.num_rel_cls)
+                layer_init_kaiming_normal(self.gsc_compress_clean)
+            # self.gcns_rel_clean = GCN(self.pooling_dim, self.pooling_dim, self.dropout_rate)
+            # self.gcns_ctx_clean = GCN(self.hidden_dim * 2, self.hidden_dim * 2, self.dropout_rate)
+            if self.use_bias:
+                self.freq_bias_clean = FrequencyBias(config, statistics)
+        if self.with_transfer:
+            #pred_adj_np = np.load('./misc/conf_mat_adj_mat.npy')
+            print("Using Confusion Matrix Transfer!")
+            pred_adj_np = np.load('./misc/conf_mat_freq_train.npy')
+            # pred_adj_np = 1.0 - pred_adj_np
+            pred_adj_np[0, :] = 0.0
+            pred_adj_np[:, 0] = 0.0
+            pred_adj_np[0, 0] = 1.0
+            # adj_i_j means the baseline outputs category j, but the ground truth is i.
+            pred_adj_np = pred_adj_np / (pred_adj_np.sum(-1)[:, None] + 1e-8)
+            pred_adj_np = adj_normalize(pred_adj_np)
+            self.pred_adj_nor = torch_as_tensor(pred_adj_np, dtype=torch_float32).to(self.devices)
+            # self.pred_adj_layer_clean = Linear(self.num_rel_cls, self.num_rel_cls, bias=False)
+            # #layer_init(self.pred_adj_layer_clean, xavier=True)
+            # with torch_no_grad():
+            #     self.pred_adj_layer_clean.weight.copy_(torch.eye(self.num_rel_cls,dtype=torch.float), non_blocking=True)
+                #self.pred_adj_layer_clean.weight.copy_(self.pred_adj_nor, non_blocking=True)
 
+        # f_nn_type = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.F_NN_TYPE
+
+        self.use_pairwise_l2 = use_pairwise_l2 = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.USE_PAIRWISE_L2
+        if self.use_pairwise_l2 is True:
+            self.act_pairwise_obj_ctx = ReLU()
+            # self.bn_pairwise_obj_ctx = BatchNorm2d(self.hidden_dim, device=self.devices) # TODO: BatchNorm3d?
+            # self.bn_pairwise_obj_ctx = BatchNorm2d(self.hidden_dim, device=self.devices) # TODO: BatchNorm3d?
+            self.bn_pairwise_obj_ctx = BatchNorm1d(self.hidden_dim, device=self.devices) # TODO: BatchNorm3d?
+            # self.f_ab_obj_ctx = Linear(1, 1, device=device)
+            # layer_init_kaiming_normal(self.f_ab_obj_ctx)
+            self.f_ab_obj_ctx = AxialAttention(
+                dim=self.hidden_dim,               # embedding dimension
+                dim_index = 2,         # where is the embedding dimension
+                # dim_heads = 32,        # dimension of each head. defaults to dim // heads if not supplied
+                heads = 8,             # number of heads for multi-head attention
+                num_dimensions = 2,    # number of axial dimensions (images is 2, video is 3, or more)
+                sum_axial_out = True   # whether to sum the contributions of attention on each axis, or to run the input through them sequentially. defaults to true
+            )
 
     def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None, global_image_features=None):
+        """
+        Args:
+            proposals: list[Tensor]: of length batch_size
+                       len(proposals) = 16
+                       proposal_0 = proposals[0]
+                       proposal_0 is BoxList(num_boxes=80, image_width=600, image_height=900, mode=xyxy)
+                       len(proposal_0) = 80
+                       proposal_0[[0]] is the way to access the boxlist
+            obj_dists (list[Tensor]): logits of object label distribution
+            rel_dists (list[Tensor])
+            rel_pair_idxs (list[Tensor]): (num_rel, 2) index of subject and object
+                                          (Pdb) rel_pair_idxs[0].size()
+                                          torch.Size([156, 2])
+
+            union_features (Tensor): (batch_num_rel, context_pooling_dim): visual union feature of each pair
+                                     (Pdb) union_features.size()
+                                     torch.Size([3009, 4096])
+        Returns:
+            obj_dists (list[Tensor]): logits of object label distribution
+            rel_dists (list[Tensor])
+            rel_pair_idxs (list[Tensor]): (num_rel, 2) index of subject and object
+            union_features (Tensor): (batch_num_rel, context_pooling_dim): visual union feature of each pair
+        """
+        if self.attribute_on:
+            obj_dists, obj_preds, att_dists, edge_ctx = self.context_layer(roi_features, proposals, logger)
+        else:
+            obj_dists, obj_preds, edge_ctx = self.context_layer(roi_features, proposals, logger)
+
+        # post decode
+        # (Pdb) edge_ctx.size()
+        # torch.Size([1280, 768])
+        edge_rep = self.post_emb(edge_ctx)
+        del edge_ctx
+        hidden_dim = self.hidden_dim
+        edge_rep = edge_rep.view(edge_rep.size(0), 2, hidden_dim) # torch.Size([1280, 2, 768])
+
+        # head_rep = edge_rep[:, 0].contiguous().view(-1, hidden_dim) # torch.Size([1280, 768])
+        # tail_rep = edge_rep[:, 1].contiguous().view(-1, hidden_dim) # torch.Size([1280, 768])
+        head_rep = edge_rep[:, 0] # torch.Size([1280, 768])
+        tail_rep = edge_rep[:, 1] # torch.Size([1280, 768])
+        del edge_rep
+
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [len(b) for b in proposals]
         assert len(num_rels) == len(num_objs)
-        # QUESTION: what is the purpose of the 1280 objects if we already have rel_pair_idxs?
-
-        # rel_pair_idxs_global = torch_cat([rel_pair_idx + num_ ])
         rel_pair_idxs_global = [] # TODO: construct and fill instead?
         num_objs_culsum = 0
         # TODO: maybe use cumsum as an optimization?
@@ -131,107 +217,185 @@ class PairwisePredictor(Module):
         rel_pair_idxs_global = torch_cat(rel_pair_idxs_global)
         rel_pair_idxs_global_head = rel_pair_idxs_global[:, 0]
         rel_pair_idxs_global_tail = rel_pair_idxs_global[:, 1]
+
+        prod_rep = torch_cat((head_rep[rel_pair_idxs_global_head], tail_rep[rel_pair_idxs_global_tail]), dim=-1)
+        del rel_pair_idxs_global_head, rel_pair_idxs_global_tail
+        pair_pred = obj_preds[rel_pair_idxs_global]
         del rel_pair_idxs_global
-        # TODO: abs may not be necessary here because only the self multiplication is squared.
-        # pairwise_raw = roi_features[:, None, :] * roi_features[None, :, :] # [1280, 1280, 4096] # or use roi_features instead
-        if self.use_pairwise_l1 is True:
-            pairwise_raw = roi_features[rel_pair_idxs_global_head, None, :] * roi_features[None, rel_pair_idxs_global_tail, :] # [3009, 3009, 4096] # or use roi_features instead
-            pairwise_ctx_raw = self.bn_raw(self.act_pairwise_raw(self.f_ab_raw(pairwise_raw)))
-            del pairwise_raw
-            if self.use_pairwise_l2 is False and self.use_pairwise_l3 is False:
-                del rel_pair_idxs_global_head, rel_pair_idxs_global_tail
 
-        obj_ctx = self.bn_obj(self.act_obj(self.f_obj(roi_features)))
-        del roi_features
+        # head_reps = head_rep.split(num_objs, dim=0) # 16 * torch.Size([80, 768])
+        # tail_reps = tail_rep.split(num_objs, dim=0) # 16 * torch.Size([80, 768])
+        # obj_preds = obj_preds.split(num_objs, dim=0) # 16 * torch.Size([80])
+        # del head_rep, tail_rep
+        # from object level feature to pairwise relation level feature
+        # prod_reps = []
+        # pair_preds = []
+        # device = union_features.device
+        # if self.use_gsc:
+        #     pairs_culsum = 0
+        #     new_to_old = torch_empty(union_features.size(0), dtype=int, device=device) # [3298]
 
-        use_gt_label = self.training or self.use_gt_object_label
-        obj_labels = torch_cat([proposal.get_field("labels").to(torch_int64, non_blocking=True) for proposal in proposals], dim=0) if use_gt_label else None
 
-        if self.mode == 'predcls':
-            del proposals
-            obj_preds = obj_labels
-            obj_dists = to_onehot(obj_preds, self.num_obj_cls)
-        else:
-            obj_dists = self.out_obj(obj_ctx)
-            use_decoder_nms = self.mode == 'sgdet' and not self.training
-            if use_decoder_nms:
-                del proposals
-                boxes_per_cls = [proposal.get_field('boxes_per_cls') for proposal in proposals]
-                obj_preds = self.nms_per_cls(obj_dists, boxes_per_cls, num_objs)
-            else:
-                del proposals
-                obj_preds = obj_dists[:, 1:].max(1)[1] + 1
 
-        obj_preds = obj_preds.split(num_objs, dim=0) # 16 * torch.Size([80])
+        # for img_idx, (pair_idx, head_rep, tail_rep, obj_pred) in enumerate(zip(rel_pair_idxs, head_reps, tail_reps, obj_preds)):
+        #     prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
+        #     pair_preds.append(obj_pred[pair_idx])
+        # print('after prod_reps, pair_preds')
+            # if self.use_gsc:
+            #     new_to_old[pairs_culsum:pairs_culsum+len(pair_idx)] = img_idx
+            #     pairs_culsum += len(pair_idx)
+        # del rel_pair_idxs, head_reps, tail_reps, obj_preds, img_idx, pair_idx, head_rep, tail_rep, obj_pred,
+        # del rel_pair_idxs, head_reps, tail_reps, obj_preds, img_idx, pair_idx, obj_pred,
+        # del rel_pair_idxs, head_reps, tail_reps, obj_preds
+        del rel_pair_idxs, obj_preds, head_rep, tail_rep
+        # if self.use_gsc:
+        #     del pairs_culsum
+        # prod_rep = cat(prod_reps, dim=0) # torch.Size([3009, 1536]) torch.Size([5022, 1536]) # # REVIEW: Is this some sort of stateful bug?
+        # assert equal(prod_rep_new, prod_rep)
+        # del prod_reps
+        # pair_pred = cat(pair_preds, dim=0) # torch.Size([3009, 2])
+        # assert equal(pair_pred_new, pair_pred)
+        # del pair_preds
+        # breakpoint()
+        # if self.use_gsc:
+        #     global_features_mapped = global_image_features[new_to_old].to(device)
+        #     del global_image_features, new_to_old, device
+        #
+        # if self.use_gsc:
+        #     # GSC Context
+        #
+        #     # 1. Just the context suboutput
+        #     # 1A. context
+        #     # num_images = [1 for _ in range(global_features_mapped.size(0))]
+        #     # gsc_ctx = self.context_gsc(global_features_mapped, num_images) # torch.Size([506, 4096]) =>
+        #
+        #     # 2. Post context for the overall model
+        #     # gsc_rep = self.post_emb_gsc(gsc_ctx) # [num_unions, 768] => [num_unions, 768]
+        #
+        #     # First pass
+        #     # TODO: Which kind of op? Let's start off with a simple linear
+        #     # But linear to what?
+        #     # 1. arbitarily large (like 1024)
+        #     # 2. arbitarily bottlenecked (like 64)
+        #     # 3. same (4096)
+        #     x_local = self.gsc_classify_1(global_features_mapped) # [506, 4096] => [506, 64]
+        #     x_local = F_relu(x_local) # TODO: need some sort of layers for repr learn?
+        #     x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+        #     x_global = self.attention_1(global_features_mapped) # torch.Size([506, 100])
+        #     del global_features_mapped
+        #     x = self.dimension_reduce_1(torch_cat((x_global, x_local), dim=1)) # torch.Size([506, 64])
+        #     x = self.gn(x) # torch.Size([506, 64])
+        #
+        #     # Second/last pass
+        #     x_local = self.gsc_classify_2(x)
+        #     x_local = F_relu(x)
+        #     x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+        #     x_global = self.attention_2(x) # TOOD: or union_features?
+        #     del x
+        #     gsc_rep = self.dimension_reduce_2(torch_cat((x_global, x_local), dim=1))
+        #     del x_local, x_global
+        # obj_ctx =
+        # obj_ctx_subj = obj_ctx[rel_pair_idxs_global_head] # [506, 768]
+        # obj_ctx_obj = obj_ctx[rel_pair_idxs_global_tail] # [506, 768]
+        # del obj_ctx
 
-        pair_preds = []
-        for pair_idx, obj_pred in zip(rel_pair_idxs, obj_preds):
-            pair_preds.append(obj_pred[pair_idx])
-
-        pair_pred = torch_cat(pair_preds, dim=0) # torch.Size([3009, 2])
-        del pair_preds
+        # for rel_pair_idx, num_obj in zip(rel_pair_idxs, num_objs):
+        #     rel_pair_idxs_global.append(rel_pair_idx + num_objs_culsum if num_objs_culsum > 0 else rel_pair_idx)
+        #     num_objs_culsum += num_obj
 
         if self.use_pairwise_l2 is True:
-            pairwise_obj_ctx = obj_ctx[rel_pair_idxs_global_head, None, :] * obj_ctx[None, rel_pair_idxs_global_tail, :] # [1280, 1280, 4096] # or use roi_features instead
-            pairwise_ctx_obj_ctx = self.bn_pairwise_obj_ctx(self.act_pairwise_obj_ctx(self.f_ab_obj_ctx(pairwise_obj_ctx)))
-            del pairwise_obj_ctx
-            if self.use_pairwise_l3 is False:
-                del rel_pair_idxs_global_head, rel_pair_idxs_global_tail
-        obj_features_subject = self.bn_obj_subj(self.act_obj_subj(self.f_a(obj_ctx)))
-        obj_features_object = self.bn_obj_obj(self.act_obj_obj(self.f_b(obj_ctx)))
-        del obj_ctx
+            # obj_ctx_subj = prod_rep[rel_pair_idxs_global_head] # [506, 768]
+            # obj_ctx_obj = prod_rep[rel_pair_idxs_global_tail] # [506, 768]
+            # del obj_ctx
+            # TODO: optimize the permute to reduce the number of permute operations.
+            # pairwise_obj_ctx_old = obj_ctx[rel_pair_idxs_global_head, None, :] * obj_ctx[None, rel_pair_idxs_global_tail, :] # torch.Size([506, 506, 768]) # or use roi_features instead
+            # TODO Need to normalize obj_ctx_subj obj_ctx_obj before multiplication because small numbers
+            # pairwise_obj_ctx = head_rep.unsqueeze(1) * tail_rep.unsqueeze(0) # torch.Size([506, 506, 768]) # or use roi_features instead
+            head_rep, tail_rep = prod_rep.hsplit(2)
+            # pairwise_obj_ctx = head_rep.unsqueeze(1) * tail_rep.unsqueeze(0) # torch.Size([506, 506, 768]) # or use roi_features instead
 
-        if self.use_pairwise_l3 is True:
-            pairwise_obj_ctx_subj_obj = obj_features_subject[rel_pair_idxs_global_head, None, :] * obj_features_object[None, rel_pair_idxs_global_tail, :] # [1280, 1280, 4096] # or use roi_features instead
-            del rel_pair_idxs_global_head, rel_pair_idxs_global_tail
-            pairwise_ctx_obj_ctx_subj_obj = self.bn_pairwise_ctx_subj_obj(self.act_pairwise_ctx_subj_obj(self.f_ab_obj_ctx_subj_obj(pairwise_obj_ctx_subj_obj)))
-            del pairwise_obj_ctx_subj_obj
+            pairwise_obj_ctx = torch_stack((head_rep, tail_rep), dim=2) # torch.Size([506, 768, 2]) # or use roi_features instead
+            del head_rep, tail_rep
+            # print('after stacking prod_reps, pair_preds pairwise_obj_ctx')
+            # breakpoint()
+            # [1, 506, 768, 2]
+            # breakpoint()
+            # breakpoint()
+            pairwise_obj_ctx = pairwise_obj_ctx.unsqueeze_(0)
+            # print('after unsqueeze')
+            # pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([1, 506, 2, 768])
+            # breakpoint()
+            # print(f'pairwise_obj_ctx.size() = {pairwise_obj_ctx.size()}')
+            pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([506, 2, 768])
+            # print('after self.f_ab_obj_ctx')
+            pairwise_obj_ctx = self.act_pairwise_obj_ctx(pairwise_obj_ctx)
+            # print('after self.act_pairwise_obj_ctx')
+            # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 3, 1) # torch.Size([1, 768, 506, 2])
+            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([768, 506, 2])
+            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([768, 506, 2])
+            # breakpoint()
+            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx.transpose_(1, 2)) # torch.Size([506, 768, 2])
+            pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([506, 768, 2])
+            # print('after self.bn_pairwise_obj_ctx')
+            # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 0, 2) # torch.Size([768, 506, 2])
+            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
+            # pairwise_obj_ctx.transpose_()
+            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
+            # breakpoint()
+            pairwise_obj_ctx = pairwise_obj_ctx.sum(dim=2) # [506, 768] # TODO: prod?
+            # print('after sum')
+            # ctx_pairwise_rois = obj_features_subject + obj_features_object + pairwise_obj_ctx.transpose_(0, 1)
 
-        # Fusion
-        # TODO: add vs concat
-        if self.fusion_method_roi == 'plus':
-            ctx_pairwise_rois = obj_features_subject + obj_features_object + pairwise_ctx_raw + pairwise_ctx_obj_ctx + pairwise_ctx_obj_ctx_subj_obj
-            ctx_pairwise_rois = self.bn_after_fusion(self.act_after_fusion(self.after_fusion(ctx_pairwise_rois)))
-        elif self.fusion_method_roi == 'concat':
-            ctx_pairwise_rois = torch_cat([obj_features_subject, obj_features_object, pairwise_ctx_raw, pairwise_ctx_obj_ctx, pairwise_ctx_obj_ctx_subj_obj])
-            ctx_pairwise_rois = self.bn_after_fusion(self.act_after_fusion(self.after_fusion(ctx_pairwise_rois)))
 
-        ctx_gate = self.post_cat(pairwise_ctx_obj_ctx) # torch.Size([3009, 4096]) # TODO: Use F_sigmoid?
+        ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096]) # TODO: Use F_sigmoid?
+        # print('after self.post_cat')
         visual_rep = union_features * ctx_gate
+        # print('after gating')
+        del union_features, ctx_gate
 
-        if self.fusion_method_final == 'plus':
-            rel_dists = self.rel_compress(visual_rep) + self.ctx_compress(ctx_pairwise_rois)
-        elif self.fusion_method_roi == 'concat':
-            rel_dists = torch_cat(self.rel_compress(visual_rep), self.ctx_compress(ctx_pairwise_rois))
+        if not self.with_cleanclf:
+            # breakpoint()
+            # rel_dists = self.ctx_compress(prod_rep + pairwise_obj_ctx.transpose_(0, 1)) + self.rel_compress(visual_rep)  # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            rel_dists = self.ctx_compress(pairwise_obj_ctx) + self.rel_compress(visual_rep)  # TODO: this is new # TODO need to match which of the 3009 belong to which image. Need to up dim but with unravling.
+            # print('after compression')
+            del visual_rep, prod_rep
+            # if self.use_gsc:
+            #     rel_dists += self.gsc_compress(gsc_rep)
+            #     del gsc_rep
+            if self.use_bias: # True
+                freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
+                del pair_pred
+                rel_dists += F_dropout(freq_dists_bias, 0.3, training=self.training) # torch.Size([3009, 51])
+                # print('after self.use_bias')
+        # the transfer classifier
+        # if self.with_cleanclf:
+        #     rel_dists = self.ctx_compress_clean(prod_rep) + self.rel_compress_clean(visual_rep)
+        #     del visual_rep, prod_rep
+        #     if self.use_gsc:
+        #         rel_dists += self.gsc_compress_clean(gsc_rep)
+        #         del gsc_rep
+        #     if self.use_bias:
+        #         freq_dists_bias = self.freq_bias_clean.index_with_labels(pair_pred)
+        #         del pair_pred
+        #         rel_dists += F_dropout(freq_dists_bias, 0.3, training=self.training)
+        del freq_dists_bias
 
-        if self.use_bias:
-            freq_dists_bias = self.freq_bias.index_with_labels(pair_pred)
-            freq_dists_bias = self.dropout_bias(freq_dists_bias)
-            rel_dists = rel_dists + freq_dists_bias
+        if self.with_transfer:
+            rel_dists = (self.pred_adj_nor @ rel_dists.T).T
 
-        # TODO: instead use pairwise_ctx_obj_ctx because we already have the rel_pair_idxs
-        return obj_dists.split(num_objs), rel_dists.split(num_rels, dim=0), {}
+        add_losses = {}
+        # if self.with_knowdist:
+        #     rel_dists_specific_soft = F.log_softmax(rel_dists, -1)
+        #     rel_dists_general_soft = F_softmax(rel_dists_general, -1)
+        #     add_losses['know_dist_kl'] = self.kd_alpha * self.kl_loss(rel_dists_specific_soft, rel_dists_general_soft)
 
+        obj_dists = obj_dists.split(num_objs, dim=0) # torch.Size([1280, 151]) => 16 * torch.Size([80, 151])
+        rel_dists = rel_dists.split(num_rels, dim=0) # torch.Size([5022, 51]) => (Pdb) rel_dists.split(num_rels, dim=0)[0].size() torch.Size([156, 51]), 240, ...
 
-    def nms_per_cls(self, obj_dists, boxes_per_cls, num_objs):
-        obj_dists = obj_dists.split(num_objs, dim=0)
-        obj_preds = []
-        for i in range(len(num_objs)):
-            is_overlap = nms_overlaps(boxes_per_cls[i]).cpu().numpy() >= self.nms_thresh  # (#box, #box, #class)
-
-            out_dists_sampled = F_softmax(obj_dists[i], -1).cpu().numpy()
-            out_dists_sampled[:, 0] = -1
-
-            out_label = obj_dists[i].new_full(num_objs[i], 0, dtype=torch_int64, device=self.device)
-
-            for i in range(num_objs[i]):
-                box_ind, cls_ind = np_unravel_index(out_dists_sampled.argmax(), out_dists_sampled.shape)
-                out_label[int(box_ind)] = int(cls_ind)
-                out_dists_sampled[is_overlap[box_ind, :, cls_ind], cls_ind] = 0.0
-                out_dists_sampled[box_ind] = -1.0  # This way we won't re-sample
-
-            obj_preds.append(out_label)
-        return torch_cat(obj_preds, dim=0)
+        if self.attribute_on:
+            att_dists = att_dists.split(num_objs, dim=0)
+            return (obj_dists, att_dists), rel_dists, add_losses
+        return obj_dists, rel_dists, add_losses
 
 
 def make_roi_relation_predictor(cfg, in_channels):

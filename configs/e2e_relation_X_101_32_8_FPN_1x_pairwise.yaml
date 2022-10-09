@@ -70,9 +70,12 @@ MODEL:
     BATCH_SIZE_PER_IMAGE: 1024      # sample as much as possible
     POSITIVE_FRACTION: 0.25
     CONTEXT_POOLING_DIM: 4096 #4096
+    # CONTEXT_HIDDEN_DIM: 768 #384 #768         #1024 for VCTree
     CONTEXT_HIDDEN_DIM: 768 #384 #768         #1024 for VCTree
     POOLING_ALL_LEVELS: True
     LABEL_SMOOTHING_LOSS: False
+    USE_GSC: False
+    USE_GSC_FE: False
 
     FEATURE_EXTRACTOR: "RelationFeatureExtractor"
     #################### Select Relationship Model ####################

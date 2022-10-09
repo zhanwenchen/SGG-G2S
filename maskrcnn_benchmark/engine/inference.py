@@ -1,5 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import logging
+from os import environ as os_environ
 from os.path import join as os_path_join, exists as os_path_exists
 
 from torch import no_grad as torch_no_grad, device as torch_device, load as torch_load
@@ -16,10 +17,12 @@ from .bbox_aug import im_detect_bbox_aug
 
 
 def compute_on_dataset(model, data_loader, device, synchronize_gather=True, timer=None):
+    # distributed = int(os_environ['NUM_GPUS']) > 1
     model.eval()
     results_dict = {}
     cpu_device = torch_device("cpu")
     empty_cache()
+    # synchronize_gather = synchronize_gather and distributed
     for _, batch in enumerate(tqdm(data_loader)):
         with torch_no_grad():
             images, targets, image_ids = batch
@@ -30,7 +33,7 @@ def compute_on_dataset(model, data_loader, device, synchronize_gather=True, time
                 output = im_detect_bbox_aug(model, images, device)
             else:
                 # relation detection needs the targets
-                output = model(images.to(device), targets)
+                output = model(images.to(device, non_blocking=True), targets)
             if timer:
                 if not cfg.MODEL.DEVICE == 'cpu':
                     synchronize()

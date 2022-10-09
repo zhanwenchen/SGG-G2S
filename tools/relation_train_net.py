@@ -14,6 +14,7 @@ from datetime import timedelta as datetime_timedelta
 import random
 from resource import RLIMIT_NOFILE, getrlimit, setrlimit
 from comet_ml import API, Experiment, ExistingExperiment
+from torchinfo import summary
 import numpy as np
 from torch import (
     cat as torch_cat,
@@ -29,6 +30,8 @@ from torch.multiprocessing import set_sharing_strategy
 from torch.utils.tensorboard import SummaryWriter
 from torch.backends import cudnn
 from torch.distributed.elastic.multiprocessing.errors import record
+from torch.profiler import profile, record_function, ProfilerActivity
+from torch.autograd import set_detect_anomaly
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
 from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.data import make_data_loader
@@ -61,11 +64,14 @@ def setup_seed(seed):
     random.seed(seed)
     cudnn.deterministic = True
 
+# def train(cfg, local_rank, distributed, logger, experiment=None):
+@record
 def train(cfg, local_rank, distributed, logger, experiment):
     val_before = True # True False
     print_etari = 200 # 3   200
     # debug_print(logger, 'prepare training')
     model = build_detection_model(cfg)
+    print(summary(model))
     # debug_print(logger, 'end model construction')
 
     clean_classifier = cfg.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER
@@ -99,6 +105,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
 
     optimizer, lrs_by_name = make_optimizer(cfg, model, logger, rl_factor=float(num_batch), return_lrs_by_name=True)
     hyperparameters = {'batch_size': num_batch, **lrs_by_name}
+    # using_comet = experiment is not None
+    # if using_comet and not isinstance(experiment, ExistingExperiment):
     if not isinstance(experiment, ExistingExperiment):
         experiment.log_parameters(hyperparameters)
     print('hyperparameters =', hyperparameters)
@@ -185,7 +193,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
         model = DistributedDataParallel(
             model, device_ids=[local_rank], output_device=local_rank,
             # this should be removed if we update BatchNorm stats
-            broadcast_buffers=False,
+            # broadcast_buffers=False,
             find_unused_parameters=True,
         )
     debug_print(logger, 'end distributed')
@@ -319,7 +327,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
                 checkpointer.save("model_{:07d}_final".format(iteration), **arguments)
 
             val_result = None # used for scheduler updating
-        if (to_val and iteration % val_period) or (iteration == max_iter):
+        if (to_val and iteration % val_period == 0) or (iteration == max_iter):
             with experiment.validate():
                 logger.info(f'Start validating model {model_name} at iteration={iteration}.')
                 val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment)
@@ -337,7 +345,6 @@ def train(cfg, local_rank, distributed, logger, experiment):
             scheduler.step(val_result, epoch=iteration)
             if scheduler.stage_count >= max_decay_step:
                 logger.info("Trigger MAX_DECAY_STEP at iteration {}.".format(iteration))
-                # break
         else:
             scheduler.step()
         writer.add_scalars(f'{mode}/loss', {'loss': losses_reduced, **loss_dict_reduced}, iteration)
@@ -368,6 +375,7 @@ def fix_eval_modules_no_classifier(module, with_grad_name='_clean'):
         # DO NOT use module.eval(), otherwise the module will be in the test mode, i.e., all self.training condition is set to False
 
 
+@record
 @torch_no_grad()
 def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment):
     model_name = os_environ.get('MODEL_NAME')
@@ -423,7 +431,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
 @torch_no_grad()
 def run_test(cfg, model, distributed, logger, iteration, experiment):
     model_name = os_environ.get('MODEL_NAME')
-    debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
+    debug_print(logger, f'running test for model {model_name} at iteration={iteration}')
     writer = SummaryWriter(log_dir=os_path_join(cfg.OUTPUT_DIR, 'tensorboard_test'))
     if distributed:
         model = model.module
@@ -481,6 +489,7 @@ def run_test(cfg, model, distributed, logger, iteration, experiment):
 
 @record
 def main():
+    set_detect_anomaly(True)
     set_sharing_strategy('file_system')
     setrlimit(RLIMIT_NOFILE, (4096, getrlimit(RLIMIT_NOFILE)[1]))
     setup_seed(int(os_environ['SEED']))
@@ -510,7 +519,7 @@ def main():
     num_gpus = int(os_environ["WORLD_SIZE"]) if "WORLD_SIZE" in os_environ else 1
     args.distributed = num_gpus > 1
 
-    local_rank = int(os_environ['LOCAL_RANK'])
+    local_rank = int(os_environ.get('LOCAL_RANK', -1))
     if args.distributed:
         set_device(local_rank)
         init_process_group(
@@ -545,10 +554,27 @@ def main():
     save_config(cfg, output_config_path)
 
     model_name = os_environ['MODEL_NAME']
-    experiment = get_experiment(model_name)
+    disable_comet = bool(os_environ.get('COMET_DISABLE', False))
+    # if disable_comet:
+    #     experiment=None
+    # else:
+    experiment = get_experiment(model_name, disable_comet)
     experiment.set_name(model_name)
 
+    # try:
+    #     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    #             profile_memory=True, record_shapes=True) as prof:
+    #         train(cfg, local_rank, args.distributed, logger, experiment)
+    # except Exception as E:
+    #     # prof.export_chrome_trace("trace.json")
+    #     # prof.export_stacks("profiler_stacks.txt", "self_cuda_time_total")
+    #     # print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cuda_time_total", row_limit=2))
+    #     raise E
     train(cfg, local_rank, args.distributed, logger, experiment)
+
+    # print(prof.key_averages().table(sort_by="self_cpu_memory_usage", row_limit=10))
+    #
+    # print(prof.key_averages().table(sort_by="cpu_memory_usage", row_limit=10))
 
     # if not args.skip_test:
     #     with experiment.test():
