@@ -49,11 +49,11 @@ if [ -d "$MODEL_DIRNAME" ]; then
   error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.log
 else
   export CUDA_VISIBLE_DEVICES=0
-  export NUM_GPUS=1
   export SEED=1234
   export BATCH_SIZE=8
   export MAX_ITER=15000
   export LR=1e-3
+  export USE_GSC=False
   export USE_GSC_FE=False
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_pairwise.yaml
   export DATA_DIR_VG_RCNN=/home/zhanwen/datasets
