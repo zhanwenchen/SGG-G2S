@@ -4,7 +4,15 @@ from comet_ml import API, Experiment, ExistingExperiment
 from maskrcnn_benchmark.utils.my_secrets import COMET_API_KEY, COMET_PROJECT_NAME, COMET_WORKSPACE
 
 
-def get_experiment(run_id):
+def get_experiment(run_id, disabled):
+    if disabled is True:
+        return Experiment(
+            api_key=COMET_API_KEY,
+            project_name=COMET_PROJECT_NAME,
+            workspace=COMET_WORKSPACE,
+            disabled=disabled
+        )
+
     experiment_id = sha1(run_id.encode("utf-8")).hexdigest()
     os_environ["COMET_EXPERIMENT_KEY"] = experiment_id
 
@@ -16,6 +24,7 @@ def get_experiment(run_id):
             api_key=COMET_API_KEY,
             project_name=COMET_PROJECT_NAME,
             workspace=COMET_WORKSPACE,
+            disabled=disabled
         )
     else:
-        return ExistingExperiment(project_name=COMET_PROJECT_NAME)
+        return ExistingExperiment(project_name=COMET_PROJECT_NAME, disabled=disabled)
