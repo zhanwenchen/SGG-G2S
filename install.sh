@@ -53,6 +53,7 @@ wget https://github.com/uploadcare/pillow-simd/archive/refs/tags/9.0.1.zip
 cd pillow-simd-9.0.1/
 CC="cc -mavx2" python setup.py install
 conda install -c conda-forge --no-deps jpeg libtiff 
-pip install overrides tensorboard
+pip install overrides tensorboard torchinfo
 python -c 'import PIL; print(PIL.__version__)'
 python -c 'import PIL.features; print(PIL.features.check_feature("libjpeg_turbo"))'
+
