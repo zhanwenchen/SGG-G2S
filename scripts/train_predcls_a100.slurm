@@ -68,6 +68,7 @@ else
   export USE_GSC_FE=True
   export SINGULARITYENV_PREPEND_PATH="/home/pct4et/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml
+  export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:/home/pct4et/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_predcls.sh
 fi

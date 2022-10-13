@@ -57,6 +57,7 @@ else
   export USE_GSC_FE=False
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_pairwise.yaml
   export DATA_DIR_VG_RCNN=/home/zhanwen/datasets
+  export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))
 
   ${PROJECT_DIR}/scripts/train_predcls.sh
 fi

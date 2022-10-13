@@ -15,7 +15,6 @@ error_exit()
     exit 1
 }
 export TORCHELASTIC_MAX_RESTARTS=0
-export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 echo "TRAINING PredCls model ${MODEL_NAME}"
 cd ${PROJECT_DIR}
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
