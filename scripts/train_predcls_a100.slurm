@@ -2,12 +2,12 @@
 
 #SBATCH -A sds-rise
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:a100:2
-#SBATCH --ntasks-per-node=2 # need to match number of gpus
-#SBATCH -t 24:00:00
+#SBATCH --gres=gpu:a100:4
+#SBATCH --ntasks-per-node=4 # need to match number of gpus
+#SBATCH -t 72:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB # need to match batch size.
-#SBATCH -J v1b5_predcls_2GPU_riv_1 # TODO: CHANGE THIS
+#SBATCH -J pairwise_hadamard_mha_4GPU_riv_1_predcls # TODO: CHANGE THIS
 #SBATCH -o /home/pct4et/gsc/log/%x-%A.out
 #SBATCH -e /home/pct4et/gsc/log/%x-%A.err
 #SBATCH --mail-type=ALL
@@ -50,7 +50,7 @@ error_check()
 
 }
 
-export PROJECT_DIR=/home/pct4et/gsc
+export PROJECT_DIR=${HOME}/gsc
 export MODEL_NAME="${SLURM_JOB_ID}_${SLURM_JOB_NAME}"
 export LOGDIR=${PROJECT_DIR}/log
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
@@ -63,12 +63,13 @@ else
 
   export SEED=1234
   export BATCH_SIZE=64
-  export MAX_ITER=15000
+  export MAX_ITER=50000
   export LR=1e-3
-  export USE_GSC_FE=True
-  export SINGULARITYENV_PREPEND_PATH="/home/pct4et/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
-  export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml
+  export USE_GSC_FE=False
+  export SINGULARITYENV_PREPEND_PATH="${HOME}/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
+  export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_pairwise.yaml
   export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+  export DATA_DIR_VG_RCNN=${HOME}/datasets
 
-  singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:/home/pct4et/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_predcls.sh
+  singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_predcls.sh
 fi

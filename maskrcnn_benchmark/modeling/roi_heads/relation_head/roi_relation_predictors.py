@@ -8,7 +8,7 @@ from torch import (
     equal
 )
 # from torch.nn import Module, Linear, ModuleList, Sequential, GroupNorm, ReLU, BatchNorm2d
-from torch.nn import Module, Linear, ReLU, BatchNorm1d
+from torch.nn import Module, Linear, ReLU, BatchNorm1d, TransformerEncoderLayer, TransformerEncoder, Sequential, GroupNorm
 from torch.nn.functional import dropout as F_dropout
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.data import get_dataset_statistics
@@ -17,6 +17,11 @@ from .model_motifs import FrequencyBias
 from .model_transformer import TransformerContext
 from .utils_relation import layer_init_kaiming_normal
 from .axial_attention import AxialAttention
+from .lrga import LowRankAttention
+
+
+METHODS_DATA_2D = {'concat', 'raw_obj_pairwise'}
+METHODS_DATA_1D = {'hadamard', 'mm', 'cosine_similarity'}
 
 
 @registry.ROI_RELATION_PREDICTOR.register("PairwisePredictor")
@@ -34,7 +39,7 @@ class PairwisePredictor(Module):
         self.use_vision = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
         self.use_bias = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS
         self.with_knowdist = False
-        self.devices = config.MODEL.DEVICE
+        self.devices = devices = config.MODEL.DEVICE
         self.with_transfer = config.MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER
         self.with_cleanclf = config.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER
         # load class dict
@@ -47,7 +52,7 @@ class PairwisePredictor(Module):
         self.val_alpha = config.MODEL.ROI_RELATION_HEAD.VAL_ALPHA
 
         # module construct
-        self.hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
+        self.hidden_dim = hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
         self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
         self.v_dim = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.VAL_DIM
         self.k_dim = config.MODEL.ROI_RELATION_HEAD.TRANSFORMER.KEY_DIM
@@ -75,11 +80,11 @@ class PairwisePredictor(Module):
 
         # LRGA stuff
         # TODO: put LRGA in its own class
-        self.time_step_num = config.MODEL.ROI_RELATION_HEAD.LRGA.TIME_STEP_NUM
-        self.k = config.MODEL.ROI_RELATION_HEAD.LRGA.K
-        self.num_groups = config.MODEL.ROI_RELATION_HEAD.LRGA.NUM_GROUPS
-        self.dropout = config.MODEL.ROI_RELATION_HEAD.LRGA.DROPOUT
-        self.in_channels = self.pooling_dim
+        # self.time_step_num = config.MODEL.ROI_RELATION_HEAD.LRGA.TIME_STEP_NUM
+        # self.k = config.MODEL.ROI_RELATION_HEAD.LRGA.K
+        # self.num_groups = config.MODEL.ROI_RELATION_HEAD.LRGA.NUM_GROUPS
+        # self.dropout = config.MODEL.ROI_RELATION_HEAD.LRGA.DROPOUT
+        # self.in_channels = self.pooling_dim
 
         # self.use_gsc = config.MODEL.ROI_RELATION_HEAD.USE_GSC
         # if self.use_gsc:
@@ -102,9 +107,9 @@ class PairwisePredictor(Module):
 
         # initialize layer parameters
         if self.with_cleanclf is False:
-            self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls)
+            self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls, device=devices)
             # self.ctx_compress = Linear(self.hidden_dim * 2, self.num_rel_cls)
-            self.ctx_compress = Linear(self.hidden_dim, self.num_rel_cls)
+            self.ctx_compress = Linear(self.hidden_dim, self.num_rel_cls, device=devices)
             layer_init_kaiming_normal(self.rel_compress)
             layer_init_kaiming_normal(self.ctx_compress)
             if self.use_bias:
@@ -144,22 +149,58 @@ class PairwisePredictor(Module):
 
         # f_nn_type = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.F_NN_TYPE
 
+        self.pairwise_method_data = pairwise_method_data = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_DATA
         self.use_pairwise_l2 = use_pairwise_l2 = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.USE_PAIRWISE_L2
-        if self.use_pairwise_l2 is True:
+        if use_pairwise_l2 is True:
             self.act_pairwise_obj_ctx = ReLU()
             # self.bn_pairwise_obj_ctx = BatchNorm2d(self.hidden_dim, device=self.devices) # TODO: BatchNorm3d?
             # self.bn_pairwise_obj_ctx = BatchNorm2d(self.hidden_dim, device=self.devices) # TODO: BatchNorm3d?
-            self.bn_pairwise_obj_ctx = BatchNorm1d(self.hidden_dim, device=self.devices) # TODO: BatchNorm3d?
+            self.bn_pairwise_obj_ctx = BatchNorm1d(hidden_dim, device=devices) # TODO: BatchNorm3d?
             # self.f_ab_obj_ctx = Linear(1, 1, device=device)
             # layer_init_kaiming_normal(self.f_ab_obj_ctx)
+            assert pairwise_method_data in METHODS_DATA_1D | METHODS_DATA_2D
+
+        self.pairwise_method_func = pairwise_method_func = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_FUNC
+        if pairwise_method_func == 'axial_attention':
+            assert pairwise_method_data not in METHODS_DATA_1D
             self.f_ab_obj_ctx = AxialAttention(
-                dim=self.hidden_dim,               # embedding dimension
+                dim=hidden_dim,               # embedding dimension
                 dim_index = 2,         # where is the embedding dimension
                 # dim_heads = 32,        # dimension of each head. defaults to dim // heads if not supplied
                 heads = 8,             # number of heads for multi-head attention
                 num_dimensions = 2,    # number of axial dimensions (images is 2, video is 3, or more)
                 sum_axial_out = True   # whether to sum the contributions of attention on each axis, or to run the input through them sequentially. defaults to true
             )
+        elif pairwise_method_func == 'mha':
+            assert pairwise_method_data in METHODS_DATA_1D
+            num_head_pairwise = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.MHA.NUM_HEAD
+            num_layers_pairwise = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.MHA.NUM_LAYERS
+            self.f_ab_obj_ctx = TransformerEncoder(TransformerEncoderLayer(d_model=hidden_dim, nhead=num_head_pairwise), num_layers_pairwise)
+        elif pairwise_method_func == 'lrga':
+            # self.time_step_num = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.LRGA.TIME_STEP_NUM
+            k = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.LRGA.K
+            # self.num_groups = config.MODEL.ROI_RELATION_HEAD.LRGA.NUM_GROUPS
+            dropout = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.LRGA.DROPOUT
+            # self.gsc_classify_dim_1 = 64
+            # self.gsc_classify_1 = Linear(hidden_dim, self.gsc_classify_dim_1)
+            # layer_init_kaiming_normal(self.gsc_classify_1)
+            # self.gsc_classify_dim_2 = 1024
+            # self.gsc_classify_2 = Linear(self.gsc_classify_dim_1, self.gsc_classify_dim_2)
+            # layer_init_kaiming_normal(self.gsc_classify_2)
+            self.attention_1 = LowRankAttention(k, hidden_dim, dropout)
+            self.dimension_reduce_1 = Sequential(Linear(2*k + hidden_dim, hidden_dim, device=devices), ReLU())
+
+            self.bn = BatchNorm1d(hidden_dim, device=devices)
+            # self.gn = GroupNorm(self.num_groups, hidden_dim)
+
+            # self.attention_2 = LowRankAttention(self.k, hidden_dim, self.dropout)
+            # self.dimension_reduce_2 = Sequential(Linear(2*self.k + hidden_dim, hidden_dim, device=devices), ReLU())
+
+            # self.gsc_compress = Linear(self.gsc_classify_dim_2, self.num_rel_cls)
+            # layer_init_kaiming_normal(self.gsc_compress)
+        else:
+            raise ValueError('')
+
 
     def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None, global_image_features=None):
         """
@@ -302,7 +343,8 @@ class PairwisePredictor(Module):
         # for rel_pair_idx, num_obj in zip(rel_pair_idxs, num_objs):
         #     rel_pair_idxs_global.append(rel_pair_idx + num_objs_culsum if num_objs_culsum > 0 else rel_pair_idx)
         #     num_objs_culsum += num_obj
-
+        pairwise_method_data = self.pairwise_method_data
+        pairwise_method_func = self.pairwise_method_func
         if self.use_pairwise_l2 is True:
             # obj_ctx_subj = prod_rep[rel_pair_idxs_global_head] # [506, 768]
             # obj_ctx_obj = prod_rep[rel_pair_idxs_global_tail] # [506, 768]
@@ -311,42 +353,68 @@ class PairwisePredictor(Module):
             # pairwise_obj_ctx_old = obj_ctx[rel_pair_idxs_global_head, None, :] * obj_ctx[None, rel_pair_idxs_global_tail, :] # torch.Size([506, 506, 768]) # or use roi_features instead
             # TODO Need to normalize obj_ctx_subj obj_ctx_obj before multiplication because small numbers
             # pairwise_obj_ctx = head_rep.unsqueeze(1) * tail_rep.unsqueeze(0) # torch.Size([506, 506, 768]) # or use roi_features instead
-            head_rep, tail_rep = prod_rep.hsplit(2)
-            # pairwise_obj_ctx = head_rep.unsqueeze(1) * tail_rep.unsqueeze(0) # torch.Size([506, 506, 768]) # or use roi_features instead
+            if pairwise_method_data == 'concat':
+                head_rep, tail_rep = prod_rep.hsplit(2)
+                # pairwise_obj_ctx = head_rep.unsqueeze(1) * tail_rep.unsqueeze(0) # torch.Size([506, 506, 768]) # or use roi_features instead
 
-            pairwise_obj_ctx = torch_stack((head_rep, tail_rep), dim=2) # torch.Size([506, 768, 2]) # or use roi_features instead
-            del head_rep, tail_rep
-            # print('after stacking prod_reps, pair_preds pairwise_obj_ctx')
-            # breakpoint()
-            # [1, 506, 768, 2]
-            # breakpoint()
-            # breakpoint()
-            pairwise_obj_ctx = pairwise_obj_ctx.unsqueeze_(0)
-            # print('after unsqueeze')
-            # pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([1, 506, 2, 768])
-            # breakpoint()
-            # print(f'pairwise_obj_ctx.size() = {pairwise_obj_ctx.size()}')
-            pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([506, 2, 768])
-            # print('after self.f_ab_obj_ctx')
-            pairwise_obj_ctx = self.act_pairwise_obj_ctx(pairwise_obj_ctx)
-            # print('after self.act_pairwise_obj_ctx')
-            # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 3, 1) # torch.Size([1, 768, 506, 2])
-            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([768, 506, 2])
-            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([768, 506, 2])
-            # breakpoint()
-            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx.transpose_(1, 2)) # torch.Size([506, 768, 2])
-            pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([506, 768, 2])
-            # print('after self.bn_pairwise_obj_ctx')
-            # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 0, 2) # torch.Size([768, 506, 2])
-            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
-            # pairwise_obj_ctx.transpose_()
-            # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
-            # breakpoint()
-            pairwise_obj_ctx = pairwise_obj_ctx.sum(dim=2) # [506, 768] # TODO: prod?
-            # print('after sum')
-            # ctx_pairwise_rois = obj_features_subject + obj_features_object + pairwise_obj_ctx.transpose_(0, 1)
+                pairwise_obj_ctx = torch_stack((head_rep, tail_rep), dim=2) # torch.Size([506, 768, 2]) # or use roi_features instead
+                del head_rep, tail_rep
+                # print('after stacking prod_reps, pair_preds pairwise_obj_ctx')
+                # breakpoint()
+                # [1, 506, 768, 2]
+                # breakpoint()
+                # breakpoint()
+                pairwise_obj_ctx = pairwise_obj_ctx.unsqueeze_(0)
+
+            elif pairwise_method_data == 'hadamard':
+                head_rep, tail_rep = prod_rep.hsplit(2)
+                pairwise_obj_ctx = head_rep * tail_rep
 
 
+            if pairwise_method_func == 'axial_attention':
+                # print('after unsqueeze')
+                # pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([1, 506, 2, 768])
+                # breakpoint()
+                # print(f'pairwise_obj_ctx.size() = {pairwise_obj_ctx.size()}')
+                pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([506, 2, 768])
+                # print('after self.f_ab_obj_ctx')
+                pairwise_obj_ctx = self.act_pairwise_obj_ctx(pairwise_obj_ctx)
+                # print('after self.act_pairwise_obj_ctx')
+                # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 3, 1) # torch.Size([1, 768, 506, 2])
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([768, 506, 2])
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([768, 506, 2])
+                # breakpoint()
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx.transpose_(1, 2)) # torch.Size([506, 768, 2])
+                pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([506, 768, 2])
+                # print('after self.bn_pairwise_obj_ctx')
+                # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 0, 2) # torch.Size([768, 506, 2])
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
+                # pairwise_obj_ctx.transpose_()
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
+                # breakpoint()
+                pairwise_obj_ctx = pairwise_obj_ctx.sum(dim=2) # [506, 768] # TODO: prod?
+                # print('after sum')
+                # ctx_pairwise_rois = obj_features_subject + obj_features_object + pairwise_obj_ctx.transpose_(0, 1)
+            elif pairwise_method_func == 'mha':
+                pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx)
+            elif pairwise_method_func == 'lrga':
+                # x_local = self.f_ab_obj_ctx(pairwise_obj_ctx)
+                # x_local = self.gsc_classify_1(global_features_mapped) # [506, 4096] => [506, 64]
+                #     x_local = F_relu(x_local) # TODO: need some sort of layers for repr learn?
+                #     x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+                x_global = self.attention_1(pairwise_obj_ctx) # torch.Size([506, 100])
+                #     del global_features_mapped
+                pairwise_obj_ctx = self.dimension_reduce_1(torch_cat((x_global, pairwise_obj_ctx), dim=1)) # torch.Size([506, 64])
+                pairwise_obj_ctx = self.bn(pairwise_obj_ctx) # torch.Size([506, 64])
+#         self.bn = ModuleList([BatchNorm1d(hidden_channels) for _ in range(num_layers-1)])
+                #
+                #     # Second/last pass
+                # x_local = self.gsc_classify_2(pairwise_obj_ctx)
+                # x_local = F_relu(pairwise_obj_ctx)
+                # x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+                # x_global = self.attention_2(pairwise_obj_ctx) # TOOD: or union_features?
+                # pairwise_obj_ctx = self.dimension_reduce_2(torch_cat((x_global, pairwise_obj_ctx), dim=1))
+                # del x_global
         ctx_gate = self.post_cat(prod_rep) # torch.Size([3009, 4096]) # TODO: Use F_sigmoid?
         # print('after self.post_cat')
         visual_rep = union_features * ctx_gate
