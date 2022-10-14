@@ -4,7 +4,7 @@
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:a100:4
 #SBATCH --ntasks-per-node=4 # need to match number of gpus
-#SBATCH -t 72:00:00
+#SBATCH -t 48:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB # need to match batch size.
 #SBATCH -J pairwise_hadamard_mha_4GPU_riv_1_predcls # TODO: CHANGE THIS
