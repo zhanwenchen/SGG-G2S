@@ -40,7 +40,7 @@ error_check()
 
 }
 
-export PROJECT_DIR=/home/zhanwen/gsc
+export PROJECT_DIR=${HOME}/gsc
 export MODEL_NAME="${SLURM_JOB_ID}_${SLURM_JOB_NAME}"
 export LOGDIR=${PROJECT_DIR}/log
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
@@ -48,15 +48,15 @@ MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 if [ -d "$MODEL_DIRNAME" ]; then
   error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.log
 else
-  export CUDA_VISIBLE_DEVICES=0
+  export CUDA_VISIBLE_DEVICES=0,1,2,3
   export SEED=1234
-  export BATCH_SIZE=8
-  export MAX_ITER=15000
+  export BATCH_SIZE=64
+  export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False
   export USE_GSC_FE=False
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_pairwise.yaml
-  export DATA_DIR_VG_RCNN=/home/zhanwen/datasets
+  export DATA_DIR_VG_RCNN=${HOME}/datasets
   export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))
 
   ${PROJECT_DIR}/scripts/train_predcls.sh
