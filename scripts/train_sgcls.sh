@@ -15,7 +15,7 @@ error_exit()
     exit 1
 }
 export TORCHELASTIC_MAX_RESTARTS=0
-echo "TRAINING SGGen model ${MODEL_NAME}"
+echo "TRAINING SGCls model ${MODEL_NAME}"
 cd ${PROJECT_DIR}
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 if [ -d "$MODEL_DIRNAME" ]; then
@@ -37,7 +37,7 @@ torchrun --nproc_per_node=$NUM_GPUS \
   SOLVER.IMS_PER_BATCH ${BATCH_SIZE} \
   SOLVER.MAX_ITER ${MAX_ITER} \
   SOLVER.BASE_LR ${LR} \
-  MODEL.ROI_RELATION_HEAD.USE_GT_BOX False \
+  MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
   MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
   TEST.IMS_PER_BATCH ${NUM_GPUS} \
   SOLVER.PRE_VAL True \
@@ -51,4 +51,4 @@ torchrun --nproc_per_node=$NUM_GPUS \
   GLOVE_DIR ${PROJECT_DIR}/datasets/vg/ \
   MODEL.PRETRAINED_DETECTOR_CKPT ${PROJECT_DIR}/checkpoints/pretrained_faster_rcnn/model_final.pth \
   OUTPUT_DIR ${PROJECT_DIR}/checkpoints/${MODEL_NAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log &&
-echo "Finished training SGGen model ${MODEL_NAME}" || echo "Failed to train SGGen model ${MODEL_NAME}"
+echo "Finished training SGCls model ${MODEL_NAME}" || echo "Failed to train SGCls model ${MODEL_NAME}"
