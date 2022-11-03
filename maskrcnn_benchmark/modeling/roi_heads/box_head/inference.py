@@ -93,22 +93,20 @@ class PostProcessor(nn.Module):
             assert self.bbox_aug_enabled == False
             if not self.bbox_aug_enabled:  # If bbox aug is enabled, we will do it later
                 boxlist, orig_inds, boxes_per_cls = self.filter_results(boxlist, num_classes)
-            # add 
+            # add
             boxlist = self.add_important_fields(i, boxes, orig_inds, boxlist, boxes_per_cls, relation_mode)
-            
+
             results.append(boxlist)
             nms_features.append(features[i][orig_inds])
-        
+
         nms_features = torch.cat(nms_features, dim=0)
         return nms_features, results
 
     def add_important_fields(self, i, boxes, orig_inds, boxlist, boxes_per_cls, relation_mode=False):
         if relation_mode:
             gt_labels = boxes[i].get_field('labels')[orig_inds]
-            gt_attributes = boxes[i].get_field('attributes')[orig_inds]
-        
+
             boxlist.add_field('labels', gt_labels)
-            boxlist.add_field('attributes', gt_attributes)
 
             predict_logits = boxes[i].get_field('predict_logits')[orig_inds]
             boxlist.add_field('boxes_per_cls', boxes_per_cls)
@@ -188,7 +186,7 @@ class PostProcessor(nn.Module):
         if self.nms_filter_duplicates or self.save_proposals:
             assert len(orig_inds) == (num_classes - 1)
             # set all bg to zero
-            inds_all[:, 0] = 0 
+            inds_all[:, 0] = 0
             for j in range(1, num_classes):
                 inds_all[:, j] = 0
                 orig_idx = orig_inds[j-1]
@@ -209,7 +207,7 @@ class PostProcessor(nn.Module):
         else:
             result = cat_boxlist(result)
             orig_inds = torch.cat(orig_inds, dim=0)
-        
+
         number_of_detections = len(result)
         # Limit to max_per_image detections **over all classes**
         if number_of_detections > self.detections_per_img > 0:
