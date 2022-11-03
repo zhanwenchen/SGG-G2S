@@ -72,5 +72,5 @@ else
   export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
   export DATA_DIR_VG_RCNN=${HOME}/datasets
 
-  singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_predcls.sh
+  singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_predcls_vctree.sh
 fi
