@@ -42,7 +42,7 @@ cp -r ${PROJECT_DIR}/.git/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/tools/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/scripts/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
-torchrun --nproc_per_node=$NUM_GPUS \
+torchrun --master_port ${PORT} --nproc_per_node=$NUM_GPUS \
   ${PROJECT_DIR}/tools/relation_train_net.py \
   --config-file ${CONFIG_FILE} \
   MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_DATA ${PAIRWISE_METHOD_DATA} \

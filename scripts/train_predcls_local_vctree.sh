@@ -64,6 +64,7 @@ else
   export USE_GT_BOX=True
   export USE_GT_OBJECT_LABEL=True
   export PRE_VAL=False
+  export PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
 
   ${PROJECT_DIR}/scripts/train_vctree.sh
 fi

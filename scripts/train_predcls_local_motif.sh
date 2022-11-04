@@ -50,20 +50,21 @@ if [ -d "$MODEL_DIRNAME" ]; then
 else
   export CUDA_VISIBLE_DEVICES=0
   export SEED=1234
-  export BATCH_SIZE=12
+  export BATCH_SIZE=16
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False
   export USE_GSC_FE=False
   export PAIRWISE_METHOD_DATA='hadamard'
   export PAIRWISE_METHOD_FUNC='mha'
-  export USE_PAIRWISE_L2=True
+  export USE_PAIRWISE_L2=False
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml
   export DATA_DIR_VG_RCNN=${HOME}/datasets
   export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))
   export USE_GT_BOX=True
   export USE_GT_OBJECT_LABEL=True
   export PRE_VAL=False
+  export PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
 
   ${PROJECT_DIR}/scripts/train_motif.sh
 fi
