@@ -4,7 +4,7 @@ timestamp() {
   date +"%Y%m%d%H%M%S"
 }
 
-SLURM_JOB_NAME=vctree_baseline_predcls_1GPU_legion_dev
+SLURM_JOB_NAME=vctree_pairwise_predcls_1GPU_legion_dev
 SLURM_JOB_ID=$(timestamp)
 
 error_exit()
@@ -55,6 +55,9 @@ else
   export LR=1e-3
   export USE_GSC=False
   export USE_GSC_FE=False
+  export PAIRWISE_METHOD_DATA='hadamard'
+  export PAIRWISE_METHOD_FUNC='mha'
+  export USE_PAIRWISE_L2=True
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml
   export DATA_DIR_VG_RCNN=${HOME}/datasets
   export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))

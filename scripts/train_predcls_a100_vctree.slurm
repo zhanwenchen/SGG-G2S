@@ -7,12 +7,12 @@
 #SBATCH -t 48:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB # need to match batch size.
-#SBATCH -J vctree_baseline_predcls_4GPU_riv_1 # TODO: CHANGE THIS
+#SBATCH -J vctree_pairwise_predcls_4GPU_riv_1 # TODO: CHANGE THIS
 #SBATCH -o /home/pct4et/gsc/log/%x-%A.out
 #SBATCH -e /home/pct4et/gsc/log/%x-%A.err
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=pct4et@virginia.edu
-#SBACTH --exclude=udc-an28-1,udc-an28-7
+#SBATCH --exclude=udc-an28-1,udc-an28-7
 
 timestamp() {
   date +"%Y-%m-%d%H%M%S"
@@ -67,6 +67,9 @@ else
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC_FE=False
+  export PAIRWISE_METHOD_DATA='hadamard'
+  export PAIRWISE_METHOD_FUNC='mha'
+  export USE_PAIRWISE_L2=True
   export SINGULARITYENV_PREPEND_PATH="${HOME}/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml
   export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
