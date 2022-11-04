@@ -52,6 +52,8 @@ class GeneralizedRCNN(nn.Module):
         images = to_image_list(images) # (Pdb) images.tensors.size() torch.Size([16, 3, 608, 1024])
         if self.use_gsc:
             boxes_global = [BoxList([[0, 0, *image_size]], image_size, device=images.tensors.device) for image_size in images.image_sizes]
+        else:
+            boxes_global = None
         features = self.backbone(images.tensors)
         # (Pdb) len(features)
         # 5
