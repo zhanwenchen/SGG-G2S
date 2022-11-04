@@ -690,6 +690,8 @@ class VCTreePredictor(Module):
                 # x_global = self.attention_2(pairwise_obj_ctx) # TOOD: or union_features?
                 # pairwise_obj_ctx = self.dimension_reduce_2(torch_cat((x_global, pairwise_obj_ctx), dim=1))
                 # del x_global
+        else:
+            del head_rep, tail_rep
 
         prod_rep = self.post_cat(prod_rep)
 
