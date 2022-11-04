@@ -1,90 +1,73 @@
-#!/usr/bin/env bash
-export PYTHONPATH=/home/***/lib/apex:/home/***/lib/cocoapi:/home/***/code/scene_graph_gen/scene_graph_benchmark_pytorch:$PYTHONPATH
-if [ $1 == "0" ]; then
-    export CUDA_VISIBLE_DEVICES=0,2 #3,4 #,4 #3,4
-    export NUM_GUP=2
-    echo "TRAINING vctree_predcls"
-    MODEL_NAME="vctree_predcls_dist15_2k_FixPModel_CleanHF_FixConfMatDot" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
-    mkdir ./checkpoints/${MODEL_NAME}/
-    cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/data/datasets/visual_genome.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/roi_relation_predictors.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/model_transformer.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/layers/gcn/gcn_layers.py ./checkpoints/${MODEL_NAME}/
-    python -u -m torch.distributed.launch --master_port 10038 --nproc_per_node=$NUM_GUP \
-            tools/relation_train_net.py \
-            --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml" \
-            MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
-            MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL True \
-            MODEL.ROI_RELATION_HEAD.PREDICTOR VCTreePredictor \
-            MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS True \
-            DTYPE "float32" \
-            SOLVER.IMS_PER_BATCH 12 TEST.IMS_PER_BATCH $NUM_GUP \
-            SOLVER.MAX_ITER 50000 \
-            SOLVER.VAL_PERIOD 2000 \
-            SOLVER.CHECKPOINT_PERIOD 2000 GLOVE_DIR ./datasets/vg/ \
-            MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-            MODEL.PRETRAINED_MODEL_CKPT ./checkpoints_best/vctree_predcls/model_0030000.pth \
-            OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
-            MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER True \
-            MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER True  \
-            MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0;
-elif [ $1 == "1" ]; then
-    export CUDA_VISIBLE_DEVICES=5,6 #3,4 #,4 #3,4
-    export NUM_GUP=2
-    echo "TRAINING sgcls"
-    MODEL_NAME="vctree_sgcls_drop_dist15_2k_FixPModel_CleanHF_FixConfMatDot" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
-    mkdir ./checkpoints/${MODEL_NAME}/
-    cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/data/datasets/visual_genome.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/roi_relation_predictors.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/model_transformer.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/layers/gcn/gcn_layers.py ./checkpoints/${MODEL_NAME}/
-    python -u -m torch.distributed.launch --master_port 10040 --nproc_per_node=$NUM_GUP \
-          tools/relation_train_net.py \
-          --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml" \
-          MODEL.ROI_RELATION_HEAD.USE_GT_BOX True \
-          MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
-          MODEL.ROI_RELATION_HEAD.PREDICTOR VCTreePredictor \
-          MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS True \
-          DTYPE "float32" \
-          SOLVER.IMS_PER_BATCH 16 TEST.IMS_PER_BATCH $NUM_GUP \
-          SOLVER.MAX_ITER 50000 \
-          SOLVER.VAL_PERIOD 2000 \
-          SOLVER.CHECKPOINT_PERIOD 2000 GLOVE_DIR ./datasets/vg/ \
-          MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-          MODEL.PRETRAINED_MODEL_CKPT ./checkpoints_best/vctree_sgcls_drop/model_0036000.pth \
-          OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
-          MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER True \
-          MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER True  \
-          MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0;
-elif [ $1 == "2" ]; then
-    export CUDA_VISIBLE_DEVICES=2,3 #3,4 #,4 #3,4
-    export NUM_GUP=2
-    echo "TRAINING sgdet"
-    MODEL_NAME="vctree_sgdet_drop_dist15_2k_FixPModel_CleanHF" #"transformer_predcls_dist15_2k_KD0_8_KLt1_freq_TranN2C_1_0_KLt1_InitPreModel_lr1e4"
-    mkdir ./checkpoints/${MODEL_NAME}/
-    cp ./tools/relation_train_net.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/data/datasets/visual_genome.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/roi_relation_predictors.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/modeling/roi_heads/relation_head/model_transformer.py ./checkpoints/${MODEL_NAME}/
-    cp ./maskrcnn_benchmark/layers/gcn/gcn_layers.py ./checkpoints/${MODEL_NAME}/
-    python -u -m torch.distributed.launch --master_port 10041 --nproc_per_node=$NUM_GUP \
-            tools/relation_train_net.py \
-            --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml" \
-            MODEL.ROI_RELATION_HEAD.USE_GT_BOX False \
-            MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
-            MODEL.ROI_RELATION_HEAD.PREDICTOR VCTreePredictor \
-            MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS True \
-            DTYPE "float32" \
-            SOLVER.IMS_PER_BATCH 16 TEST.IMS_PER_BATCH $NUM_GUP \
-            SOLVER.MAX_ITER 50000 \
-            SOLVER.VAL_PERIOD 2000 \
-            SOLVER.CHECKPOINT_PERIOD 2000 GLOVE_DIR ./datasets/vg/ \
-            MODEL.PRETRAINED_DETECTOR_CKPT ./checkpoints/pretrained_faster_rcnn/model_final.pth \
-            MODEL.PRETRAINED_MODEL_CKPT ./checkpoints_best/vctree_sgdet_drop/model_0028000.pth \
-            OUTPUT_DIR ./checkpoints/${MODEL_NAME} \
-            MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER True \
-            MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
-            MODEL.ROI_RELATION_HEAD.VAL_ALPHA 0.0;
+timestamp() {
+  date +"%Y-%m-%d%H%M%S"
+}
+
+error_exit()
+{
+#   ----------------------------------------------------------------
+#   Function for exit due to fatal program error
+#       Accepts 1 argument:
+#           string containing descriptive error message
+#   Source: http://linuxcommand.org/lc3_wss0140.php
+#   ----------------------------------------------------------------
+    echo "$(timestamp) ERROR ${PROGNAME}: ${1:-"Unknown Error"}" 1>&2
+    echo "$(timestamp) ERROR ${PROGNAME}: Exiting Early."
+    exit 1
+}
+
+get_mode()
+{
+  if [[ ${USE_GT_BOX} == "True" ]] && [[ ${USE_GT_OBJECT_LABEL} == "True" ]]; then
+    echo "predcls"
+  elif [[ ${USE_GT_BOX} == "True" ]] && [[ ${USE_GT_OBJECT_LABEL} == "False" ]]; then
+    echo "sgcls"
+  elif [[ ${USE_GT_BOX} == "False" ]] && [[ ${USE_GT_OBJECT_LABEL} == "False" ]]; then
+    echo "sgdet"
+  else
+    error_exit "Illegal USE_GT_BOX=${USE_GT_BOX} and USE_GT_OBJECT_LABEL=${USE_GT_OBJECT_LABEL} provided."
+  fi
+}
+
+export MODE=$(get_mode)
+
+export TORCHELASTIC_MAX_RESTARTS=0
+echo "TRAINING ${MODE} model ${MODEL_NAME}"
+cd ${PROJECT_DIR}
+MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
+if [ -d "$MODEL_DIRNAME" ]; then
+  error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.out
 fi
+mkdir ${MODEL_DIRNAME} &&
+cp -r ${PROJECT_DIR}/.git/ ${MODEL_DIRNAME} &&
+cp -r ${PROJECT_DIR}/tools/ ${MODEL_DIRNAME} &&
+cp -r ${PROJECT_DIR}/scripts/ ${MODEL_DIRNAME} &&
+cp -r ${PROJECT_DIR}/maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
+torchrun --nproc_per_node=$NUM_GPUS \
+  ${PROJECT_DIR}/tools/relation_train_net.py \
+  --config-file ${CONFIG_FILE} \
+  MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_DATA ${PAIRWISE_METHOD_DATA} \
+  MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_FUNC ${PAIRWISE_METHOD_FUNC} \
+  MODEL.ROI_RELATION_HEAD.PAIRWISE.USE_PAIRWISE_L2 ${USE_PAIRWISE_L2} \
+  MODEL.ROI_RELATION_HEAD.USE_GSC ${USE_GSC}  \
+  MODEL.ROI_RELATION_HEAD.USE_GSC_FE ${USE_GSC_FE}  \
+  MODEL.ROI_RELATION_HEAD.USE_GT_BOX ${USE_GT_BOX} \
+  MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL ${USE_GT_OBJECT_LABEL} \
+  SOLVER.TYPE SGD \
+  SOLVER.IMS_PER_BATCH ${BATCH_SIZE} \
+  SOLVER.MAX_ITER ${MAX_ITER} \
+  SOLVER.BASE_LR ${LR} \
+  MODEL.ROI_RELATION_HEAD.USE_GT_BOX False \
+  MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL False \
+  TEST.IMS_PER_BATCH ${NUM_GPUS} \
+  SOLVER.PRE_VAL False \
+  MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER False \
+  MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER False  \
+  DTYPE "float32" \
+  SOLVER.SCHEDULE.TYPE WarmupMultiStepLR \
+  SOLVER.STEPS "(10000, 16000)" \
+  SOLVER.VAL_PERIOD 2000 \
+  SOLVER.CHECKPOINT_PERIOD 2000 \
+  GLOVE_DIR ${PROJECT_DIR}/datasets/vg/ \
+  MODEL.PRETRAINED_DETECTOR_CKPT ${PROJECT_DIR}/checkpoints/pretrained_faster_rcnn/model_final.pth \
+  OUTPUT_DIR ${PROJECT_DIR}/checkpoints/${MODEL_NAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log &&
+echo "Finished training ${MODE} model ${MODEL_NAME}" || echo "Failed to train ${MODE} model ${MODEL_NAME}"
