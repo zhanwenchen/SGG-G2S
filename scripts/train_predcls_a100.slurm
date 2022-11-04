@@ -66,6 +66,7 @@ else
   export BATCH_SIZE=64
   export MAX_ITER=50000
   export LR=1e-3
+  export USE_GSC=False
   export USE_GSC_FE=False
   export SINGULARITYENV_PREPEND_PATH="${HOME}/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_pairwise.yaml

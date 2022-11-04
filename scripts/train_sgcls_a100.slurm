@@ -66,6 +66,7 @@ else
   export BATCH_SIZE=64
   export MAX_ITER=50000
   export LR=1e-4
+  export USE_GSC=False
   export USE_GSC_FE=False
   export PAIRWISE_METHOD_DATA='hadamard'
   export PAIRWISE_METHOD_FUNC='mha'
