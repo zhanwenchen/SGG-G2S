@@ -13,7 +13,7 @@ from torch.nn.functional import dropout as F_dropout, relu as F_relu, binary_cro
 from maskrcnn_benchmark.modeling import registry
 from maskrcnn_benchmark.data import get_dataset_statistics
 from maskrcnn_benchmark.layers.gcn._utils import adj_normalize
-from .model_motifs import FrequencyBias
+from .model_motifs import LSTMContext, FrequencyBias, SpuerFrequencyBias
 from .model_transformer import TransformerContext
 from .model_vctree import VCTreeLSTMContext
 from .utils_relation import layer_init_kaiming_normal, layer_init
@@ -703,8 +703,7 @@ class VCTreePredictor(Module):
             union_features = self.up_dim(union_features)
 
         if self.with_clean_classifier is True:
-            prod_rep_clean = torch_cat(prod_rep, dim=0)
-            prod_rep_clean = self.post_cat_clean(prod_rep_clean)
+            prod_rep_clean = self.post_cat_clean(prod_rep)
             if self.union_single_not_match:
                 union_features = self.up_dim_clean(union_features)
 
@@ -746,6 +745,308 @@ class VCTreePredictor(Module):
                 add_losses["binary_loss"] = sum(binary_loss) / len(binary_loss)
 
         return obj_dists, rel_dists, add_losses
+
+
+@registry.ROI_RELATION_PREDICTOR.register("MotifPredictor")
+class MotifPredictor(Module):
+    def __init__(self, config, in_channels):
+        super(MotifPredictor, self).__init__()
+        self.attribute_on = config.MODEL.ATTRIBUTE_ON
+        self.num_obj_cls = config.MODEL.ROI_BOX_HEAD.NUM_CLASSES
+        self.num_att_cls = config.MODEL.ROI_ATTRIBUTE_HEAD.NUM_ATTRIBUTES
+        self.num_rel_cls = config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES
+
+        assert in_channels is not None
+        num_inputs = in_channels
+        self.use_vision = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_VISION
+        self.use_bias = config.MODEL.ROI_RELATION_HEAD.PREDICT_USE_BIAS
+
+        # load class dict
+        statistics = get_dataset_statistics(config)
+        obj_classes, rel_classes, att_classes = statistics['obj_classes'], statistics['rel_classes'], statistics[
+            'att_classes']
+        assert self.num_obj_cls == len(obj_classes)
+        assert self.num_att_cls == len(att_classes)
+        assert self.num_rel_cls == len(rel_classes)
+        # init contextual lstm encoding
+        self.context_layer = LSTMContext(config, obj_classes, rel_classes, in_channels)
+
+        # post decoding
+        self.hidden_dim = hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
+        self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
+        self.pairwise_method_data = pairwise_method_data = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_DATA
+        self.use_pairwise_l2 = use_pairwise_l2 = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.USE_PAIRWISE_L2
+        self.pairwise_method_func = pairwise_method_func = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_FUNC
+
+        self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
+
+        # initialize layer parameters
+        layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
+        layer_init(self.post_cat, xavier=True)
+
+        if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
+            self.union_single_not_match = True
+            self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+            layer_init(self.up_dim, xavier=True)
+        else:
+            self.union_single_not_match = False
+
+        if self.use_bias:
+            # convey statistics into FrequencyBias to avoid loading again
+            self.freq_bias = FrequencyBias(config, statistics)
+
+        self.with_clean_classifier = config.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER
+
+        if self.with_clean_classifier:
+            if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
+                self.union_single_not_match = True
+                self.up_dim_clean = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+                layer_init(self.up_dim_clean, xavier=True)
+            else:
+                self.union_single_not_match = False
+            self.post_cat_clean = Linear(self.hidden_dim * 2, self.pooling_dim)
+            self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
+            layer_init(self.post_cat_clean, xavier=True)
+            layer_init(self.rel_compress_clean, xavier=True)
+            if self.use_bias:
+                # convey statistics into FrequencyBias to avoid loading again
+                self.freq_bias_clean = FrequencyBias(config, statistics)
+            self.with_transfer = config.MODEL.ROI_RELATION_HEAD.WITH_TRANSFER_CLASSIFIER
+            if self.with_transfer:
+                self.devices = config.MODEL.DEVICE
+                print("!!!!!!!!!With Confusion Matrix Channel!!!!!")
+                pred_adj_np = np.load('./misc/conf_mat_freq_train.npy')
+                # pred_adj_np = 1.0 - pred_adj_np
+                pred_adj_np[0, :] = 0.0
+                pred_adj_np[:, 0] = 0.0
+                pred_adj_np[0, 0] = 1.0
+                # adj_i_j means the baseline outputs category j, but the ground truth is i.
+                pred_adj_np = pred_adj_np / (pred_adj_np.sum(-1)[:, None] + 1e-8)
+                pred_adj_np = adj_normalize(pred_adj_np)
+                self.pred_adj_nor = torch_from_numpy(pred_adj_np).float().to(self.devices)
+        else:
+            self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
+            layer_init(self.rel_compress, xavier=True)
+
+            if self.use_pairwise_l2 is True:
+                self.pairwise_compress = Linear(self.hidden_dim, self.num_rel_cls, bias=True)
+                layer_init(self.pairwise_compress, xavier=True)
+
+        if use_pairwise_l2 is True:
+            self.act_pairwise_obj_ctx = ReLU()
+            # self.bn_pairwise_obj_ctx = BatchNorm2d(self.hidden_dim, device=self.devices) # TODO: BatchNorm3d?
+            # self.bn_pairwise_obj_ctx = BatchNorm2d(self.hidden_dim, device=self.devices) # TODO: BatchNorm3d?
+            self.bn_pairwise_obj_ctx = BatchNorm1d(hidden_dim) # TODO: BatchNorm3d?
+            # self.f_ab_obj_ctx = Linear(1, 1, device=device)
+            # layer_init_kaiming_normal(self.f_ab_obj_ctx)
+            assert pairwise_method_data in METHODS_DATA_1D | METHODS_DATA_2D
+
+        if pairwise_method_func == 'axial_attention':
+            assert pairwise_method_data not in METHODS_DATA_1D
+            self.f_ab_obj_ctx = AxialAttention(
+                dim=hidden_dim,               # embedding dimension
+                dim_index = 2,         # where is the embedding dimension
+                # dim_heads = 32,        # dimension of each head. defaults to dim // heads if not supplied
+                heads = 8,             # number of heads for multi-head attention
+                num_dimensions = 2,    # number of axial dimensions (images is 2, video is 3, or more)
+                sum_axial_out = True   # whether to sum the contributions of attention on each axis, or to run the input through them sequentially. defaults to true
+            )
+        elif pairwise_method_func == 'mha':
+            assert pairwise_method_data in METHODS_DATA_1D
+            num_head_pairwise = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.MHA.NUM_HEAD
+            num_layers_pairwise = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.MHA.NUM_LAYERS
+            self.f_ab_obj_ctx = TransformerEncoder(TransformerEncoderLayer(d_model=hidden_dim, nhead=num_head_pairwise), num_layers_pairwise)
+        elif pairwise_method_func == 'lrga':
+            # self.time_step_num = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.LRGA.TIME_STEP_NUM
+            k = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.LRGA.K
+            # self.num_groups = config.MODEL.ROI_RELATION_HEAD.LRGA.NUM_GROUPS
+            dropout = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.LRGA.DROPOUT
+            # self.gsc_classify_dim_1 = 64
+            # self.gsc_classify_1 = Linear(hidden_dim, self.gsc_classify_dim_1)
+            # layer_init_kaiming_normal(self.gsc_classify_1)
+            # self.gsc_classify_dim_2 = 1024
+            # self.gsc_classify_2 = Linear(self.gsc_classify_dim_1, self.gsc_classify_dim_2)
+            # layer_init_kaiming_normal(self.gsc_classify_2)
+            self.attention_1 = LowRankAttention(k, hidden_dim, dropout)
+            self.dimension_reduce_1 = Sequential(Linear(2*k + hidden_dim, hidden_dim), ReLU())
+
+            self.bn = BatchNorm1d(hidden_dim)
+            # self.gn = GroupNorm(self.num_groups, hidden_dim)
+
+            # self.attention_2 = LowRankAttention(self.k, hidden_dim, self.dropout)
+            # self.dimension_reduce_2 = Sequential(Linear(2*self.k + hidden_dim, hidden_dim, device=devices), ReLU())
+
+            # self.gsc_compress = Linear(self.gsc_classify_dim_2, self.num_rel_cls)
+            # layer_init_kaiming_normal(self.gsc_compress)
+        else:
+            raise ValueError('')
+
+    def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None, global_image_features=None):
+        """
+        Returns:
+            obj_dists (list[Tensor]): logits of object label distribution
+            rel_dists (list[Tensor])
+            rel_pair_idxs (list[Tensor]): (num_rel, 2) index of subject and object
+            union_features (Tensor): (batch_num_rel, context_pooling_dim): visual union feature of each pair
+        """
+
+        # encode context infomation
+        if self.attribute_on:
+            obj_dists, obj_preds, att_dists, edge_ctx = self.context_layer(roi_features, proposals, logger)
+        else:
+            obj_dists, obj_preds, edge_ctx, _ = self.context_layer(roi_features, proposals, logger)
+
+        # post decode
+        edge_rep = self.post_emb(edge_ctx)
+        edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim)
+        head_rep = edge_rep[:, 0].contiguous().view(-1, self.hidden_dim)
+        tail_rep = edge_rep[:, 1].contiguous().view(-1, self.hidden_dim)
+
+        num_rels = [r.shape[0] for r in rel_pair_idxs]
+        num_objs = [len(b) for b in proposals]
+        assert len(num_rels) == len(num_objs)
+
+        rel_pair_idxs_global = [] # TODO: construct and fill instead?
+        num_objs_culsum = 0
+        # TODO: maybe use cumsum as an optimization?
+        for rel_pair_idx, num_obj in zip(rel_pair_idxs, num_objs):
+            rel_pair_idxs_global.append(rel_pair_idx + num_objs_culsum if num_objs_culsum > 0 else rel_pair_idx)
+            num_objs_culsum += num_obj
+
+        rel_pair_idxs_global = torch_cat(rel_pair_idxs_global)
+        rel_pair_idxs_global_head = rel_pair_idxs_global[:, 0]
+        rel_pair_idxs_global_tail = rel_pair_idxs_global[:, 1]
+
+        head_rep = head_rep[rel_pair_idxs_global_head]
+        tail_rep = tail_rep[rel_pair_idxs_global_tail]
+        prod_rep = torch_cat((head_rep, tail_rep), dim=-1)
+        del rel_pair_idxs_global_head, rel_pair_idxs_global_tail
+        pair_pred = obj_preds[rel_pair_idxs_global]
+        del rel_pair_idxs_global
+
+        pairwise_method_data = self.pairwise_method_data
+        pairwise_method_func = self.pairwise_method_func
+        if self.use_pairwise_l2 is True:
+            # obj_ctx_subj = prod_rep[rel_pair_idxs_global_head] # [506, 768]
+            # obj_ctx_obj = prod_rep[rel_pair_idxs_global_tail] # [506, 768]
+            # del obj_ctx
+            # TODO: optimize the permute to reduce the number of permute operations.
+            # pairwise_obj_ctx_old = obj_ctx[rel_pair_idxs_global_head, None, :] * obj_ctx[None, rel_pair_idxs_global_tail, :] # torch.Size([506, 506, 768]) # or use roi_features instead
+            # TODO Need to normalize obj_ctx_subj obj_ctx_obj before multiplication because small numbers
+            # pairwise_obj_ctx = head_rep.unsqueeze(1) * tail_rep.unsqueeze(0) # torch.Size([506, 506, 768]) # or use roi_features instead
+            if pairwise_method_data == 'concat':
+                head_rep, tail_rep = prod_rep.hsplit(2)
+                # pairwise_obj_ctx = head_rep.unsqueeze(1) * tail_rep.unsqueeze(0) # torch.Size([506, 506, 768]) # or use roi_features instead
+
+                pairwise_obj_ctx = torch_stack((head_rep, tail_rep), dim=2) # torch.Size([506, 768, 2]) # or use roi_features instead
+                del head_rep, tail_rep
+                # print('after stacking prod_reps, pair_preds pairwise_obj_ctx')
+                # breakpoint()
+                # [1, 506, 768, 2]
+                # breakpoint()
+                # breakpoint()
+                pairwise_obj_ctx = pairwise_obj_ctx.unsqueeze_(0)
+
+            elif pairwise_method_data == 'hadamard':
+                pairwise_obj_ctx = head_rep * tail_rep
+                del head_rep, tail_rep
+
+            if pairwise_method_func == 'axial_attention':
+                # print('after unsqueeze')
+                # pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([1, 506, 2, 768])
+                # breakpoint()
+                # print(f'pairwise_obj_ctx.size() = {pairwise_obj_ctx.size()}')
+                pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([506, 2, 768])
+                # print('after self.f_ab_obj_ctx')
+                pairwise_obj_ctx = self.act_pairwise_obj_ctx(pairwise_obj_ctx)
+                # print('after self.act_pairwise_obj_ctx')
+                # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 3, 1) # torch.Size([1, 768, 506, 2])
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([768, 506, 2])
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([768, 506, 2])
+                # breakpoint()
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx.transpose_(1, 2)) # torch.Size([506, 768, 2])
+                pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([506, 768, 2])
+                # print('after self.bn_pairwise_obj_ctx')
+                # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 0, 2) # torch.Size([768, 506, 2])
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
+                # pairwise_obj_ctx.transpose_()
+                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
+                # breakpoint()
+                pairwise_obj_ctx = pairwise_obj_ctx.sum(dim=2) # [506, 768] # TODO: prod?
+                # print('after sum')
+                # ctx_pairwise_rois = obj_features_subject + obj_features_object + pairwise_obj_ctx.transpose_(0, 1)
+            elif pairwise_method_func == 'mha':
+                pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx)
+            elif pairwise_method_func == 'lrga':
+                # x_local = self.f_ab_obj_ctx(pairwise_obj_ctx)
+                # x_local = self.gsc_classify_1(global_features_mapped) # [506, 4096] => [506, 64]
+                #     x_local = F_relu(x_local) # TODO: need some sort of layers for repr learn?
+                #     x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+                x_global = self.attention_1(pairwise_obj_ctx) # torch.Size([506, 100])
+                #     del global_features_mapped
+                pairwise_obj_ctx = self.dimension_reduce_1(torch_cat((x_global, pairwise_obj_ctx), dim=1)) # torch.Size([506, 64])
+                pairwise_obj_ctx = self.bn(pairwise_obj_ctx) # torch.Size([506, 64])
+#         self.bn = ModuleList([BatchNorm1d(hidden_channels) for _ in range(num_layers-1)])
+                #
+                #     # Second/last pass
+                # x_local = self.gsc_classify_2(pairwise_obj_ctx)
+                # x_local = F_relu(pairwise_obj_ctx)
+                # x_local = F_dropout(x_local, p=self.dropout, training=self.training)
+                # x_global = self.attention_2(pairwise_obj_ctx) # TOOD: or union_features?
+                # pairwise_obj_ctx = self.dimension_reduce_2(torch_cat((x_global, pairwise_obj_ctx), dim=1))
+                # del x_global
+        else:
+            del head_rep, tail_rep
+
+        prod_rep = self.post_cat(prod_rep)
+
+        if self.with_clean_classifier:
+            prod_rep_clean = self.post_cat_clean(prod_rep)
+            if self.use_vision:
+                if self.union_single_not_match:
+                    prod_rep_clean = prod_rep_clean * self.up_dim_clean(union_features)
+                else:
+                    prod_rep_clean = prod_rep_clean * union_features
+
+            rel_dists_clean = self.rel_compress_clean(prod_rep_clean)
+            if self.use_bias:
+                freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred.long())
+                freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
+                rel_dists_clean = rel_dists_clean + freq_dists_bias_clean
+            if self.with_transfer:
+                rel_dists_clean = (self.pred_adj_nor @ rel_dists_clean.T).T
+
+            rel_dists = rel_dists_clean
+        else:
+            if self.use_vision:
+                if self.union_single_not_match:
+                    prod_rep = prod_rep * self.up_dim(union_features)
+                else:
+                    prod_rep = prod_rep * union_features
+
+            if self.use_pairwise_l2 is True:
+                rel_dists = self.pairwise_compress(pairwise_obj_ctx) + self.rel_compress(prod_rep)
+            else:
+                rel_dists = self.rel_compress(prod_rep)
+
+            if self.use_bias:
+                freq_dists_bias = self.freq_bias.index_with_labels(pair_pred.long())
+                freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
+                rel_dists = rel_dists + freq_dists_bias
+
+        obj_dists = obj_dists.split(num_objs, dim=0)
+        rel_dists = rel_dists.split(num_rels, dim=0)
+
+        # we use obj_preds instead of pred from obj_dists
+        # because in decoder_rnn, preds has been through a nms stage
+        add_losses = {}
+
+        if self.attribute_on:
+            att_dists = att_dists.split(num_objs, dim=0)
+            return (obj_dists, att_dists), rel_dists, add_losses
+        else:
+            return obj_dists, rel_dists, add_losses
 
 
 def make_roi_relation_predictor(cfg, in_channels):
