@@ -29,6 +29,7 @@ get_mode()
   fi
 }
 
+export TORCH_DISTRIBUTED_DEBUG=INFO
 export TORCHELASTIC_MAX_RESTARTS=0
 export MODE=$(get_mode)
 echo "TRAINING ${MODE} model ${MODEL_NAME}"

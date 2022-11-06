@@ -31,6 +31,7 @@ get_mode()
 
 export MODE=$(get_mode)
 
+export TORCH_DISTRIBUTED_DEBUG=INFO
 export TORCHELASTIC_MAX_RESTARTS=0
 echo "TRAINING ${MODE} model ${MODEL_NAME}"
 cd ${PROJECT_DIR}
