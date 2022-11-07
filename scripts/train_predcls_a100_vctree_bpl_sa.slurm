@@ -55,7 +55,7 @@ IFS=- read str1 MODEL_NAME_OLD ITER <<< "${SLURM_JOB_NAME}"
 export PROJECT_DIR=${HOME}/gsc
 export MODEL_NAME="${MODEL_NAME_OLD}_${ITER}_bpl_sa"
 export LOGDIR=${PROJECT_DIR}/log
-export WEIGHT= ${PROJECT_DIR}/checkpoints/${MODEL_NAME_OLD}/model_${ITER}.pth \
+export WEIGHT= ${PROJECT_DIR}/checkpoints/${MODEL_NAME_OLD}/model_${ITER}.pth
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 
 if [ -d "$MODEL_DIRNAME" ]; then
