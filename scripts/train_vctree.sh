@@ -69,6 +69,6 @@ torchrun --master_port ${PORT} --nproc_per_node=$NUM_GPUS \
   SOLVER.CHECKPOINT_PERIOD 2000 \
   GLOVE_DIR ${PROJECT_DIR}/datasets/vg/ \
   MODEL.PRETRAINED_DETECTOR_CKPT ${PROJECT_DIR}/checkpoints/pretrained_faster_rcnn/model_final.pth \
-  MODEL.WEIGHT ${WEIGHT} \
+  MODEL.PRETRAINED_MODEL_CKPT ${WEIGHT} \
   OUTPUT_DIR ${PROJECT_DIR}/checkpoints/${MODEL_NAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log &&
 echo "Finished training ${MODE} model ${MODEL_NAME}" || echo "Failed to train ${MODE} model ${MODEL_NAME}"
