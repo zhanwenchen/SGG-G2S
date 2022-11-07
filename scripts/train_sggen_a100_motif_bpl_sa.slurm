@@ -7,7 +7,7 @@
 #SBATCH -t 48:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB # need to match batch size.
-#SBATCH -J test-44709304_motif_pairwise_sggen_4GPU_riv_1-0008000 # TODO: CHANGE THIS
+#SBATCH -J bpl-44709304_motif_pairwise_sggen_4GPU_riv_1-0008000 # TODO: CHANGE THIS
 #SBATCH -o /home/pct4et/gsc/log/%x-%A.out
 #SBATCH -e /home/pct4et/gsc/log/%x-%A.err
 #SBATCH --mail-type=ALL
@@ -72,7 +72,7 @@ else
   export USE_GSC_FE=False
   export PAIRWISE_METHOD_DATA='hadamard'
   export PAIRWISE_METHOD_FUNC='mha'
-  export USE_PAIRWISE_L2=False
+  export USE_PAIRWISE_L2=True
   export SINGULARITYENV_PREPEND_PATH="${HOME}/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_motif.yaml
   export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
