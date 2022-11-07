@@ -121,7 +121,7 @@ class PairwisePredictor(Module):
         if self.with_cleanclf:
             self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
             layer_init_kaiming_normal(self.rel_compress_clean)
-            self.ctx_compress_clean = Linear(self.hidden_dim * 2, self.num_rel_cls)
+            self.ctx_compress_clean = Linear(self.hidden_dim, self.num_rel_cls)
             layer_init_kaiming_normal(self.ctx_compress_clean)
             if self.use_gsc:
                 self.gsc_compress_clean = Linear(self.gsc_classify_dim_2, self.num_rel_cls)
@@ -693,7 +693,6 @@ class VCTreePredictor(Module):
         else:
             del head_rep, tail_rep
 
-        prod_rep = self.post_cat(prod_rep)
 
         # learned-mixin Gate
         # uni_gate = torch.tanh(self.uni_gate(self.drop(prod_rep)))
@@ -719,6 +718,8 @@ class VCTreePredictor(Module):
                 rel_dists_clean = (self.pred_adj_nor @ rel_dists_clean.T).T
             rel_dists = rel_dists_clean
         else:
+            prod_rep = self.post_cat(prod_rep)
+
             if self.use_pairwise_l2 is True:
                 ctx_dists = self.pairwise_compress(pairwise_obj_ctx) + self.ctx_compress(prod_rep * union_features)
             else:
@@ -999,7 +1000,6 @@ class MotifPredictor(Module):
         else:
             del head_rep, tail_rep
 
-        prod_rep = self.post_cat(prod_rep)
 
         if self.with_clean_classifier:
             prod_rep_clean = self.post_cat_clean(prod_rep)
@@ -1019,6 +1019,8 @@ class MotifPredictor(Module):
 
             rel_dists = rel_dists_clean
         else:
+            prod_rep = self.post_cat(prod_rep)
+
             if self.use_vision:
                 if self.union_single_not_match:
                     prod_rep = prod_rep * self.up_dim(union_features)
