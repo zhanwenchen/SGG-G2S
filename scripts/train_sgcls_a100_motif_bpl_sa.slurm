@@ -14,7 +14,7 @@
 #SBATCH --mail-user=pct4et@virginia.edu
 #SBATCH --exclude=udc-an28-1,udc-an28-7
 
-timestamp() {C
+timestamp() {
   date +"%Y-%m-%d%H%M%S"
 }
 
