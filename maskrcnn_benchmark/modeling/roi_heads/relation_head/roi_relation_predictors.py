@@ -492,11 +492,9 @@ class VCTreePredictor(Module):
         self.hidden_dim = hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
         self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
         self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
-        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
 
         # initialize layer parameters
         layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
-        layer_init(self.post_cat, xavier=True)
 
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
@@ -532,7 +530,7 @@ class VCTreePredictor(Module):
             layer_init(self.ctx_compress_clean, xavier=True)
 
             if self.use_pairwise_l2 is True:
-                self.pairwise_compress_clean = Linear(self.pooling_dim, self.num_rel_cls)
+                self.pairwise_compress_clean = Linear(self.hidden_dim, self.num_rel_cls)
                 layer_init(self.pairwise_compress_clean, xavier=True)
             # convey statistics into FrequencyBias to avoid loading again
             self.freq_bias_clean = FrequencyBias(config, statistics)
@@ -554,6 +552,9 @@ class VCTreePredictor(Module):
             # learned-mixin
             # self.uni_gate = Linear(self.pooling_dim, self.num_rel_cls)
             # self.frq_gate = Linear(self.pooling_dim, self.num_rel_cls)
+            self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
+            layer_init(self.post_cat, xavier=True)
+
             self.ctx_compress = Linear(self.pooling_dim, self.num_rel_cls)
             # self.uni_compress = Linear(self.pooling_dim, self.num_rel_cls)
             # layer_init(self.uni_gate, xavier=True)
@@ -807,9 +808,12 @@ class MotifPredictor(Module):
             else:
                 self.union_single_not_match = False
             self.post_cat_clean = Linear(self.hidden_dim * 2, self.pooling_dim)
-            self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
             layer_init(self.post_cat_clean, xavier=True)
+            self.rel_compress_clean = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
             layer_init(self.rel_compress_clean, xavier=True)
+            if self.use_pairwise_l2 is True:
+                self.pairwise_compress_clean = Linear(self.hidden_dim, self.num_rel_cls, bias=True)
+                layer_init(self.pairwise_compress_clean, xavier=True)
             if self.use_bias:
                 # convey statistics into FrequencyBias to avoid loading again
                 self.freq_bias_clean = FrequencyBias(config, statistics)
@@ -1005,11 +1009,15 @@ class MotifPredictor(Module):
             prod_rep_clean = self.post_cat_clean(prod_rep)
             if self.use_vision:
                 if self.union_single_not_match:
-                    prod_rep_clean = prod_rep_clean * self.up_dim_clean(union_features)
-                else:
-                    prod_rep_clean = prod_rep_clean * union_features
+                    union_features = self.up_dim_clean(union_features)
 
-            rel_dists_clean = self.rel_compress_clean(prod_rep_clean)
+                prod_rep_clean = prod_rep_clean * union_features
+
+                if self.use_pairwise_l2 is True:
+                    rel_dists_clean = self.pairwise_compress_clean(pairwise_obj_ctx) + self.rel_compress_clean(prod_rep_clean)
+                else:
+                    rel_dists_clean = self.rel_compress_clean(prod_rep_clean)
+
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred.long())
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
