@@ -781,11 +781,9 @@ class MotifPredictor(Module):
         self.pairwise_method_func = pairwise_method_func = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_FUNC
 
         self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
-        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
 
         # initialize layer parameters
         layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
-        layer_init(self.post_cat, xavier=True)
 
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
@@ -831,6 +829,9 @@ class MotifPredictor(Module):
                 pred_adj_np = adj_normalize(pred_adj_np)
                 self.pred_adj_nor = torch_from_numpy(pred_adj_np).float().to(self.devices)
         else:
+            self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
+            layer_init(self.post_cat, xavier=True)
+
             self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
             layer_init(self.rel_compress, xavier=True)
 
@@ -1013,11 +1014,10 @@ class MotifPredictor(Module):
 
                 prod_rep_clean = prod_rep_clean * union_features
 
-                if self.use_pairwise_l2 is True:
-                    rel_dists_clean = self.pairwise_compress_clean(pairwise_obj_ctx) + self.rel_compress_clean(prod_rep_clean)
-                else:
-                    rel_dists_clean = self.rel_compress_clean(prod_rep_clean)
-
+            if self.use_pairwise_l2 is True:
+                rel_dists_clean = self.pairwise_compress_clean(pairwise_obj_ctx) + self.rel_compress_clean(prod_rep)
+            else:
+                rel_dists_clean = self.rel_compress_clean(prod_rep)
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred.long())
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
