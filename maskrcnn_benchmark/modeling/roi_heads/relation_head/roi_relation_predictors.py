@@ -1005,7 +1005,7 @@ class MotifPredictor(Module):
             del head_rep, tail_rep
 
         if self.with_clean_classifier:
-            prod_rep = self.pst_cat_clean(prod_rep)
+            prod_rep = self.post_cat_clean(prod_rep)
             if self.use_vision:
                 if self.union_single_not_match:
                     union_features = self.up_dim_clean(union_features)
