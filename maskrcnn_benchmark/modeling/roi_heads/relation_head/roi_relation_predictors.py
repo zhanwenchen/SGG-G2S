@@ -781,9 +781,11 @@ class MotifPredictor(Module):
         self.pairwise_method_func = pairwise_method_func = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_FUNC
 
         self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
 
         # initialize layer parameters
         layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
+        layer_init(self.post_cat, xavier=True)
 
         if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
             self.union_single_not_match = True
@@ -829,9 +831,6 @@ class MotifPredictor(Module):
                 pred_adj_np = adj_normalize(pred_adj_np)
                 self.pred_adj_nor = torch_from_numpy(pred_adj_np).float().to(self.devices)
         else:
-            self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
-            layer_init(self.post_cat, xavier=True)
-
             self.rel_compress = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
             layer_init(self.rel_compress, xavier=True)
 
@@ -1005,45 +1004,45 @@ class MotifPredictor(Module):
         else:
             del head_rep, tail_rep
 
-
         if self.with_clean_classifier:
-            prod_rep_clean = self.post_cat_clean(prod_rep)
+            prod_rep = self.pst_cat_clean(prod_rep)
             if self.use_vision:
                 if self.union_single_not_match:
                     union_features = self.up_dim_clean(union_features)
 
-                prod_rep_clean = prod_rep_clean * union_features
+                prod_rep *= union_features
 
-            if self.use_pairwise_l2 is True:
-                rel_dists_clean = self.pairwise_compress_clean(pairwise_obj_ctx) + self.rel_compress_clean(prod_rep)
-            else:
-                rel_dists_clean = self.rel_compress_clean(prod_rep)
+                if self.use_pairwise_l2 is True:
+                    rel_dists = self.pairwise_compress_clean(pairwise_obj_ctx) + self.rel_compress_clean(prod_rep)
+                    del pairwise_obj_ctx
+                else:
+                    rel_dists = self.rel_compress_clean(prod_rep)
+                del prod_rep
             if self.use_bias:
                 freq_dists_bias_clean = self.freq_bias_clean.index_with_labels(pair_pred.long())
                 freq_dists_bias_clean = F_dropout(freq_dists_bias_clean, 0.3, training=self.training)
-                rel_dists_clean = rel_dists_clean + freq_dists_bias_clean
+                rel_dists += freq_dists_bias_clean
             if self.with_transfer:
-                rel_dists_clean = (self.pred_adj_nor @ rel_dists_clean.T).T
-
-            rel_dists = rel_dists_clean
+                rel_dists = (self.pred_adj_nor @ rel_dists.T).T
         else:
             prod_rep = self.post_cat(prod_rep)
 
             if self.use_vision:
                 if self.union_single_not_match:
-                    prod_rep = prod_rep * self.up_dim(union_features)
-                else:
-                    prod_rep = prod_rep * union_features
+                    union_features = self.up_dim(union_features)
+
+                prod_rep *= union_features
 
             if self.use_pairwise_l2 is True:
                 rel_dists = self.pairwise_compress(pairwise_obj_ctx) + self.rel_compress(prod_rep)
+                del pairwise_obj_ctx
             else:
                 rel_dists = self.rel_compress(prod_rep)
-
+            del prod_rep
             if self.use_bias:
                 freq_dists_bias = self.freq_bias.index_with_labels(pair_pred.long())
                 freq_dists_bias = F_dropout(freq_dists_bias, 0.3, training=self.training)
-                rel_dists = rel_dists + freq_dists_bias
+                rel_dists += freq_dists_bias
 
         obj_dists = obj_dists.split(num_objs, dim=0)
         rel_dists = rel_dists.split(num_rels, dim=0)
