@@ -1,17 +1,11 @@
-import array
-import os
-import zipfile
-import itertools
-import six
-from six.moves.urllib.request import urlretrieve
-from tqdm import tqdm
-import sys
-from maskrcnn_benchmark.modeling.utils import cat
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
+from torch import (
+    min as torch_min,
+    max as torch_max,
+    tensor as torch_tensor,
+    int64 as torch_int64,
+    cat as torch_cat,
+)
+from torch.jit import script as torch_jit_script
 
 
 def generate_forest(pair_scores, proposals, mode):
@@ -43,14 +37,14 @@ def generate_forest(pair_scores, proposals, mode):
             new_node = ArbitraryTree(idx, float(node_scores[idx]), int(obj_label[idx]),  proposal.bbox[idx])
             node_container.append(new_node)
             remain_index.append(idx)
-        
+
         # iteratively generate tree
-        gen_tree(node_container, pair_score, node_scores, root, remain_index, mode)
+        gen_tree(node_container, pair_score, root, remain_index, mode)
         output_forest.append(root)
 
     return output_forest
 
-def gen_tree(node_container, pair_score, node_scores, root, remain_index, mode):
+def gen_tree(node_container, pair_score, root, remain_index, mode):
     """
     Step 1: Devide all nodes into left child container and right child container
     Step 2: From left child container and right child container, select their respective sub roots
@@ -71,8 +65,8 @@ def gen_tree(node_container, pair_score, node_scores, root, remain_index, mode):
 
     while len(node_container) > 0:
         wid = len(remain_index)
-        select_indexs = torch.tensor(select_index, device=device, dtype=torch.int64)
-        remain_indexs = torch.tensor(remain_index, device=device, dtype=torch.int64)
+        select_indexs = torch_tensor(select_index, device=device, dtype=torch_int64)
+        remain_indexs = torch_tensor(remain_index, device=device, dtype=torch_int64)
         select_score_map = pair_score[select_indexs][:, remain_indexs].view(-1)
         best_id = select_score_map.max(0)[1]
 
@@ -99,7 +93,7 @@ def arbForest_to_biForest(forest):
     for i in range(len(forest)):
         result_tree = arTree_to_biTree(forest[i])
         output.append(result_tree)
-        
+
     return output
 
 
@@ -124,7 +118,7 @@ def arNode_to_biNode(arNode, biNode):
             arNode_to_biNode(arNode.children[i+1], current_bi_node)
 
 def find_best_node(node_container):
-    max_node_score = -1 
+    max_node_score = -1
     best_node = None
     for i in range(len(node_container)):
         if node_container[i].score > max_node_score:
@@ -152,7 +146,7 @@ class BasicBiTree(object):
         child.parent = self
         self.num_child += 1
         self.left_child = child
-    
+
     def add_right_child(self, child):
         if self.right_child is not None:
             print('Right child already exist')
@@ -217,7 +211,7 @@ class BasicBiTree(object):
             return True
         else:
             return False
-            
+
     # whether input node is under left sub tree
     def is_left_descendant(self, idx):
         if self.left_child is not None:
@@ -227,7 +221,7 @@ class BasicBiTree(object):
                 return self.left_child.is_descendant(idx)
         else:
             return False
-    
+
     # whether input node is under right sub tree
     def is_right_descendant(self, idx):
         if self.right_child is not None:
@@ -238,7 +232,7 @@ class BasicBiTree(object):
         else:
             return False
 
-    
+
 class ArbitraryTree(object):
     def __init__(self, idx, score, label=-1, box=None, is_root=False):
         self.index = int(idx)
@@ -250,7 +244,7 @@ class ArbitraryTree(object):
         self.box = box.view(-1) if box is not None else None #[x1,y1,x2,y2]
         self.parent = None
         self.node_order = -1 # the n_th node added to the tree
-    
+
     def generate_bi_tree(self):
         # generate a BiTree node, parent/child relationship are not inherited
         return BiTree(self.index, self.score, self.label, self.box, self.is_root)
@@ -272,16 +266,16 @@ class ArbitraryTree(object):
         elif len(self.children) > 0:
             for i in range(len(self.children)):
                 result_node = self.children[i].find_node_by_order(order, result_node)
-        
+
         return result_node
-    
+
     def find_node_by_index(self, index, result_node):
         if self.index == index:
             result_node = self
         elif len(self.children) > 0:
             for i in range(len(self.children)):
                 result_node = self.children[i].find_node_by_index(index, result_node)
-                
+
         return result_node
 
     def search_best_insert(self, score_map, best_score, insert_node, best_depend_node, best_insert_node, ignore_root = True):
@@ -291,7 +285,7 @@ class ArbitraryTree(object):
             best_score = score_map[self.index, insert_node.index]
             best_depend_node = self
             best_insert_node = insert_node
-        
+
         # iteratively search child
         for i in range(self.get_child_num()):
             best_score, best_depend_node, best_insert_node = \
@@ -301,7 +295,7 @@ class ArbitraryTree(object):
 
     def get_child_num(self):
         return len(self.children)
-    
+
     def get_total_child(self):
         sum = 0
         num_current_child = self.get_child_num()
@@ -325,18 +319,18 @@ class BiTree(BasicBiTree):
         self.box = box.view(-1) #[x1,y1,x2,y2]
 
 
-
+@torch_jit_script
 def bbox_intersection(box_a, box_b):
     A = box_a.size(0)
     B = box_b.size(0)
-    max_xy = torch.min(box_a[:, 2:].unsqueeze(1).expand(A, B, 2),
+    max_xy = torch_min(box_a[:, 2:].unsqueeze(1).expand(A, B, 2),
                        box_b[:, 2:].unsqueeze(0).expand(A, B, 2))
-    min_xy = torch.max(box_a[:, :2].unsqueeze(1).expand(A, B, 2),
+    min_xy = torch_max(box_a[:, :2].unsqueeze(1).expand(A, B, 2),
                        box_b[:, :2].unsqueeze(0).expand(A, B, 2))
-    inter = torch.clamp((max_xy - min_xy + 1.0), min=0)
-    return inter[:, :, 0] * inter[:, :, 1]
+    inter = (max_xy - min_xy + 1.0).clamp_(min=0)
+    return inter.prod(dim=2)
 
-
+@torch_jit_script
 def bbox_overlap(box_a, box_b):
     inter = bbox_intersection(box_a, box_b)
     area_a = ((box_a[:, 2] - box_a[:, 0] + 1.0) *
@@ -344,15 +338,16 @@ def bbox_overlap(box_a, box_b):
     area_b = ((box_b[:, 2] - box_b[:, 0] + 1.0) *
               (box_b[:, 3] - box_b[:, 1] + 1.0)).unsqueeze(0).expand_as(inter)  # [A,B]
     union = area_a + area_b - inter
-    return inter / (union + 1e-9)  
+    return inter / (union + 1e-9)
 
 
+@torch_jit_script
 def bbox_area(bbox):
     area = (bbox[:,2] - bbox[:,0]) * (bbox[:,3] - bbox[:,1])
     return area.view(-1, 1)
 
 
-def get_overlap_info(proposals):
+def get_overlap_info_old(proposals):
     IM_SCALE = 1024
     assert proposals[0].mode == 'xyxy'
     overlap_info = []
@@ -369,7 +364,34 @@ def get_overlap_info(proposals):
         info5 = info3 / (info1 + 1e-9)
         info6 = area / float(IM_SCALE * IM_SCALE)
 
-        info = torch.cat([info1, info2, info3, info4, info5, info6], dim=1)
+        info = torch_cat([info1, info2, info3, info4, info5, info6], dim=1)
         overlap_info.append(info)
 
-    return torch.cat(overlap_info, dim=0)
+    return torch_cat(overlap_info, dim=0)
+
+
+def get_overlap_info(proposals):
+    assert proposals[0].mode == 'xyxy'
+    overlap_info = []
+    for proposal in proposals:
+        info = get_overlap_info_each(proposal.bbox)
+        overlap_info.append(info)
+
+    return torch_cat(overlap_info, dim=0)
+
+
+@torch_jit_script
+def get_overlap_info_each(boxes):
+    IM_SCALE_SQUARED = 1048576.0
+    intersection = bbox_intersection(boxes, boxes).float()    # num, num
+    overlap = bbox_overlap(boxes, boxes).float()                  # num, num
+    area = bbox_area(boxes).float()                           # num, 1
+
+    info1 = (intersection > 0.0).float().sum(1).view(-1, 1)
+    info2 = intersection.sum(1).view(-1, 1) / IM_SCALE_SQUARED
+    info3 = overlap.sum(1).view(-1, 1)
+    info4 = info2 / (info1 + 1e-9)
+    info5 = info3 / (info1 + 1e-9)
+    info6 = area / IM_SCALE_SQUARED
+
+    return torch_cat([info1, info2, info3, info4, info5, info6], dim=1)
