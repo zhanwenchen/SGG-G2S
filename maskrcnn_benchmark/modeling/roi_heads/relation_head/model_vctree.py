@@ -324,21 +324,33 @@ class VCTreeLSTMContext(Module):
         bi_preds = []
         vc_scores = []
         for sub, obj, dist in zip(sub_feats, obj_feats, roi_dists):
-            # only used to calculate loss
-            num_obj = sub.shape[0]
-            num_dim = sub.shape[-1]
-            sub = sub.view(1, num_obj, num_dim).expand(num_obj, num_obj, num_dim)
-            obj = obj.view(num_obj, 1, num_dim).expand(num_obj, num_obj, num_dim)
-            sub_dist = dist.view(1, num_obj, -1).expand(num_obj, num_obj, -1).unsqueeze_(2)
-            obj_dist = dist.view(num_obj, 1, -1).expand(num_obj, num_obj, -1).unsqueeze_(3)
-            joint_dist = (sub_dist * obj_dist).view(num_obj, num_obj, -1)
-            subjobj = sub * obj
+            # only used to calculate losss
+            joint_dist, num_obj, subjobj, sub, obj = vctree_score_net_pre_calc(sub, obj, dist)
 
             co_prior = self.bi_freq_prior(joint_dist.view(num_obj*num_obj, -1)).view(num_obj, num_obj)
             vis_prior = self.vision_prior(torch_cat([subjobj, sub, obj, co_prior.unsqueeze(-1)], dim=-1).view(num_obj*num_obj, -1)).view(num_obj, num_obj)
 
-            joint_pred =  vis_prior.sigmoid_() *  co_prior
-            bi_preds.append(joint_pred)
-            vc_scores.append(torch_sigmoid(joint_pred))
+            joint_pred_single, joint_pred_double = vctree_score_net_post_calc(co_prior, vis_prior)
+            bi_preds.append(joint_pred_single)
+            vc_scores.append(joint_pred_double)
 
-        return bi_preds, vc_scores
+            return bi_preds, vc_scores
+
+
+@torch_jit_script
+def vctree_score_net_pre_calc(sub, obj, dist):
+    num_obj = sub.shape[0]
+    num_dim = sub.shape[-1]
+    sub = sub.view(1, num_obj, num_dim).expand(num_obj, num_obj, num_dim)
+    obj = obj.view(num_obj, 1, num_dim).expand(num_obj, num_obj, num_dim)
+    sub_dist = dist.view(1, num_obj, -1).expand(num_obj, num_obj, -1).unsqueeze_(2)
+    obj_dist = dist.view(num_obj, 1, -1).expand(num_obj, num_obj, -1).unsqueeze_(3)
+    joint_dist = (sub_dist * obj_dist).view(num_obj, num_obj, -1)
+    subjobj = sub * obj
+    return joint_dist, num_obj, subjobj, sub, obj
+
+@torch_jit_script
+def vctree_score_net_post_calc(co_prior, vis_prior):
+    single =  vis_prior.sigmoid() * co_prior
+    double = single.sigmoid()
+    return single, double
