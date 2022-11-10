@@ -86,7 +86,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
         fix_eval_modules(eval_modules)
 
     # NOTE, we slow down the LR of the layers start with the names in slow_heads
-    if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR in ["IMPPredictor",]:
+    predictor = cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR
+    if predictor in ["IMPPredictor",]:
         slow_heads = ["roi_heads.relation.box_feature_extractor",
                       "roi_heads.relation.union_feature_extractor.feature_extractor",]
     else:
@@ -156,7 +157,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
                 #     "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
                 #     "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
                 # }
-                if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR.startswith("TransformerTransfer"):
+                if predictor.startswith("TransformerTransfer"):
                     load_mapping_classifier = {
                         "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
                         "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
@@ -164,13 +165,13 @@ def train(cfg, local_rank, distributed, logger, experiment):
                     }
                     if cfg.MODEL.USING_GSC:
                         load_mapping_classifier["roi_heads.relation.predictor.gsc_compress_clean"] = "roi_heads.relation.predictor.gsc_compress",
-                if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "VCTreePredictor":
+                if predictor == "VCTreePredictor":
                     load_mapping_classifier = {
                         "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
                         "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
                         "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
                     }
-                if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "MotifPredictor":
+                if predictor == "MotifPredictor":
                     load_mapping_classifier = {
                         "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
                         "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
@@ -248,6 +249,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
     print_grad_freq = cfg.SOLVER.PRINT_GRAD_FREQ
     max_iter = cfg.SOLVER.MAX_ITER
     model_name = os_environ['MODEL_NAME']
+    skip_test = mode == 'sgdet' and predictor == 'VCTreePredictor'
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
         with experiment.train():
             # if iteration % 1000 == 0:
@@ -334,10 +336,13 @@ def train(cfg, local_rank, distributed, logger, experiment):
                 logger.info(f'Finished validating model {model_name} at iteration={iteration}. mR@50={val_result}')
                 experiment.log_metric('val_mR@50', val_result, epoch=iteration)
             with experiment.test():
-                logger.info(f'Start testing model {model_name} at iteration={iteration}.')
-                mr50 = run_test(cfg, model, distributed, logger, iteration, experiment)
-                logger.info(f'Finished testing model {model_name} at iteration={iteration}. mR@50={mr50}')
-                experiment.log_metric('test_mR@50', mr50, epoch=iteration)
+                if skip_test:
+                    logger.info(f'Skip testing model {model_name} at iteration={iteration}.')
+                else:
+                    logger.info(f'Start testing model {model_name} at iteration={iteration}.')
+                    mr50 = run_test(cfg, model, distributed, logger, iteration, experiment)
+                    logger.info(f'Finished testing model {model_name} at iteration={iteration}. mR@50={mr50}')
+                    experiment.log_metric('test_mR@50', mr50, epoch=iteration)
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
