@@ -334,7 +334,7 @@ class VCTreeLSTMContext(Module):
             bi_preds.append(joint_pred_single)
             vc_scores.append(joint_pred_double)
 
-            return bi_preds, vc_scores
+        return bi_preds, vc_scores
 
 
 @torch_jit_script
