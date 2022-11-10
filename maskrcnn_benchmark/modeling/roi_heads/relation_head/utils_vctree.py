@@ -1,7 +1,7 @@
 from torch import (
     min as torch_min,
     max as torch_max,
-    tensor as torch_tensor,
+    as_tensor as torch_as_tensor,
     int64 as torch_int64,
     cat as torch_cat,
 )
@@ -65,8 +65,8 @@ def gen_tree(node_container, pair_score, root, remain_index, mode):
 
     while len(node_container) > 0:
         wid = len(remain_index)
-        select_indexs = torch_tensor(select_index, device=device, dtype=torch_int64)
-        remain_indexs = torch_tensor(remain_index, device=device, dtype=torch_int64)
+        select_indexs = torch_as_tensor(select_index, device=device, dtype=torch_int64)
+        remain_indexs = torch_as_tensor(remain_index, device=device, dtype=torch_int64)
         select_score_map = pair_score[select_indexs][:, remain_indexs].view(-1)
         best_id = select_score_map.max(0)[1]
 
@@ -304,6 +304,7 @@ class ArbitraryTree(object):
             sum += self.children[i].get_total_child()
         return sum
 
+
 # only support binary tree
 class BiTree(BasicBiTree):
     def __init__(self, idx, node_score, label, box, is_root=False):
@@ -330,6 +331,7 @@ def bbox_intersection(box_a, box_b):
     inter = (max_xy - min_xy + 1.0).clamp_(min=0)
     return inter.prod(dim=2)
 
+
 @torch_jit_script
 def bbox_overlap(box_a, box_b):
     inter = bbox_intersection(box_a, box_b)
@@ -345,29 +347,6 @@ def bbox_overlap(box_a, box_b):
 def bbox_area(bbox):
     area = (bbox[:,2] - bbox[:,0]) * (bbox[:,3] - bbox[:,1])
     return area.view(-1, 1)
-
-
-def get_overlap_info_old(proposals):
-    IM_SCALE = 1024
-    assert proposals[0].mode == 'xyxy'
-    overlap_info = []
-    for proposal in proposals:
-        boxes = proposal.bbox
-        intersection = bbox_intersection(boxes, boxes).float()    # num, num
-        overlap = bbox_overlap(boxes, boxes).float()                  # num, num
-        area = bbox_area(boxes).float()                           # num, 1
-
-        info1 = (intersection > 0.0).float().sum(1).view(-1, 1)
-        info2 = intersection.sum(1).view(-1, 1) / float(IM_SCALE * IM_SCALE)
-        info3 = overlap.sum(1).view(-1, 1)
-        info4 = info2 / (info1 + 1e-9)
-        info5 = info3 / (info1 + 1e-9)
-        info6 = area / float(IM_SCALE * IM_SCALE)
-
-        info = torch_cat([info1, info2, info3, info4, info5, info6], dim=1)
-        overlap_info.append(info)
-
-    return torch_cat(overlap_info, dim=0)
 
 
 def get_overlap_info(proposals):
