@@ -162,6 +162,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
                         "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
                         "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
                         "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
+                        "roi_heads.relation.predictor.pairwise_compress_clean": "roi_heads.relation.predictor.pairwise_compress",
                     }
                     if cfg.MODEL.USING_GSC:
                         load_mapping_classifier["roi_heads.relation.predictor.gsc_compress_clean"] = "roi_heads.relation.predictor.gsc_compress",
@@ -170,12 +171,14 @@ def train(cfg, local_rank, distributed, logger, experiment):
                         "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
                         "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
                         "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
+                        "roi_heads.relation.predictor.pairwise_compress_clean": "roi_heads.relation.predictor.pairwise_compress",
                     }
                 if predictor == "MotifPredictor":
                     load_mapping_classifier = {
                         "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
                         "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
                         "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
+                        "roi_heads.relation.predictor.pairwise_compress_clean": "roi_heads.relation.predictor.pairwise_compress",
                     }
                 #load_mapping_classifier = {}
                 if cfg.MODEL.PRETRAINED_MODEL_CKPT != "" :
