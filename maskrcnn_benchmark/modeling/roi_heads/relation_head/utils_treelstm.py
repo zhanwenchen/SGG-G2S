@@ -1,13 +1,13 @@
 from torch import (
     cat as torch_cat,
     no_grad as torch_no_grad,
-    tensor as torch_tensor,
     tanh as torch_tanh,
     mul as torch_mul,
     sigmoid as torch_sigmoid,
     split as torch_split,
     int64 as torch_int64,
     float32 as torch_float32,
+    zeros as torch_zeros,
 )
 from torch.nn import Module, ModuleList, Linear
 from torch.nn.functional import (
@@ -76,13 +76,15 @@ class OneDirectionalTreeLSTM(Module):
 
     def forward(self, tree, features, num_obj):
         # calc dropout mask, same for all
+        device = features.device
         if self.dropout > 0.0:
-            dropout_mask = get_dropout_mask(self.dropout, (1, self.out_dim), features.device)
+            dropout_mask = get_dropout_mask(self.dropout, (1, self.out_dim), device=device)
         else:
             dropout_mask = None
 
         # tree lstm input
-        h_order = torch_tensor([0] * num_obj, device=features.device, dtype=torch_int64) # used to resume order
+        h_order = torch_zeros(num_obj, device=device, dtype=torch_int64) # used to resume order
+
         lstm_io = TreeLSTM_IO(None, h_order, 0, None, None, dropout_mask)
         # run tree lstm forward (leaves to root)
         self.treeLSTM(tree, features, lstm_io)
@@ -150,8 +152,8 @@ class BiTreeLSTM_Foreward(Module):
             self.forward(tree.right_child, features, treelstm_io)
         # get c,h from left child
         if tree.left_child is None:
-            left_c = torch_tensor([0.0] * h_dim, device=device, dtype=torch_float32).view(1,-1)
-            left_h = torch_tensor([0.0] * h_dim, device=device, dtype=torch_float32).view(1,-1)
+            left_c = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
+            left_h = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
             # Only being used in decoder network
             if self.is_pass_embed:
                 left_embed = self.embed_layer.weight[0]
@@ -163,8 +165,8 @@ class BiTreeLSTM_Foreward(Module):
                 left_embed = tree.left_child.embeded_label
         # get c,h from right child
         if tree.right_child is None:
-            right_c = torch_tensor([0.0] * h_dim, device=device, dtype=torch_float32).view(1,-1)
-            right_h = torch_tensor([0.0] * h_dim, device=device, dtype=torch_float32).view(1,-1)
+            right_c = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
+            right_h = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
             # Only being used in decoder network
             if self.is_pass_embed:
                 right_embed = self.embed_layer.weight[0]
@@ -247,8 +249,8 @@ class BiTreeLSTM_Backward(Module):
         h_dim = self.h_dim
 
         if tree.parent is None:
-            root_c = torch_tensor([0.0] * h_dim, device=device, dtype=torch_float32).view(1,-1)
-            root_h = torch_tensor([0.0] * h_dim, device=device, dtype=torch_float32).view(1,-1)
+            root_c = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
+            root_h = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
             if self.is_pass_embed:
                 root_embed = self.embed_layer.weight[0]
         else:
