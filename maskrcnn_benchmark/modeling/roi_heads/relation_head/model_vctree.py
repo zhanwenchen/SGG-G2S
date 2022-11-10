@@ -1,17 +1,26 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
-from maskrcnn_benchmark.modeling import registry
-import numpy as np
-import torch
-from torch import nn
-from torch.nn import functional as F
-from maskrcnn_benchmark.modeling.utils import cat
-from .utils_motifs import obj_edge_vectors, center_x, sort_by_score, to_onehot, get_dropout_mask, encode_box_info
+from torch import (
+    no_grad as torch_no_grad,
+    cat as torch_cat,
+    tensor as torch_tensor,
+    zeros as torch_zeros,
+    sigmoid as torch_sigmoid,
+    int64 as torch_int64,
+    equal,
+)
+from torch.nn import Embedding, Linear, Module, BatchNorm1d, Sequential, ReLU
+from torch.nn.functional import (
+    softmax as F_softmax,
+    relu as F_relu,
+)
+from torch.jit import script as torch_jit_script
+from .utils_motifs import obj_edge_vectors, to_onehot, get_dropout_mask, encode_box_info
 from .utils_vctree import generate_forest, arbForest_to_biForest, get_overlap_info
 from .utils_treelstm import TreeLSTM_IO, MultiLayer_BTreeLSTM, BiTreeLSTM_Backward, BiTreeLSTM_Foreward
-from .utils_relation import layer_init, nms_overlaps
+from .utils_relation import layer_init
 
 
-class DecoderTreeLSTM(torch.nn.Module):
+class DecoderTreeLSTM(Module):
     def __init__(self, cfg, classes, embed_dim, inputs_dim, hidden_dim, direction='backward', dropout=0.2):
         super(DecoderTreeLSTM, self).__init__()
         """
@@ -33,11 +42,11 @@ class DecoderTreeLSTM(torch.nn.Module):
         self.dropout = dropout
         # generate embed layer
         embed_vecs = obj_edge_vectors(['start'] + self.classes, wv_dir=self.cfg.GLOVE_DIR, wv_dim=embed_dim)
-        self.obj_embed = nn.Embedding(len(self.classes) + 1, embed_dim)
-        with torch.no_grad():
+        self.obj_embed = Embedding(len(self.classes) + 1, embed_dim)
+        with torch_no_grad():
             self.obj_embed.weight.copy_(embed_vecs, non_blocking=True)
         # generate out layer
-        self.out = nn.Linear(self.hidden_size, len(self.classes))
+        self.out = Linear(self.hidden_size, len(self.classes))
 
         if direction == 'backward':
             self.input_size = inputs_dim + embed_dim
@@ -50,25 +59,29 @@ class DecoderTreeLSTM(torch.nn.Module):
 
     def forward(self, tree, features, num_obj):
         # generate dropout
-        if self.dropout > 0.0:
-            dropout_mask = get_dropout_mask(self.dropout, (1, self.hidden_size), features.device)
+        device = features.device
+        dropout = self.dropout
+        if dropout > 0.0:
+            dropout_mask = get_dropout_mask(dropout, (1, self.hidden_size), device)
         else:
             dropout_mask = None
 
         # generate tree lstm input/output class
-        h_order = torch.tensor([0] * num_obj, device=features.device)
+        h_order = torch_zeros(num_obj, device=device)
+
         lstm_io = TreeLSTM_IO(None, h_order, 0, None, None, dropout_mask)
 
         self.decoderLSTM(tree, features, lstm_io)
 
-        out_h = lstm_io.hidden[lstm_io.order.long()]
-        out_dists = lstm_io.dists[lstm_io.order.long()]
-        out_commitments = lstm_io.commitments[lstm_io.order.long()]
+        lstm_io_order_long = lstm_io.order.long()
+        out_dists = lstm_io.dists[lstm_io_order_long]
+        out_commitments = lstm_io.commitments[lstm_io_order_long]
+        del lstm_io_order_long
 
         return out_dists, out_commitments
 
 
-class VCTreeLSTMContext(nn.Module):
+class VCTreeLSTMContext(Module):
     """
     Modified from neural-motifs to encode contexts for each objects
     """
@@ -91,26 +104,26 @@ class VCTreeLSTMContext(nn.Module):
         # word embedding
         self.embed_dim = self.cfg.MODEL.ROI_RELATION_HEAD.EMBED_DIM
         obj_embed_vecs = obj_edge_vectors(self.obj_classes, wv_dir=self.cfg.GLOVE_DIR, wv_dim=self.embed_dim)
-        self.obj_embed1 = nn.Embedding(self.num_obj_classes, self.embed_dim)
-        self.obj_embed2 = nn.Embedding(self.num_obj_classes, self.embed_dim)
-        with torch.no_grad():
+        self.obj_embed1 = Embedding(self.num_obj_classes, self.embed_dim)
+        self.obj_embed2 = Embedding(self.num_obj_classes, self.embed_dim)
+        with torch_no_grad():
             self.obj_embed1.weight.copy_(obj_embed_vecs, non_blocking=True)
             self.obj_embed2.weight.copy_(obj_embed_vecs, non_blocking=True)
 
         # position embedding
-        self.pos_embed = nn.Sequential(*[
-            nn.Linear(9, 32), nn.BatchNorm1d(32, momentum= 0.001),
-            nn.Linear(32, 128), nn.ReLU(inplace=True),
+        self.pos_embed = Sequential(*[
+            Linear(9, 32), BatchNorm1d(32, momentum=0.001),
+            Linear(32, 128), ReLU(inplace=True),
         ])
 
         # overlap embedding
-        self.overlap_embed = nn.Sequential(*[
-            nn.Linear(6, 128), nn.BatchNorm1d(128, momentum= 0.001), nn.ReLU(inplace=True),
+        self.overlap_embed = Sequential(*[
+            Linear(6, 128), BatchNorm1d(128, momentum=0.001), ReLU(inplace=True),
             ])
 
         # box embed
-        self.box_embed = nn.Sequential(*[
-            nn.Linear(9, 128), nn.BatchNorm1d(128, momentum= 0.001), nn.ReLU(inplace=True),
+        self.box_embed = Sequential(*[
+            Linear(9, 128), BatchNorm1d(128, momentum=0.001), ReLU(inplace=True),
             ])
 
         # object & relation context
@@ -125,18 +138,18 @@ class VCTreeLSTMContext(nn.Module):
         co_occour = statistics['pred_dist'].float().sum(-1)
         assert co_occour.shape[0] == co_occour.shape[-1]
         assert len(co_occour.shape) == 2
-        self.bi_freq_prior = nn.Linear(self.num_obj_classes*self.num_obj_classes, 1, bias=False)
+        self.bi_freq_prior = Linear(self.num_obj_classes*self.num_obj_classes, 1, bias=False)
 
-        with torch.no_grad():
+        with torch_no_grad():
             co_occour = co_occour + co_occour.transpose(0,1)
             self.bi_freq_prior.weight.copy_(co_occour.view(-1).unsqueeze(0), non_blocking=True)
 
-        self.obj_reduce = nn.Linear(self.obj_dim, 128)
-        self.emb_reduce = nn.Linear(self.embed_dim, 128)
-        self.score_pre = nn.Linear(128 * 4, self.hidden_dim)
-        self.score_sub = nn.Linear(self.hidden_dim, self.hidden_dim)
-        self.score_obj = nn.Linear(self.hidden_dim, self.hidden_dim)
-        self.vision_prior = nn.Linear(self.hidden_dim * 3 + 1, 1)
+        self.obj_reduce = Linear(self.obj_dim, 128)
+        self.emb_reduce = Linear(self.embed_dim, 128)
+        self.score_pre = Linear(128 * 4, self.hidden_dim)
+        self.score_sub = Linear(self.hidden_dim, self.hidden_dim)
+        self.score_obj = Linear(self.hidden_dim, self.hidden_dim)
+        self.vision_prior = Linear(self.hidden_dim * 3 + 1, 1)
 
         layer_init(self.obj_reduce, xavier=True)
         layer_init(self.emb_reduce, xavier=True)
@@ -164,9 +177,9 @@ class VCTreeLSTMContext(nn.Module):
         self.effect_analysis = config.MODEL.ROI_RELATION_HEAD.CAUSAL.EFFECT_ANALYSIS
 
         if self.effect_analysis:
-            self.register_buffer("untreated_dcd_feat", torch.zeros(self.hidden_dim + self.obj_dim + self.embed_dim + 128))
-            self.register_buffer("untreated_obj_feat", torch.zeros(self.obj_dim+self.embed_dim + 128))
-            self.register_buffer("untreated_edg_feat", torch.zeros(self.embed_dim + self.obj_dim))
+            self.register_buffer("untreated_dcd_feat", torch_zeros(self.hidden_dim + self.obj_dim + self.embed_dim + 128))
+            self.register_buffer("untreated_obj_feat", torch_zeros(self.obj_dim+self.embed_dim + 128))
+            self.register_buffer("untreated_edg_feat", torch_zeros(self.embed_dim + self.obj_dim))
 
 
     def obj_ctx(self, num_objs, obj_feats, proposals, obj_labels=None, vc_forest=None, ctx_average=False):
@@ -181,32 +194,36 @@ class VCTreeLSTMContext(nn.Module):
         """
         obj_feats = obj_feats.split(num_objs, dim=0)
         obj_labels = obj_labels.split(num_objs, dim=0) if obj_labels is not None else None
+        len_proposals = [len(proposal) for proposal in proposals]
+        del proposals
 
         obj_ctxs = []
         obj_preds = []
         obj_dists = []
-        for i, (feat, tree, proposal) in enumerate(zip(obj_feats, vc_forest, proposals)):
-            encod_rep = self.obj_ctx_rnn(tree, feat, len(proposal))
+        for i, (feat, tree, len_proposal) in enumerate(zip(obj_feats, vc_forest, len_proposals)):
+            encod_rep = self.obj_ctx_rnn(tree, feat, len_proposal)
             obj_ctxs.append(encod_rep)
             # Decode in order
             if self.mode != 'predcls':
                 if (not self.training) and self.effect_analysis and ctx_average:
                     decoder_inp = self.untreated_dcd_feat.view(1, -1).expand(encod_rep.shape[0], -1)
                 else:
-                    decoder_inp = torch.cat((feat, encod_rep), 1)
+                    decoder_inp = torch_cat((feat, encod_rep), 1)
                 if self.training and self.effect_analysis:
                     self.untreated_dcd_feat = self.moving_average(self.untreated_dcd_feat, decoder_inp)
-                obj_dist, obj_pred = self.decoder_rnn(tree, decoder_inp, len(proposal))
+                obj_dist, obj_pred = self.decoder_rnn(tree, decoder_inp, len_proposal)
+                del tree, decoder_inp, len_proposal
             else:
                 assert obj_labels is not None
                 obj_pred = obj_labels[i]
                 obj_dist = to_onehot(obj_pred, self.num_obj_classes)
             obj_preds.append(obj_pred)
             obj_dists.append(obj_dist)
+        del obj_feats, vc_forest, len_proposals
 
-        obj_ctxs = cat(obj_ctxs, dim=0)
-        obj_preds = cat(obj_preds, dim=0)
-        obj_dists = cat(obj_dists, dim=0)
+        obj_ctxs = torch_cat(obj_ctxs, dim=0)
+        obj_preds = torch_cat(obj_preds, dim=0)
+        obj_dists = torch_cat(obj_dists, dim=0)
         return obj_ctxs, obj_preds, obj_dists
 
     def edge_ctx(self, num_objs, obj_feats, forest):
@@ -221,14 +238,13 @@ class VCTreeLSTMContext(nn.Module):
         for feat, tree, num_obj in zip(inp_feats, forest, num_objs):
             edge_rep = self.edge_ctx_rnn(tree, feat, num_obj)
             edge_ctxs.append(edge_rep)
-        edge_ctxs = cat(edge_ctxs, dim=0)
-        return edge_ctxs
+        return torch_cat(edge_ctxs, dim=0)
 
     def forward(self, x, proposals, rel_pair_idxs, logger=None, all_average=False, ctx_average=False):
         num_objs = [len(b) for b in proposals]
         # labels will be used in DecoderRNN during training (for nms)
         if self.training or self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
-            obj_labels = cat([proposal.get_field("labels") for proposal in proposals], dim=0)
+            obj_labels = torch_cat([proposal.get_field("labels") for proposal in proposals], dim=0)
         else:
             obj_labels = None
 
@@ -236,59 +252,70 @@ class VCTreeLSTMContext(nn.Module):
             obj_embed = self.obj_embed1(obj_labels.long())
             obj_logits = to_onehot(obj_labels, self.num_obj_classes)
         else:
-            obj_logits = cat([proposal.get_field("predict_logits") for proposal in proposals], dim=0).detach()
-            obj_embed = F.softmax(obj_logits, dim=1) @ self.obj_embed1.weight
+            obj_logits = torch_cat([proposal.get_field("predict_logits") for proposal in proposals], dim=0).detach()
+            obj_embed = F_softmax(obj_logits, dim=1) @ self.obj_embed1.weight
 
         assert proposals[0].mode == 'xyxy'
         box_info = encode_box_info(proposals)
-        pos_embed = self.pos_embed(box_info)
 
         batch_size = x.shape[0]
         if all_average and self.effect_analysis and (not self.training):
             obj_pre_rep = self.untreated_obj_feat.view(1, -1).expand(batch_size, -1)
         else:
-            obj_pre_rep = cat((x, obj_embed, pos_embed), -1)
+            pos_embed = self.pos_embed(box_info)
+            obj_pre_rep = torch_cat((x, obj_embed, pos_embed), -1)
+            del pos_embed
 
         # construct VCTree
         box_inp = self.box_embed(box_info)
+        del box_info
         pair_inp = self.overlap_embed(get_overlap_info(proposals))
-        bi_inp = cat((self.obj_reduce(x.detach()), self.emb_reduce(obj_embed.detach()), box_inp, pair_inp), -1)
-        bi_preds, vc_scores = self.vctree_score_net(num_objs, bi_inp, obj_logits, proposals)
+
+        bi_inp = torch_cat((self.obj_reduce(x.detach()), self.emb_reduce(obj_embed.detach()), box_inp, pair_inp), -1)
+        del obj_embed, box_inp, pair_inp
+        bi_preds, vc_scores = self.vctree_score_net(num_objs, bi_inp, obj_logits)
+        del obj_logits
         forest = generate_forest(vc_scores, proposals, self.mode)
+        del vc_scores
         vc_forest = arbForest_to_biForest(forest)
+        del forest
 
         # object level contextual feature
         obj_ctxs, obj_preds, obj_dists = self.obj_ctx(num_objs, obj_pre_rep, proposals, obj_labels, vc_forest, ctx_average=ctx_average)
+        del proposals, obj_labels
         # edge level contextual feature
-        obj_embed2 = self.obj_embed2(obj_preds.long())
 
         if (all_average or ctx_average) and self.effect_analysis and (not self.training):
-            obj_rel_rep = cat((self.untreated_edg_feat.view(1, -1).expand(batch_size, -1), obj_ctxs), dim=-1)
+            obj_rel_rep = torch_cat((self.untreated_edg_feat.view(1, -1).expand(batch_size, -1), obj_ctxs), dim=-1)
         else:
-            obj_rel_rep = cat((obj_embed2, x, obj_ctxs), -1)
+            obj_embed2 = self.obj_embed2(obj_preds.long())
+            obj_rel_rep = torch_cat((obj_embed2, x, obj_ctxs), -1)
 
         edge_ctx = self.edge_ctx(num_objs, obj_rel_rep, vc_forest)
+        del num_objs, vc_forest
 
         # memorize average feature
         if self.training and self.effect_analysis:
             self.untreated_obj_feat = self.moving_average(self.untreated_obj_feat, obj_pre_rep)
-            self.untreated_edg_feat = self.moving_average(self.untreated_edg_feat, cat((obj_embed2, x), -1))
-
+            self.untreated_edg_feat = self.moving_average(self.untreated_edg_feat, torch_cat((obj_embed2, x), -1))
+            del obj_pre_rep, obj_embed2, x
         return obj_dists, obj_preds, edge_ctx, bi_preds
 
     def moving_average(self, holder, input):
         assert len(input.shape) == 2
-        with torch.no_grad():
-            holder = holder * (1 - self.average_ratio) + self.average_ratio * input.mean(0).view(-1)
+        average_ratio = self.average_ratio
+        with torch_no_grad():
+            holder = holder * (1 - average_ratio) + average_ratio * input.mean(0).view(-1)
         return holder
 
-    def vctree_score_net(self, num_objs, roi_feat, roi_dist, proposals):
+
+    def vctree_score_net(self, num_objs, roi_feat, roi_dist):
         roi_dist = roi_dist.detach()
-        roi_dist = F.softmax(roi_dist, dim=-1)
+        roi_dist = F_softmax(roi_dist, dim=-1)
         # separate into each image
-        roi_feat = F.relu(self.score_pre(roi_feat))
-        sub_feat = F.relu(self.score_sub(roi_feat))
-        obj_feat = F.relu(self.score_obj(roi_feat))
+        roi_feat = F_relu(self.score_pre(roi_feat))
+        sub_feat = F_relu(self.score_sub(roi_feat))
+        obj_feat = F_relu(self.score_obj(roi_feat))
 
         sub_feats = sub_feat.split(num_objs, dim=0)
         obj_feats = obj_feat.split(num_objs, dim=0)
@@ -296,21 +323,22 @@ class VCTreeLSTMContext(nn.Module):
 
         bi_preds = []
         vc_scores = []
-        for sub, obj, dist, prp in zip(sub_feats, obj_feats, roi_dists, proposals):
+        for sub, obj, dist in zip(sub_feats, obj_feats, roi_dists):
             # only used to calculate loss
             num_obj = sub.shape[0]
             num_dim = sub.shape[-1]
             sub = sub.view(1, num_obj, num_dim).expand(num_obj, num_obj, num_dim)
             obj = obj.view(num_obj, 1, num_dim).expand(num_obj, num_obj, num_dim)
-            sub_dist = dist.view(1, num_obj, -1).expand(num_obj, num_obj, -1).unsqueeze(2)
-            obj_dist = dist.view(num_obj, 1, -1).expand(num_obj, num_obj, -1).unsqueeze(3)
+            sub_dist = dist.view(1, num_obj, -1).expand(num_obj, num_obj, -1).unsqueeze_(2)
+            obj_dist = dist.view(num_obj, 1, -1).expand(num_obj, num_obj, -1).unsqueeze_(3)
             joint_dist = (sub_dist * obj_dist).view(num_obj, num_obj, -1)
+            subjobj = sub * obj
 
             co_prior = self.bi_freq_prior(joint_dist.view(num_obj*num_obj, -1)).view(num_obj, num_obj)
-            vis_prior = self.vision_prior(cat([sub * obj, sub, obj, co_prior.unsqueeze(-1)], dim=-1).view(num_obj*num_obj, -1)).view(num_obj, num_obj)
-            joint_pred =  torch.sigmoid(vis_prior) *  co_prior
+            vis_prior = self.vision_prior(torch_cat([subjobj, sub, obj, co_prior.unsqueeze(-1)], dim=-1).view(num_obj*num_obj, -1)).view(num_obj, num_obj)
 
+            joint_pred =  vis_prior.sigmoid_() *  co_prior
             bi_preds.append(joint_pred)
-            vc_scores.append(torch.sigmoid(joint_pred))
+            vc_scores.append(torch_sigmoid(joint_pred))
 
         return bi_preds, vc_scores
