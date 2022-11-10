@@ -4,7 +4,7 @@
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:a100:4
 #SBATCH --ntasks-per-node=4 # need to match number of gpus
-#SBATCH -t 48:00:00
+#SBATCH -t 72:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB # need to match batch size.
 #SBATCH -J vctree_pairwise_sggen_4GPU_riv_1 # TODO: CHANGE THIS
@@ -63,8 +63,8 @@ else
   module load singularity
 
   export SEED=1234
-  export BATCH_SIZE=64
-  export MAX_ITER=50000
+  export BATCH_SIZE=128
+  export MAX_ITER=25000
   export LR=1e-3
   export USE_GSC=False
   export USE_GSC_FE=False
@@ -79,6 +79,9 @@ else
   export USE_GT_OBJECT_LABEL=False
   export PRE_VAL=False
   export PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
+  export WITH_CLEAN_CLASSIFIER=False
+  export WITH_TRANSFER_CLASSIFIER=False
+  export WEIGHT="''"
 
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_vctree.sh
 fi
