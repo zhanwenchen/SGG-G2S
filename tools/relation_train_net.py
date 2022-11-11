@@ -196,13 +196,25 @@ def train(cfg, local_rank, distributed, logger, experiment):
     # use_mixed_precision = cfg.DTYPE == "float16"
     # amp_opt_level = 'O1' if use_mixed_precision else 'O0'
     # model, optimizer = amp_initialize(model, optimizer, opt_level=amp_opt_level)
+    mode = None
+    use_gt_box = cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX
+    use_gt_object_label = cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL
+    if use_gt_box is True and use_gt_object_label is True:
+        mode = 'predcls'
+    if use_gt_box is True and use_gt_object_label is False:
+        mode = 'sgcls'
+    if use_gt_box is False and use_gt_object_label is False:
+        mode = 'sgdet'
+    if mode is None:
+        raise ValueError(f'mode is None given use_gt_box={use_gt_box} and use_gt_object_label={use_gt_object_label}')
+    skip_test = mode == 'sgdet' and predictor == 'VCTreePredictor'
 
     if distributed:
         model = DistributedDataParallel(
             model, device_ids=[local_rank], output_device=local_rank,
             # this should be removed if we update BatchNorm stats
             # broadcast_buffers=False,
-            find_unused_parameters=True,
+            find_unused_parameters=not skip_test,
         )
     debug_print(logger, 'end distributed')
 
@@ -220,8 +232,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
     debug_print(logger, 'end dataloader')
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
-    # writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_train'))
-    writer = None
+    writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_train'))
+    # writer = None
     if cfg.SOLVER.PRE_VAL and val_before:
         with experiment.validate():
             logger.info("Validate before training")
@@ -236,17 +248,6 @@ def train(cfg, local_rank, distributed, logger, experiment):
     start_training_time = time_time()
     end = time_time()
     print_first_grad = True
-    mode = None
-    use_gt_box = cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX
-    use_gt_object_label = cfg.MODEL.ROI_RELATION_HEAD.USE_GT_OBJECT_LABEL
-    if use_gt_box is True and use_gt_object_label is True:
-        mode = 'predcls'
-    if use_gt_box is True and use_gt_object_label is False:
-        mode = 'sgcls'
-    if use_gt_box is False and use_gt_object_label is False:
-        mode = 'sgdet'
-    if mode is None:
-        raise ValueError(f'mode is None given use_gt_box={use_gt_box} and use_gt_object_label={use_gt_object_label}')
 
     # caching loop variables
     to_val = cfg.SOLVER.TO_VAL
@@ -258,7 +259,6 @@ def train(cfg, local_rank, distributed, logger, experiment):
     max_iter = cfg.SOLVER.MAX_ITER
     model_name = os_environ['MODEL_NAME']
     project_dir = os_environ['PROJECT_DIR']
-    skip_test = mode == 'sgdet' and predictor == 'VCTreePredictor'
     profiling_dirpath = os_path_join(project_dir, 'profiling', model_name)
     # with profile(
     #     activities=[
@@ -333,15 +333,15 @@ def train(cfg, local_rank, distributed, logger, experiment):
         # with amp_scale_loss(losses, optimizer) as scaled_losses:
         #     scaled_losses.backward()
         losses.backward()
-        debug_print(logger, f'{iteration} end backward')
+        # debug_print(logger, f'{iteration} end backward')
 
         # add clip_grad_norm from MOTIFS, tracking gradient, used for debug
         verbose = (iteration % print_grad_freq) == 0 # print grad or not
         clip_grad_norm([(n, p) for n, p in model.named_parameters() if p.requires_grad], max_norm=max_norm, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
-        debug_print(logger, f'{iteration} end gradient clipping')
+        # debug_print(logger, f'{iteration} end gradient clipping')
 
         optimizer.step()
-        debug_print(logger, f'{iteration} end optimizer step')
+        # debug_print(logger, f'{iteration} end optimizer step')
 
         batch_time = time_time() - end
         end = time_time()
@@ -370,8 +370,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
                     memory=mem_i,
                 )
             )
-            # writer.add_scalar(f'{mode}/lr', lr_i, iteration)
-            # writer.add_scalar(f'{mode}/memory', mem_i, iteration)
+            writer.add_scalar(f'{mode}/lr', lr_i, iteration)
+            writer.add_scalar(f'{mode}/memory', mem_i, iteration)
             experiment.log_metric('lr', lr_i)
 
         if iteration % checkpoint_period == 0 and iteration != max_iter:
@@ -405,10 +405,10 @@ def train(cfg, local_rank, distributed, logger, experiment):
             scheduler.step()
         debug_print(logger, f'{iteration} end scheduler')
 
-        # writer.add_scalars(f'{mode}/loss', {'loss': losses_reduced, **loss_dict_reduced}, iteration)
-        # writer.add_scalars(f'{mode}/time', {'time_batch': batch_time, 'time_data': data_time}, iteration)
+        writer.add_scalars(f'{mode}/loss', {'loss': losses_reduced, **loss_dict_reduced}, iteration)
+        writer.add_scalars(f'{mode}/time', {'time_batch': batch_time, 'time_data': data_time}, iteration)
         experiment.log_epoch_end(iteration)
-        debug_print(logger, f'{iteration} end writer')
+        # debug_print(logger, f'{iteration} end writer')
 
     # prof.stop()
     debug_print(logger, f'end train loop')
