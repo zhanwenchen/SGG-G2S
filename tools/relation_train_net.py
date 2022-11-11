@@ -301,14 +301,14 @@ def train(cfg, local_rank, distributed, logger, experiment):
         targets = [target.to(device) for target in targets]
         debug_print(logger, f'{iteration} end inputs and target')
         # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, record_shapes=True, with_stack=True) as prof:
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], with_modules=True, with_stack=True, on_trace_ready=tensorboard_trace_handler(profiling_dirpath)) as prof:
-            with record_function("model_inference"):
-                loss_dict = model(images, targets)
+        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], with_modules=True, with_stack=True, on_trace_ready=tensorboard_trace_handler(profiling_dirpath)) as prof:
+        #     with record_function("model_inference"):
+        loss_dict = model(images, targets)
         # breakpoint()
         # print(prof.key_averages(group_by_stack_n=5).table(sort_by="count", row_limit=5))
-        print(prof.key_averages(group_by_stack_n=-1).table(sort_by="count"))
+        # print(prof.key_averages(group_by_stack_n=-1).table(sort_by="count"))
         # prof.export_stacks(f"./profiling/{model_name}_profiler_stacks.txt", "self_cuda_time_total")
-        sys.exit()
+        # sys.exit()
 
         debug_print(logger, f'{iteration} end model inference')
         # prof.step()

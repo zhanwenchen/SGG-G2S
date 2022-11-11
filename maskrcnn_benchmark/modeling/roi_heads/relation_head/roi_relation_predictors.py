@@ -476,7 +476,7 @@ class VCTreePredictor(Module):
         self.num_rel_cls = config.MODEL.ROI_RELATION_HEAD.NUM_CLASSES
 
         assert in_channels is not None
-        # num_inputs = in_channels
+        num_inputs = in_channels
 
         # load class dict
         statistics = get_dataset_statistics(config)
@@ -489,26 +489,37 @@ class VCTreePredictor(Module):
         self.context_layer = VCTreeLSTMContext(config, obj_classes, rel_classes, statistics, in_channels)
 
         # post decoding
-        self.hidden_dim = hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
+        self.hidden_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_HIDDEN_DIM
         self.pooling_dim = config.MODEL.ROI_RELATION_HEAD.CONTEXT_POOLING_DIM
         self.post_emb = Linear(self.hidden_dim, self.hidden_dim * 2)
+        self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
+
+        # learned-mixin
+        # self.uni_gate = Linear(self.pooling_dim, self.num_rel_cls)
+        # self.frq_gate = Linear(self.pooling_dim, self.num_rel_cls)
+        self.ctx_compress = Linear(self.pooling_dim, self.num_rel_cls)
+        # self.uni_compress = Linear(self.pooling_dim, self.num_rel_cls)
+        # layer_init(self.uni_gate, xavier=True)
+        # layer_init(self.frq_gate, xavier=True)
+        layer_init(self.ctx_compress, xavier=True)
+        # layer_init(self.uni_compress, xavier=True)
 
         # initialize layer parameters
         layer_init(self.post_emb, 10.0 * (1.0 / self.hidden_dim) ** 0.5, normal=True)
+        layer_init(self.post_cat, xavier=True)
+
+        if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
+            self.union_single_not_match = True
+            self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
+            layer_init(self.up_dim, xavier=True)
+        else:
+            self.union_single_not_match = False
+
+        self.freq_bias = FrequencyBias(config, statistics)
 
         self.with_clean_classifier = config.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER
 
-        self.use_pairwise_l2 = use_pairwise_l2 = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.USE_PAIRWISE_L2
-        self.pairwise_method_data = pairwise_method_data = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_DATA
-        self.pairwise_method_func = pairwise_method_func = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_FUNC
-
-        if self.use_pairwise_l2 is True and pairwise_method_func == 'mha':
-            assert pairwise_method_data in METHODS_DATA_1D
-            num_head_pairwise = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.MHA.NUM_HEAD
-            num_layers_pairwise = config.MODEL.ROI_RELATION_HEAD.PAIRWISE.MHA.NUM_LAYERS
-            self.f_ab_obj_ctx = TransformerEncoder(TransformerEncoderLayer(d_model=hidden_dim, nhead=num_head_pairwise), num_layers_pairwise)
-
-        if self.with_clean_classifier is True:
+        if self.with_clean_classifier:
             if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
                 self.union_single_not_match = True
                 self.up_dim_clean = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
@@ -516,13 +527,9 @@ class VCTreePredictor(Module):
             else:
                 self.union_single_not_match = False
             self.post_cat_clean = Linear(self.hidden_dim * 2, self.pooling_dim)
-            layer_init(self.post_cat_clean, xavier=True)
             self.ctx_compress_clean = Linear(self.pooling_dim, self.num_rel_cls, bias=True)
+            layer_init(self.post_cat_clean, xavier=True)
             layer_init(self.ctx_compress_clean, xavier=True)
-
-            if self.use_pairwise_l2 is True:
-                self.pairwise_compress_clean = Linear(self.hidden_dim, self.num_rel_cls)
-                layer_init(self.pairwise_compress_clean, xavier=True)
             # convey statistics into FrequencyBias to avoid loading again
             self.freq_bias_clean = FrequencyBias(config, statistics)
 
@@ -539,32 +546,6 @@ class VCTreePredictor(Module):
                 pred_adj_np = pred_adj_np / (pred_adj_np.sum(-1)[:, None] + 1e-8)
                 pred_adj_np = adj_normalize(pred_adj_np)
                 self.pred_adj_nor = torch_from_numpy(pred_adj_np).float().to(self.devices)
-        else:
-            if self.pooling_dim != config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM:
-                self.union_single_not_match = True
-                self.up_dim = Linear(config.MODEL.ROI_BOX_HEAD.MLP_HEAD_DIM, self.pooling_dim)
-                layer_init(self.up_dim, xavier=True)
-            else:
-                self.union_single_not_match = False
-
-            self.freq_bias = FrequencyBias(config, statistics)
-            # learned-mixin
-            # self.uni_gate = Linear(self.pooling_dim, self.num_rel_cls)
-            # self.frq_gate = Linear(self.pooling_dim, self.num_rel_cls)
-            self.post_cat = Linear(self.hidden_dim * 2, self.pooling_dim)
-            layer_init(self.post_cat, xavier=True)
-
-            self.ctx_compress = Linear(self.pooling_dim, self.num_rel_cls)
-            # self.uni_compress = Linear(self.pooling_dim, self.num_rel_cls)
-            # layer_init(self.uni_gate, xavier=True)
-            # layer_init(self.frq_gate, xavier=True)
-            layer_init(self.ctx_compress, xavier=True)
-            # layer_init(self.uni_compress, xavier=True)
-
-            if self.use_pairwise_l2 is True:
-                self.pairwise_compress = Linear(hidden_dim, self.num_rel_cls)
-                layer_init(self.pairwise_compress, xavier=True)
-
 
     def forward(self, proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=None, global_image_features=None):
         """
@@ -578,151 +559,58 @@ class VCTreePredictor(Module):
         # encode context infomation
         obj_dists, obj_preds, edge_ctx, binary_preds = self.context_layer(roi_features, proposals, rel_pair_idxs,
                                                                           logger)
-        hidden_dim = self.hidden_dim
-        use_pairwise_l2 = self.use_pairwise_l2
+
         # post decode
-        edge_rep = F_relu(self.post_emb(edge_ctx)) # NOTE: this relu is in addition to motif
-        edge_rep = edge_rep.view(edge_rep.size(0), 2, hidden_dim)
-        head_rep = edge_rep[:, 0].contiguous().view(-1, hidden_dim)
-        tail_rep = edge_rep[:, 1].contiguous().view(-1, hidden_dim)
+        edge_rep = F_relu(self.post_emb(edge_ctx))
+        edge_rep = edge_rep.view(edge_rep.size(0), 2, self.hidden_dim)
+        head_rep = edge_rep[:, 0].contiguous().view(-1, self.hidden_dim)
+        tail_rep = edge_rep[:, 1].contiguous().view(-1, self.hidden_dim)
 
         num_rels = [r.shape[0] for r in rel_pair_idxs]
         num_objs = [len(b) for b in proposals]
         assert len(num_rels) == len(num_objs)
 
-        rel_pair_idxs_global = [] # TODO: construct and fill instead?
-        num_objs_culsum = 0
-        # TODO: maybe use cumsum as an optimization?
-        for rel_pair_idx, num_obj in zip(rel_pair_idxs, num_objs):
-            rel_pair_idxs_global.append(rel_pair_idx + num_objs_culsum if num_objs_culsum > 0 else rel_pair_idx)
-            num_objs_culsum += num_obj
+        head_reps = head_rep.split(num_objs, dim=0)
+        tail_reps = tail_rep.split(num_objs, dim=0)
+        obj_preds = obj_preds.split(num_objs, dim=0)
 
-        rel_pair_idxs_global = torch_cat(rel_pair_idxs_global)
-        rel_pair_idxs_global_head = rel_pair_idxs_global[:, 0]
-        rel_pair_idxs_global_tail = rel_pair_idxs_global[:, 1]
+        prod_reps = []
+        pair_preds = []
+        for pair_idx, head_rep, tail_rep, obj_pred in zip(rel_pair_idxs, head_reps, tail_reps, obj_preds):
+            prod_reps.append(torch_cat((head_rep[pair_idx[:, 0]], tail_rep[pair_idx[:, 1]]), dim=-1))
+            pair_preds.append(torch_stack((obj_pred[pair_idx[:, 0]], obj_pred[pair_idx[:, 1]]), dim=1))
+        prod_rep = torch_cat(prod_reps, dim=0)
+        pair_pred = torch_cat(pair_preds, dim=0)
 
-        head_rep = head_rep[rel_pair_idxs_global_head]
-        tail_rep = tail_rep[rel_pair_idxs_global_tail]
-        prod_rep = torch_cat((head_rep, tail_rep), dim=-1)
-        del rel_pair_idxs_global_head, rel_pair_idxs_global_tail
-        pair_pred = obj_preds[rel_pair_idxs_global]
-        del rel_pair_idxs_global
-
-        pairwise_method_data = self.pairwise_method_data
-        pairwise_method_func = self.pairwise_method_func
-        if use_pairwise_l2 is True:
-            # obj_ctx_subj = prod_rep[rel_pair_idxs_global_head] # [506, 768]
-            # obj_ctx_obj = prod_rep[rel_pair_idxs_global_tail] # [506, 768]
-            # del obj_ctx
-            # TODO: optimize the permute to reduce the number of permute operations.
-            # pairwise_obj_ctx_old = obj_ctx[rel_pair_idxs_global_head, None, :] * obj_ctx[None, rel_pair_idxs_global_tail, :] # torch.Size([506, 506, 768]) # or use roi_features instead
-            # TODO Need to normalize obj_ctx_subj obj_ctx_obj before multiplication because small numbers
-            # pairwise_obj_ctx = head_rep.unsqueeze(1) * tail_rep.unsqueeze(0) # torch.Size([506, 506, 768]) # or use roi_features instead
-            if pairwise_method_data == 'concat':
-                head_rep, tail_rep = prod_rep.hsplit(2)
-                # pairwise_obj_ctx = head_rep.unsqueeze(1) * tail_rep.unsqueeze(0) # torch.Size([506, 506, 768]) # or use roi_features instead
-
-                pairwise_obj_ctx = torch_stack((head_rep, tail_rep), dim=2) # torch.Size([506, 768, 2]) # or use roi_features instead
-                del head_rep, tail_rep
-                # print('after stacking prod_reps, pair_preds pairwise_obj_ctx')
-                # breakpoint()
-                # [1, 506, 768, 2]
-                # breakpoint()
-                # breakpoint()
-                pairwise_obj_ctx = pairwise_obj_ctx.unsqueeze_(0)
-
-            elif pairwise_method_data == 'hadamard':
-                pairwise_obj_ctx = head_rep * tail_rep
-                del head_rep, tail_rep
-
-            if pairwise_method_func == 'axial_attention':
-                # print('after unsqueeze')
-                # pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([1, 506, 2, 768])
-                # breakpoint()
-                # print(f'pairwise_obj_ctx.size() = {pairwise_obj_ctx.size()}')
-                pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([506, 2, 768])
-                # print('after self.f_ab_obj_ctx')
-                pairwise_obj_ctx = self.act_pairwise_obj_ctx(pairwise_obj_ctx)
-                # print('after self.act_pairwise_obj_ctx')
-                # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 3, 1) # torch.Size([1, 768, 506, 2])
-                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx).squeeze_(0) # torch.Size([768, 506, 2])
-                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([768, 506, 2])
-                # breakpoint()
-                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx.transpose_(1, 2)) # torch.Size([506, 768, 2])
-                pairwise_obj_ctx = self.bn_pairwise_obj_ctx(pairwise_obj_ctx) # torch.Size([506, 768, 2])
-                # print('after self.bn_pairwise_obj_ctx')
-                # pairwise_obj_ctx = torch_movedim(pairwise_obj_ctx, 0, 2) # torch.Size([768, 506, 2])
-                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
-                # pairwise_obj_ctx.transpose_()
-                # pairwise_obj_ctx = self.bn_pairwise_obj_ctx(.permute(0, 3, 1, 2)).squeeze(0)
-                # breakpoint()
-                pairwise_obj_ctx = pairwise_obj_ctx.sum(dim=2) # [506, 768] # TODO: prod?
-                # print('after sum')
-                # ctx_pairwise_rois = obj_features_subject + obj_features_object + pairwise_obj_ctx.transpose_(0, 1)
-            elif pairwise_method_func == 'mha':
-                pairwise_obj_ctx = self.f_ab_obj_ctx(pairwise_obj_ctx)
-            elif pairwise_method_func == 'lrga':
-                # x_local = self.f_ab_obj_ctx(pairwise_obj_ctx)
-                # x_local = self.gsc_classify_1(global_features_mapped) # [506, 4096] => [506, 64]
-                #     x_local = F_relu(x_local) # TODO: need some sort of layers for repr learn?
-                #     x_local = F_dropout(x_local, p=self.dropout, training=self.training)
-                x_global = self.attention_1(pairwise_obj_ctx) # torch.Size([506, 100])
-                #     del global_features_mapped
-                pairwise_obj_ctx = self.dimension_reduce_1(torch_cat((x_global, pairwise_obj_ctx), dim=1)) # torch.Size([506, 64])
-                pairwise_obj_ctx = self.bn(pairwise_obj_ctx) # torch.Size([506, 64])
-#         self.bn = ModuleList([BatchNorm1d(hidden_channels) for _ in range(num_layers-1)])
-                #
-                #     # Second/last pass
-                # x_local = self.gsc_classify_2(pairwise_obj_ctx)
-                # x_local = F_relu(pairwise_obj_ctx)
-                # x_local = F_dropout(x_local, p=self.dropout, training=self.training)
-                # x_global = self.attention_2(pairwise_obj_ctx) # TOOD: or union_features?
-                # pairwise_obj_ctx = self.dimension_reduce_2(torch_cat((x_global, pairwise_obj_ctx), dim=1))
-                # del x_global
-        else:
-            del head_rep, tail_rep
-
+        prod_rep = self.post_cat(prod_rep)
 
         # learned-mixin Gate
         # uni_gate = torch.tanh(self.uni_gate(self.drop(prod_rep)))
         # frq_gate = torch.tanh(self.frq_gate(self.drop(prod_rep)))
 
-        if self.with_clean_classifier is True:
-            prod_rep = self.post_cat_clean(prod_rep)
+        if self.union_single_not_match:
+            union_features = self.up_dim(union_features)
+
+        ctx_dists = self.ctx_compress(prod_rep * union_features)
+        # uni_dists = self.uni_compress(self.drop(union_features))
+        frq_dists = self.freq_bias.index_with_labels(pair_pred.long())
+        frq_dists = F_dropout(frq_dists, 0.3, training=self.training)
+        rel_dists = ctx_dists + frq_dists
+        # rel_dists = ctx_dists + uni_gate * uni_dists + frq_gate * frq_dists
+        if self.with_clean_classifier:
+            prod_rep_clean = torch_cat(prod_reps, dim=0)
+            prod_rep_clean = self.post_cat_clean(prod_rep_clean)
             if self.union_single_not_match:
                 union_features = self.up_dim_clean(union_features)
-            prod_rep *= union_features
-            del union_features
-            if use_pairwise_l2 is True:
-                rel_dists = self.pairwise_compress_clean(pairwise_obj_ctx) + self.ctx_compress_clean(prod_rep)
-            else:
-                rel_dists = self.ctx_compress_clean(prod_rep)
-            del prod_rep
+
+            ctx_dists_clean = self.ctx_compress_clean(prod_rep_clean * union_features)
+            # uni_dists = self.uni_compress(self.drop(union_features))
             frq_dists_clean = self.freq_bias_clean.index_with_labels(pair_pred.long())
             frq_dists_clean = F_dropout(frq_dists_clean, 0.3, training=self.training)
-            rel_dists += frq_dists_clean
-            del frq_dists_clean
-
+            rel_dists_clean = ctx_dists_clean + frq_dists_clean
             if self.with_transfer:
-                rel_dists = (self.pred_adj_nor @ rel_dists.T).T
-        else:
-            prod_rep = self.post_cat(prod_rep)
-            if self.union_single_not_match:
-                union_features = self.up_dim(union_features)
-            prod_rep *= union_features
-            del union_features
-            if use_pairwise_l2 is True:
-                rel_dists = self.pairwise_compress(pairwise_obj_ctx) + self.ctx_compress(prod_rep)
-            else:
-                rel_dists = self.ctx_compress(prod_rep)
-            del prod_rep
-            # uni_dists = self.uni_compress(self.drop(union_features))
-            frq_dists = self.freq_bias.index_with_labels(pair_pred.long())
-            frq_dists = F_dropout(frq_dists, 0.3, training=self.training)
-            rel_dists += frq_dists
-            del frq_dists
-            # rel_dists = rel_dists + uni_gate * uni_dists + frq_gate * frq_dists
-
+                rel_dists_clean = (self.pred_adj_nor @ rel_dists_clean.T).T
+            rel_dists = rel_dists_clean
         obj_dists = obj_dists.split(num_objs, dim=0)
         rel_dists = rel_dists.split(num_rels, dim=0)
 

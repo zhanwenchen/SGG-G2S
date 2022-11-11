@@ -50,7 +50,7 @@ if [ -d "$MODEL_DIRNAME" ]; then
 else
   export CUDA_VISIBLE_DEVICES=0
   export SEED=1234
-  export BATCH_SIZE=1
+  export BATCH_SIZE=8
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False

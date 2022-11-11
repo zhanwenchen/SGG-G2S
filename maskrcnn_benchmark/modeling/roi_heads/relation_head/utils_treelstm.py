@@ -1,25 +1,13 @@
-from torch import (
-    cat as torch_cat,
-    no_grad as torch_no_grad,
-    tanh as torch_tanh,
-    mul as torch_mul,
-    sigmoid as torch_sigmoid,
-    split as torch_split,
-    int64 as torch_int64,
-    float32 as torch_float32,
-    zeros as torch_zeros,
-)
-from torch.nn import Module, ModuleList, Linear
-from torch.nn.functional import (
-    softmax as F_softmax,
-)
-from torch.jit import script as torch_jit_script
-from torch.profiler import record_function
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+import numpy as np
+
 from .utils_motifs import get_dropout_mask
 from .utils_relation import block_orthogonal
 
-
-class MultiLayer_BTreeLSTM(Module):
+class MultiLayer_BTreeLSTM(nn.Module):
     """
     Multilayer Bidirectional Tree LSTM
     Each layer contains one forward lstm(leaves to root) and one backward lstm(root to leaves)
@@ -31,7 +19,7 @@ class MultiLayer_BTreeLSTM(Module):
         layers.append(BidirectionalTreeLSTM(in_dim, out_dim, dropout))
         for i in range(num_layer - 1):
             layers.append(BidirectionalTreeLSTM(out_dim, out_dim, dropout))
-        self.multi_layer_lstm = ModuleList(layers)
+        self.multi_layer_lstm = nn.ModuleList(layers)
 
     def forward(self, tree, features, num_obj):
         for i in range(self.num_layer):
@@ -39,7 +27,7 @@ class MultiLayer_BTreeLSTM(Module):
         return features
 
 
-class BidirectionalTreeLSTM(Module):
+class BidirectionalTreeLSTM(nn.Module):
     """
     Bidirectional Tree LSTM
     Contains one forward lstm(leaves to root) and one backward lstm(root to leaves)
@@ -56,10 +44,12 @@ class BidirectionalTreeLSTM(Module):
         foreward_output = self.treeLSTM_foreward(tree, features, num_obj)
         backward_output = self.treeLSTM_backward(tree, features, num_obj)
 
-        return torch_cat((foreward_output, backward_output), 1)
+        final_output = torch.cat((foreward_output, backward_output), 1)
+
+        return final_output
 
 
-class OneDirectionalTreeLSTM(Module):
+class OneDirectionalTreeLSTM(nn.Module):
     """
     One Way Tree LSTM
     direction = foreward | backward
@@ -77,15 +67,13 @@ class OneDirectionalTreeLSTM(Module):
 
     def forward(self, tree, features, num_obj):
         # calc dropout mask, same for all
-        device = features.device
         if self.dropout > 0.0:
-            dropout_mask = get_dropout_mask(self.dropout, (1, self.out_dim), device=device)
+            dropout_mask = get_dropout_mask(self.dropout, (1, self.out_dim), features.device)
         else:
             dropout_mask = None
 
         # tree lstm input
-        h_order = torch_zeros(num_obj, device=device, dtype=torch_int64) # used to resume order
-
+        h_order = torch.tensor([0] * num_obj, device=features.device, dtype=torch.int64) # used to resume order
         lstm_io = TreeLSTM_IO(None, h_order, 0, None, None, dropout_mask)
         # run tree lstm forward (leaves to root)
         self.treeLSTM(tree, features, lstm_io)
@@ -94,7 +82,7 @@ class OneDirectionalTreeLSTM(Module):
         return output
 
 
-class BiTreeLSTM_Foreward(Module):
+class BiTreeLSTM_Foreward(nn.Module):
     """
     From leaves to root
     """
@@ -106,13 +94,13 @@ class BiTreeLSTM_Foreward(Module):
         self.embed_layer = embed_layer
         self.embed_out_layer = embed_out_layer
 
-        self.px = Linear(self.feat_dim, self.h_dim)
-        self.ioffux = Linear(self.feat_dim, 6 * self.h_dim)
-        self.ioffuh_left = Linear(self.h_dim, 6 * self.h_dim)
-        self.ioffuh_right = Linear(self.h_dim, 6 * self.h_dim)
+        self.px = nn.Linear(self.feat_dim, self.h_dim)
+        self.ioffux = nn.Linear(self.feat_dim, 6 * self.h_dim)
+        self.ioffuh_left = nn.Linear(self.h_dim, 6 * self.h_dim)
+        self.ioffuh_right = nn.Linear(self.h_dim, 6 * self.h_dim)
 
         # initialization
-        with torch_no_grad():
+        with torch.no_grad():
             block_orthogonal(self.px.weight, [self.h_dim, self.feat_dim])
             block_orthogonal(self.ioffux.weight, [self.h_dim, self.feat_dim])
             block_orthogonal(self.ioffuh_left.weight, [self.h_dim, self.h_dim])
@@ -127,19 +115,20 @@ class BiTreeLSTM_Foreward(Module):
             self.ioffuh_left.bias[2 * self.h_dim:4 * self.h_dim].fill_(0.5)
             self.ioffuh_right.bias[2 * self.h_dim:4 * self.h_dim].fill_(0.5)
 
+
     def node_forward(self, feat_inp, left_c, right_c, left_h, right_h, dropout_mask):
-        with record_function('BiTreeLSTM_Foreward.px'):
-            feat_inp_1 = self.px(feat_inp)
-        with record_function('BiTreeLSTM_Foreward.ioffux'):
-            feat_inp_2 = self.ioffux(feat_inp)
-        del feat_inp
-        with record_function('BiTreeLSTM_Foreward.ioffuh_left'):
-            left_h = self.ioffuh_left(left_h)
-        with record_function('BiTreeLSTM_Foreward.ioffuh_right'):
-            right_h = self.ioffuh_right(right_h)
+        projected_x = self.px(feat_inp)
+        ioffu = self.ioffux(feat_inp) + self.ioffuh_left(left_h) + self.ioffuh_right(right_h)
+        i, o, f_l, f_r, u, r = torch.split(ioffu, ioffu.size(1) // 6, dim=1)
+        i, o, f_l, f_r, u, r = torch.sigmoid(i), torch.sigmoid(o), torch.sigmoid(f_l), torch.sigmoid(f_r), torch.tanh(u), torch.sigmoid(r)
+
+        c = torch.mul(i, u) + torch.mul(f_l, left_c) + torch.mul(f_r, right_c)
+        h = torch.mul(o, torch.tanh(c))
+        h_final = torch.mul(r, h) + torch.mul((1 - r), projected_x)
+        # Only do dropout if the dropout prob is > 0.0 and we are in training mode.
         if dropout_mask is not None and self.training:
-            return node_forward_jit_dropout(feat_inp_1, feat_inp_2, left_c, right_c, left_h, right_h, dropout_mask)
-        return node_forward_jit(feat_inp_1, feat_inp_2, left_c, right_c, left_h, right_h)
+            h_final = torch.mul(h_final, dropout_mask)
+        return c, h_final
 
     def forward(self, tree, features, treelstm_io):
         """
@@ -148,8 +137,6 @@ class BiTreeLSTM_Foreward(Module):
         treelstm_io.hidden: init as None, cat until it covers all objects as [num_obj, hidden_size]
         treelstm_io.order: init as 0 for all [num_obj], update for recovering original order
         """
-        device=features.device
-        h_dim = self.h_dim
         # recursively search child
         if tree.left_child is not None:
             self.forward(tree.left_child, features, treelstm_io)
@@ -157,8 +144,8 @@ class BiTreeLSTM_Foreward(Module):
             self.forward(tree.right_child, features, treelstm_io)
         # get c,h from left child
         if tree.left_child is None:
-            left_c = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
-            left_h = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
+            left_c = torch.tensor([0.0] * self.h_dim, device=features.device).float().view(1,-1)
+            left_h = torch.tensor([0.0] * self.h_dim, device=features.device).float().view(1,-1)
             # Only being used in decoder network
             if self.is_pass_embed:
                 left_embed = self.embed_layer.weight[0]
@@ -170,8 +157,8 @@ class BiTreeLSTM_Foreward(Module):
                 left_embed = tree.left_child.embeded_label
         # get c,h from right child
         if tree.right_child is None:
-            right_c = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
-            right_h = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
+            right_c = torch.tensor([0.0] * self.h_dim, device=features.device).float().view(1,-1)
+            right_h = torch.tensor([0.0] * self.h_dim, device=features.device).float().view(1,-1)
             # Only being used in decoder network
             if self.is_pass_embed:
                 right_embed = self.embed_layer.weight[0]
@@ -183,7 +170,7 @@ class BiTreeLSTM_Foreward(Module):
                 right_embed = tree.right_child.embeded_label
         # Only being used in decoder network
         if self.is_pass_embed:
-            next_feature = torch_cat((features[tree.index].view(1, -1), left_embed.view(1,-1), right_embed.view(1,-1)), 1)
+            next_feature = torch.cat((features[tree.index].view(1, -1), left_embed.view(1,-1), right_embed.view(1,-1)), 1)
         else:
             next_feature = features[tree.index].view(1, -1)
 
@@ -199,14 +186,14 @@ class BiTreeLSTM_Foreward(Module):
         if treelstm_io.hidden is None:
             treelstm_io.hidden = h.view(1, -1)
         else:
-            treelstm_io.hidden = torch_cat((treelstm_io.hidden, h.view(1, -1)), 0)
+            treelstm_io.hidden = torch.cat((treelstm_io.hidden, h.view(1, -1)), 0)
 
         treelstm_io.order[tree.index] = treelstm_io.order_count
         treelstm_io.order_count += 1
         return
 
 
-class BiTreeLSTM_Backward(Module):
+class BiTreeLSTM_Backward(nn.Module):
     """
     from root to leaves
     """
@@ -218,12 +205,12 @@ class BiTreeLSTM_Backward(Module):
         self.embed_layer = embed_layer
         self.embed_out_layer = embed_out_layer
 
-        self.px = Linear(self.feat_dim, self.h_dim)
-        self.iofux = Linear(self.feat_dim, 5 * self.h_dim)
-        self.iofuh = Linear(self.h_dim, 5 * self.h_dim)
+        self.px = nn.Linear(self.feat_dim, self.h_dim)
+        self.iofux = nn.Linear(self.feat_dim, 5 * self.h_dim)
+        self.iofuh = nn.Linear(self.h_dim, 5 * self.h_dim)
 
         # initialization
-        with torch_no_grad():
+        with torch.no_grad():
             block_orthogonal(self.px.weight, [self.h_dim, self.feat_dim])
             block_orthogonal(self.iofux.weight, [self.h_dim, self.feat_dim])
             block_orthogonal(self.iofuh.weight, [self.h_dim, self.h_dim])
@@ -236,15 +223,19 @@ class BiTreeLSTM_Backward(Module):
             self.iofuh.bias[2 * self.h_dim:3 * self.h_dim].fill_(1.0)
 
     def node_backward(self, feat_inp, root_c, root_h, dropout_mask):
-        with record_function('BiTreeLSTM_Backward.px'):
-            feat_inp_1 = self.px(feat_inp)
-        with record_function('BiTreeLSTM_Backward.iofux'):
-            feat_inp_2 = self.iofux(feat_inp)
-        with record_function('BiTreeLSTM_Backward.iofuh'):
-            root_h = self.iofuh(root_h)
+
+        projected_x = self.px(feat_inp)
+        iofu = self.iofux(feat_inp) + self.iofuh(root_h)
+        i, o, f, u, r = torch.split(iofu, iofu.size(1) // 5, dim=1)
+        i, o, f, u, r = torch.sigmoid(i), torch.sigmoid(o), torch.sigmoid(f), torch.tanh(u), torch.sigmoid(r)
+
+        c = torch.mul(i, u) + torch.mul(f, root_c)
+        h = torch.mul(o, torch.tanh(c))
+        h_final = torch.mul(r, h) + torch.mul((1 - r), projected_x)
+        # Only do dropout if the dropout prob is > 0.0 and we are in training mode.
         if dropout_mask is not None and self.training:
-            return node_backward_jit_dropout(feat_inp_1, feat_inp_2, root_c, root_h, dropout_mask)
-        return node_backward_jit(feat_inp_1, feat_inp_2, root_c, root_h)
+            h_final = torch.mul(h_final, dropout_mask)
+        return c, h_final
 
     def forward(self, tree, features, treelstm_io):
         """
@@ -253,12 +244,10 @@ class BiTreeLSTM_Backward(Module):
         treelstm_io.hidden: init as None, cat until it covers all objects as [num_obj, hidden_size]
         treelstm_io.order: init as 0 for all [num_obj], update for recovering original order
         """
-        device = features.device
-        h_dim = self.h_dim
 
         if tree.parent is None:
-            root_c = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
-            root_h = torch_zeros(1, h_dim, device=device, dtype=torch_float32)
+            root_c = torch.tensor([0.0] * self.h_dim, device=features.device).float().view(1,-1)
+            root_h = torch.tensor([0.0] * self.h_dim, device=features.device).float().view(1,-1)
             if self.is_pass_embed:
                 root_embed = self.embed_layer.weight[0]
         else:
@@ -268,7 +257,7 @@ class BiTreeLSTM_Backward(Module):
                 root_embed = tree.parent.embeded_label
 
         if self.is_pass_embed:
-            next_features = torch_cat((features[tree.index].view(1, -1), root_embed.view(1,-1)), 1)
+            next_features = torch.cat((features[tree.index].view(1, -1), root_embed.view(1,-1)), 1)
         else:
             next_features = features[tree.index].view(1, -1)
 
@@ -284,7 +273,7 @@ class BiTreeLSTM_Backward(Module):
         if treelstm_io.hidden is None:
             treelstm_io.hidden = h.view(1, -1)
         else:
-            treelstm_io.hidden = torch_cat((treelstm_io.hidden, h.view(1, -1)), 0)
+            treelstm_io.hidden = torch.cat((treelstm_io.hidden, h.view(1, -1)), 0)
 
         treelstm_io.order[tree.index] = treelstm_io.order_count
         treelstm_io.order_count += 1
@@ -304,9 +293,9 @@ def pass_embed_postprocess(h, embed_out_layer, embed_layer, tree, treelstm_io, i
     Add to lstm_IO
     """
     pred_dist = embed_out_layer(h)
-    label_to_embed = F_softmax(pred_dist.view(-1), 0)[1:].max(0)[1] + 1
+    label_to_embed = F.softmax(pred_dist.view(-1), 0)[1:].max(0)[1] + 1
     if is_training:
-        sampled_label = F_softmax(pred_dist.view(-1), 0)[1:].multinomial(1).detach() + 1
+        sampled_label = F.softmax(pred_dist.view(-1), 0)[1:].multinomial(1).detach() + 1
         tree.embeded_label = embed_layer(sampled_label+1)
     else:
         tree.embeded_label = embed_layer(label_to_embed+1)
@@ -314,12 +303,12 @@ def pass_embed_postprocess(h, embed_out_layer, embed_layer, tree, treelstm_io, i
     if treelstm_io.dists is None:
         treelstm_io.dists = pred_dist.view(1, -1)
     else:
-        treelstm_io.dists = torch_cat((treelstm_io.dists, pred_dist.view(1, -1)), 0)
+        treelstm_io.dists = torch.cat((treelstm_io.dists, pred_dist.view(1, -1)), 0)
 
     if treelstm_io.commitments is None:
         treelstm_io.commitments = label_to_embed.view(-1)
     else:
-        treelstm_io.commitments = torch_cat((treelstm_io.commitments, label_to_embed.view(-1)), 0)
+        treelstm_io.commitments = torch.cat((treelstm_io.commitments, label_to_embed.view(-1)), 0)
 
 
 class TreeLSTM_IO(object):
@@ -330,51 +319,3 @@ class TreeLSTM_IO(object):
         self.dists = dists_tensor # FLoat tensor [num_obj, len(self.classes)]
         self.commitments = commitments_tensor
         self.dropout_mask = dropout_mask
-
-@torch_jit_script
-def node_forward_jit(feat_inp_1, feat_inp_2, left_c, right_c, left_h, right_h):
-    ioffu = feat_inp_2 + left_h + right_h
-    i, o, f_l, f_r, u, r = torch_split(ioffu, ioffu.size(1) // 6, dim=1)
-    i, o, f_l, f_r, u, r = torch_sigmoid(i), torch_sigmoid(o), torch_sigmoid(f_l), torch_sigmoid(f_r), torch_tanh(u), torch_sigmoid(r)
-
-    c = torch_mul(i, u) + torch_mul(f_l, left_c) + torch_mul(f_r, right_c)
-    h = torch_mul(o, torch_tanh(c))
-    h_final = torch_mul(r, h) + torch_mul((1 - r), feat_inp_1)
-    return c, h_final
-
-@torch_jit_script
-def node_forward_jit_dropout(feat_inp_1, feat_inp_2, left_c, right_c, left_h, right_h, dropout_mask):
-    ioffu = feat_inp_2 + left_h + right_h
-    i, o, f_l, f_r, u, r = torch_split(ioffu, ioffu.size(1) // 6, dim=1)
-    i, o, f_l, f_r, u, r = torch_sigmoid(i), torch_sigmoid(o), torch_sigmoid(f_l), torch_sigmoid(f_r), torch_tanh(u), torch_sigmoid(r)
-
-    c = torch_mul(i, u) + torch_mul(f_l, left_c) + torch_mul(f_r, right_c)
-    h = torch_mul(o, torch_tanh(c))
-    h_final = torch_mul(r, h) + torch_mul((1 - r), feat_inp_1)
-    # Only do dropout if the dropout prob is > 0.0 and we are in training mode.
-    h_final = torch_mul(h_final, dropout_mask)
-    return c, h_final
-
-@torch_jit_script
-def node_backward_jit(feat_inp_1, feat_inp_2, root_c, root_h):
-    iofu = feat_inp_2 + root_h
-    i, o, f, u, r = torch_split(iofu, iofu.size(1) // 5, dim=1)
-    i, o, f, u, r = torch_sigmoid(i), torch_sigmoid(o), torch_sigmoid(f), torch_tanh(u), torch_sigmoid(r)
-
-    c = torch_mul(i, u) + torch_mul(f, root_c)
-    h = torch_mul(o, torch_tanh(c))
-    h_final = torch_mul(r, h) + torch_mul((1 - r), feat_inp_1)
-    return c, h_final
-
-@torch_jit_script
-def node_backward_jit_dropout(feat_inp_1, feat_inp_2, root_c, root_h, dropout_mask):
-    iofu = feat_inp_2 + root_h
-    i, o, f, u, r = torch_split(iofu, iofu.size(1) // 5, dim=1)
-    i, o, f, u, r = torch_sigmoid(i), torch_sigmoid(o), torch_sigmoid(f), torch_tanh(u), torch_sigmoid(r)
-
-    c = torch_mul(i, u) + torch_mul(f, root_c)
-    h = torch_mul(o, torch_tanh(c))
-    h_final = torch_mul(r, h) + torch_mul((1 - r), feat_inp_1)
-    # Only do dropout if the dropout prob is > 0.0 and we are in training mode.
-    h_final = torch_mul(h_final, dropout_mask)
-    return c, h_final
