@@ -4,7 +4,7 @@ timestamp() {
   date +"%Y%m%d%H%M%S"
 }
 
-SLURM_JOB_NAME=motif_baseline_predcls_1GPU_legion_dev
+SLURM_JOB_NAME=motif_pairwise_predcls_1GPU_legion_dev
 SLURM_JOB_ID=$(timestamp)
 
 error_exit()
@@ -50,14 +50,14 @@ if [ -d "$MODEL_DIRNAME" ]; then
 else
   export CUDA_VISIBLE_DEVICES=0
   export SEED=1234
-  export BATCH_SIZE=16
+  export BATCH_SIZE=12
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False
   export USE_GSC_FE=False
   export PAIRWISE_METHOD_DATA='hadamard'
   export PAIRWISE_METHOD_FUNC='mha'
-  export USE_PAIRWISE_L2=False
+  export USE_PAIRWISE_L2=True
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml
   export DATA_DIR_VG_RCNN=${HOME}/datasets
   export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))

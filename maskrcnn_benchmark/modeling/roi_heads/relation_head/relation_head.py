@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 from torch import no_grad as torch_no_grad, cat as torch_cat
 from torch.nn import Module
-
+from torch.profiler import record_function
 from ..attribute_head.roi_attribute_feature_extractors import make_roi_attribute_feature_extractor
 from ..box_head.roi_box_feature_extractors import make_roi_box_feature_extractor
 from .roi_relation_feature_extractors import make_roi_relation_feature_extractor
@@ -62,23 +62,25 @@ class ROIRelationHead(Module):
         training = self.training
         attribute_on = self.attribute_on
 
-        if training:
-            # relation subsamples and assign ground truth label during training
-            with torch_no_grad():
-                if self.use_gt_box:
-                    proposals, rel_labels, rel_pair_idxs, rel_binarys = self.samp_processor.gtbox_relsample(proposals, targets)
-                else:
-                    proposals, rel_labels, rel_pair_idxs, rel_binarys = self.samp_processor.detect_relsample(proposals, targets)
-        else:
-            rel_labels, rel_binarys = None, None
-            rel_pair_idxs = self.samp_processor.prepare_test_pairs(features[0].device, proposals)
+        with record_function('samp_processor'):
+            if training:
+                # relation subsamples and assign ground truth label during training
+                with torch_no_grad():
+                    if self.use_gt_box:
+                        proposals, rel_labels, rel_pair_idxs, rel_binarys = self.samp_processor.gtbox_relsample(proposals, targets)
+                    else:
+                        proposals, rel_labels, rel_pair_idxs, rel_binarys = self.samp_processor.detect_relsample(proposals, targets)
+            else:
+                rel_labels, rel_binarys = None, None
+                rel_pair_idxs = self.samp_processor.prepare_test_pairs(features[0].device, proposals)
         # (Pdb) len(features)
         # 5
         # (Pdb) features[0].size()
         # torch.Size([16, 256, 256, 152])
 
         # use box_head to extract features that will be fed to the later predictor processing
-        roi_features = self.box_feature_extractor(features, proposals)
+        with record_function('self.box_feature_extractor'):
+            roi_features = self.box_feature_extractor(features, proposals)
         # torch.Size([1280, 4096])
         if self.use_gsc is True:
             if self.use_gsc_fe is True:
@@ -92,14 +94,16 @@ class ROIRelationHead(Module):
             att_features = self.att_feature_extractor(features, proposals)
             roi_features = torch_cat((roi_features, att_features), dim=-1)
 
-        if self.use_union_box:
-            union_features = self.union_feature_extractor(features, proposals, rel_pair_idxs)
-        else:
-            union_features = None
+        with record_function('self.union_feature_extractor'):
+            if self.use_union_box:
+                union_features = self.union_feature_extractor(features, proposals, rel_pair_idxs)
+            else:
+                union_features = None
 
         # final classifier that converts the features into predictions
         # should corresponding to all the functions and layers after the self.context class
-        refine_logits, relation_logits, add_losses = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=logger, global_image_features=global_image_features)
+        with record_function('self.predictor'):
+            refine_logits, relation_logits, add_losses = self.predictor(proposals, rel_pair_idxs, rel_labels, rel_binarys, roi_features, union_features, logger=logger, global_image_features=global_image_features)
         del global_image_features, union_features, rel_binarys
         # for test
         if not training:
@@ -107,7 +111,8 @@ class ROIRelationHead(Module):
             return roi_features, result, {}
         del rel_pair_idxs
 
-        loss_relation, loss_refine = self.loss_evaluator(proposals, rel_labels, relation_logits, refine_logits)
+        with record_function('self.loss_evaluator'):
+            loss_relation, loss_refine = self.loss_evaluator(proposals, rel_labels, relation_logits, refine_logits)
         del rel_labels
 
         if attribute_on and isinstance(loss_refine, (list, tuple)):

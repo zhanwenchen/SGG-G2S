@@ -1,22 +1,11 @@
 #!/bin/bash
 
-#SBATCH -A sds-rise
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:a100:4
-#SBATCH --ntasks-per-node=4 # need to match number of gpus
-#SBATCH -t 48:00:00
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=128GB # need to match batch size.
-#SBATCH -J bpl-44709300_motif_pairwise_predcls_4GPU_riv_1-0046000 # TODO: CHANGE THIS
-#SBATCH -o /home/pct4et/gsc/log/%x-%A.out
-#SBATCH -e /home/pct4et/gsc/log/%x-%A.err
-#SBATCH --mail-type=ALL
-#SBATCH --mail-user=pct4et@virginia.edu
-#SBATCH --exclude=udc-an28-1,udc-an28-7
-
 timestamp() {
-  date +"%Y-%m-%d%H%M%S"
+  date +"%Y%m%d%H%M%S"
 }
+
+SLURM_JOB_NAME=44699200_vctree_pairwise_sgcls_4GPU_riv_1
+SLURM_JOB_ID=0012000
 
 error_exit()
 {
@@ -26,7 +15,7 @@ error_exit()
 #           string containing descriptive error message
 #   Source: http://linuxcommand.org/lc3_wss0140.php
 #   ----------------------------------------------------------------
-    echo "$(ztimestamp) ERROR ${PROGNAME}: ${1:-"Unknown Error"}" 1>&2
+    echo "$(timestamp) ERROR ${PROGNAME}: ${1:-"Unknown Error"}" 1>&2
     echo "$(timestamp) ERROR ${PROGNAME}: Exiting Early."
     exit 1
 }
@@ -50,22 +39,20 @@ error_check()
     fi
 
 }
-IFS=- read str1 MODEL_NAME_OLD ITER <<< "${SLURM_JOB_NAME}"
 
 export PROJECT_DIR=${HOME}/gsc
-export MODEL_NAME="${MODEL_NAME_OLD}_${ITER}_bpl_sa"
+export MODEL_NAME="${SLURM_JOB_ID}_${SLURM_JOB_NAME}"
 export LOGDIR=${PROJECT_DIR}/log
-export WEIGHT=${PROJECT_DIR}/checkpoints/${MODEL_NAME_OLD}/model_${ITER}.pth
+export WEIGHT=${PROJECT_DIR}/checkpoints/${SLURM_JOB_NAME}/model_${SLURM_JOB_ID}.pth
 MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
+
 
 if [ -d "$MODEL_DIRNAME" ]; then
   error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.log
 else
-  module purge
-  module load singularity
-
+  export CUDA_VISIBLE_DEVICES=0
   export SEED=1234
-  export BATCH_SIZE=64
+  export BATCH_SIZE=12
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False
@@ -73,10 +60,9 @@ else
   export PAIRWISE_METHOD_DATA='hadamard'
   export PAIRWISE_METHOD_FUNC='mha'
   export USE_PAIRWISE_L2=True
-  export SINGULARITYENV_PREPEND_PATH="${HOME}/.conda/envs/gsc_docker/bin:/opt/conda/condabin"
-  export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_motif.yaml
-  export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
-  export DATA_DIR_VG_RCNN=/project/sds-rise/zhanwen/datasets
+  export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml
+  export DATA_DIR_VG_RCNN=${HOME}/datasets
+  export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))
   export USE_GT_BOX=True
   export USE_GT_OBJECT_LABEL=True
   export PRE_VAL=False
@@ -84,5 +70,5 @@ else
   export WITH_CLEAN_CLASSIFIER=True
   export WITH_TRANSFER_CLASSIFIER=True
 
-  singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_motif.sh
+  ${PROJECT_DIR}/scripts/train_vctree.sh
 fi

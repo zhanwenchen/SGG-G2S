@@ -50,7 +50,7 @@ if [ -d "$MODEL_DIRNAME" ]; then
 else
   export CUDA_VISIBLE_DEVICES=0
   export SEED=1234
-  export BATCH_SIZE=64
+  export BATCH_SIZE=1
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False
@@ -65,6 +65,9 @@ else
   export USE_GT_OBJECT_LABEL=False
   export PRE_VAL=False
   export PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
+  export WITH_CLEAN_CLASSIFIER=False
+  export WITH_TRANSFER_CLASSIFIER=False
+  export WEIGHT="''"
 
   ${PROJECT_DIR}/scripts/train_vctree.sh
 fi

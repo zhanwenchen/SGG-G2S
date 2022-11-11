@@ -241,7 +241,18 @@ class VCTreeLSTMContext(Module):
         return torch_cat(edge_ctxs, dim=0)
 
     def forward(self, x, proposals, rel_pair_idxs, logger=None, all_average=False, ctx_average=False):
+        # breakpoint()
         num_objs = [len(b) for b in proposals]
+
+        '''
+        x.size() = torch.Size([80, 4096])
+        proposals =len(proposals) = 1. (Pdb) proposals[0]
+            BoxList(num_boxes=80, image_width=952, image_height=600, mode=xyxy)
+            proposals[0].bbox.size() = torch.Size([80, 4])
+        rel_pair_idxs = torch.Size([56, 2])
+        all_average = False
+        ctx_average = False
+        '''
         # labels will be used in DecoderRNN during training (for nms)
         if self.training or self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
             obj_labels = torch_cat([proposal.get_field("labels") for proposal in proposals], dim=0)

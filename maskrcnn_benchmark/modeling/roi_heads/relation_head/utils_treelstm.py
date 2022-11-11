@@ -14,6 +14,7 @@ from torch.nn.functional import (
     softmax as F_softmax,
 )
 from torch.jit import script as torch_jit_script
+from torch.profiler import record_function
 from .utils_motifs import get_dropout_mask
 from .utils_relation import block_orthogonal
 
@@ -127,11 +128,15 @@ class BiTreeLSTM_Foreward(Module):
             self.ioffuh_right.bias[2 * self.h_dim:4 * self.h_dim].fill_(0.5)
 
     def node_forward(self, feat_inp, left_c, right_c, left_h, right_h, dropout_mask):
-        feat_inp_1 = self.px(feat_inp)
-        feat_inp_2 = self.ioffux(feat_inp)
+        with record_function('BiTreeLSTM_Foreward.px'):
+            feat_inp_1 = self.px(feat_inp)
+        with record_function('BiTreeLSTM_Foreward.ioffux'):
+            feat_inp_2 = self.ioffux(feat_inp)
         del feat_inp
-        left_h = self.ioffuh_left(left_h)
-        right_h = self.ioffuh_right(right_h)
+        with record_function('BiTreeLSTM_Foreward.ioffuh_left'):
+            left_h = self.ioffuh_left(left_h)
+        with record_function('BiTreeLSTM_Foreward.ioffuh_right'):
+            right_h = self.ioffuh_right(right_h)
         if dropout_mask is not None and self.training:
             return node_forward_jit_dropout(feat_inp_1, feat_inp_2, left_c, right_c, left_h, right_h, dropout_mask)
         return node_forward_jit(feat_inp_1, feat_inp_2, left_c, right_c, left_h, right_h)
@@ -231,9 +236,12 @@ class BiTreeLSTM_Backward(Module):
             self.iofuh.bias[2 * self.h_dim:3 * self.h_dim].fill_(1.0)
 
     def node_backward(self, feat_inp, root_c, root_h, dropout_mask):
-        feat_inp_1 = self.px(feat_inp)
-        feat_inp_2 = self.iofux(feat_inp)
-        root_h = self.iofuh(root_h)
+        with record_function('BiTreeLSTM_Backward.px'):
+            feat_inp_1 = self.px(feat_inp)
+        with record_function('BiTreeLSTM_Backward.iofux'):
+            feat_inp_2 = self.iofux(feat_inp)
+        with record_function('BiTreeLSTM_Backward.iofuh'):
+            root_h = self.iofuh(root_h)
         if dropout_mask is not None and self.training:
             return node_backward_jit_dropout(feat_inp_1, feat_inp_2, root_c, root_h, dropout_mask)
         return node_backward_jit(feat_inp_1, feat_inp_2, root_c, root_h)

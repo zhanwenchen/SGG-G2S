@@ -48,7 +48,8 @@ class ROIBoxHead(Module):
         # box head specifically for relation prediction model
         ###################################################################
         if self.cfg.MODEL.RELATION_ON:
-            if self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
+            # if self.cfg.MODEL.ROI_RELATION_HEAD.USE_GT_BOX:
+            if True:
                 # use ground truth box as proposals
                 # proposals = [target.copy_with_fields(["labels", "attributes"]) for target in targets]
                 proposals = [target.copy_with_fields(["labels"]) for target in targets]

@@ -44,7 +44,8 @@ cp -r ${PROJECT_DIR}/.git/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/tools/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/scripts/ ${MODEL_DIRNAME} &&
 cp -r ${PROJECT_DIR}/maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
-torchrun --master_port ${PORT} --nproc_per_node=$NUM_GPUS \
+# torchrun --master_port ${PORT} --nproc_per_node=$NUM_GPUS \
+python \
   ${PROJECT_DIR}/tools/relation_train_net.py \
   --config-file ${CONFIG_FILE} \
   MODEL.ROI_RELATION_HEAD.PAIRWISE.PAIRWISE_METHOD_DATA ${PAIRWISE_METHOD_DATA} \
@@ -70,5 +71,6 @@ torchrun --master_port ${PORT} --nproc_per_node=$NUM_GPUS \
   GLOVE_DIR ${PROJECT_DIR}/datasets/vg/ \
   MODEL.PRETRAINED_DETECTOR_CKPT ${PROJECT_DIR}/checkpoints/pretrained_faster_rcnn/model_final.pth \
   MODEL.PRETRAINED_MODEL_CKPT ${WEIGHT} \
+  DATALOADER.NUM_WORKERS 0 \
   OUTPUT_DIR ${PROJECT_DIR}/checkpoints/${MODEL_NAME} 2>&1 | tee ${MODEL_DIRNAME}/log_train.log &&
 echo "Finished training ${MODE} model ${MODEL_NAME}" || echo "Failed to train ${MODE} model ${MODEL_NAME}"

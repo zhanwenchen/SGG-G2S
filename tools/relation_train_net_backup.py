@@ -5,16 +5,16 @@ Basic training script for PyTorch
 
 # Set up custom environment before nearly anything else is imported
 # NOTE: this should be the first import (no not reorder)
-import sys
+
+from math import sqrt
 import argparse
-from os import environ as os_environ, makedirs as os_makedirs
+from os import environ as os_environ
 from os.path import join as os_path_join
 from time import time as time_time
 from datetime import timedelta as datetime_timedelta
 import random
 from resource import RLIMIT_NOFILE, getrlimit, setrlimit
 from comet_ml import API, Experiment, ExistingExperiment
-from torchinfo import summary
 import numpy as np
 from torch import (
     cat as torch_cat,
@@ -24,14 +24,13 @@ from torch import (
     no_grad as torch_no_grad,
 )
 from torch.cuda import max_memory_allocated, set_device, manual_seed_all
+from torch.nn import SyncBatchNorm
 from torch.nn.parallel import DistributedDataParallel
 from torch.distributed import init_process_group
 from torch.multiprocessing import set_sharing_strategy
 from torch.utils.tensorboard import SummaryWriter
 from torch.backends import cudnn
 from torch.distributed.elastic.multiprocessing.errors import record
-from torch.profiler import profile, record_function, ProfilerActivity, schedule, tensorboard_trace_handler
-from torch.autograd import set_detect_anomaly
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
 from maskrcnn_benchmark.config import cfg
 from maskrcnn_benchmark.data import make_data_loader
@@ -57,6 +56,11 @@ except ImportError:
     raise ImportError('Use APEX for multi-precision via apex.amp')
 
 
+APEX_FUSED_OPTIMIZERS = {'FusedSGD', 'FusedAdam'}
+OPTIMIZERS_WITH_SCHEDULERS = {'SGD', 'FusedSGD'}
+convert_sync_batchnorm = SyncBatchNorm.convert_sync_batchnorm
+
+
 def setup_seed(seed):
     torch_manual_seed(seed)
     manual_seed_all(seed)
@@ -64,18 +68,11 @@ def setup_seed(seed):
     random.seed(seed)
     cudnn.deterministic = True
 
-# def train(cfg, local_rank, distributed, logger, experiment=None):
-# @record
 def train(cfg, local_rank, distributed, logger, experiment):
     val_before = True # True False
     print_etari = 200 # 3   200
     # debug_print(logger, 'prepare training')
     model = build_detection_model(cfg)
-    debug_print(logger, 'model summary:')
-    print(summary(model))
-    print('model =')
-    print(model)
-    # debug_print(logger, summary(model))
     # debug_print(logger, 'end model construction')
 
     clean_classifier = cfg.MODEL.ROI_RELATION_HEAD.WITH_CLEAN_CLASSIFIER
@@ -90,8 +87,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
         fix_eval_modules(eval_modules)
 
     # NOTE, we slow down the LR of the layers start with the names in slow_heads
-    predictor = cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR
-    if predictor in ["IMPPredictor",]:
+    if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR in ["IMPPredictor",]:
         slow_heads = ["roi_heads.relation.box_feature_extractor",
                       "roi_heads.relation.union_feature_extractor.feature_extractor",]
     else:
@@ -108,10 +104,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
 
     arguments = {}
 
-    optimizer, lrs_by_name = make_optimizer(cfg, model, logger, rl_factor=float(num_batch), return_lrs_by_name=True)
+    optimizer, lrs_by_name = make_optimizer(cfg, model, logger, rl_factor=int(os_environ.get("NUM_GPUS", 1)) * sqrt(num_batch), return_lrs_by_name=True)
     hyperparameters = {'batch_size': num_batch, **lrs_by_name}
-    # using_comet = experiment is not None
-    # if using_comet and not isinstance(experiment, ExistingExperiment):
     if not isinstance(experiment, ExistingExperiment):
         experiment.log_parameters(hyperparameters)
     print('hyperparameters =', hyperparameters)
@@ -161,28 +155,25 @@ def train(cfg, local_rank, distributed, logger, experiment):
                 #     "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
                 #     "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
                 # }
-                if predictor.startswith("TransformerTransfer"):
+                if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR.startswith("TransformerTransfer"):
                     load_mapping_classifier = {
                         "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
                         "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
                         "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
-                        "roi_heads.relation.predictor.pairwise_compress_clean": "roi_heads.relation.predictor.pairwise_compress",
                     }
                     if cfg.MODEL.USING_GSC:
                         load_mapping_classifier["roi_heads.relation.predictor.gsc_compress_clean"] = "roi_heads.relation.predictor.gsc_compress",
-                if predictor == "VCTreePredictor":
+                if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "VCTreePredictor":
                     load_mapping_classifier = {
                         "roi_heads.relation.predictor.ctx_compress_clean": "roi_heads.relation.predictor.ctx_compress",
                         "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
                         "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
-                        "roi_heads.relation.predictor.pairwise_compress_clean": "roi_heads.relation.predictor.pairwise_compress",
                     }
-                if predictor == "MotifPredictor":
+                if cfg.MODEL.ROI_RELATION_HEAD.PREDICTOR == "MotifPredictor":
                     load_mapping_classifier = {
                         "roi_heads.relation.predictor.rel_compress_clean": "roi_heads.relation.predictor.rel_compress",
                         "roi_heads.relation.predictor.freq_bias_clean": "roi_heads.relation.predictor.freq_bias",
                         "roi_heads.relation.predictor.post_cat_clean": "roi_heads.relation.predictor.post_cat",
-                        "roi_heads.relation.predictor.pairwise_compress_clean": "roi_heads.relation.predictor.pairwise_compress",
                     }
                 #load_mapping_classifier = {}
                 if cfg.MODEL.PRETRAINED_MODEL_CKPT != "" :
@@ -193,15 +184,15 @@ def train(cfg, local_rank, distributed, logger, experiment):
     model.to(device, non_blocking=True)
 
     # Initialize mixed-precision training
-    # use_mixed_precision = cfg.DTYPE == "float16"
-    # amp_opt_level = 'O1' if use_mixed_precision else 'O0'
-    # model, optimizer = amp_initialize(model, optimizer, opt_level=amp_opt_level)
+    use_mixed_precision = cfg.DTYPE == "float16"
+    amp_opt_level = 'O1' if use_mixed_precision else 'O0'
+    model, optimizer = amp_initialize(model, optimizer, opt_level=amp_opt_level)
 
     if distributed:
         model = DistributedDataParallel(
             model, device_ids=[local_rank], output_device=local_rank,
             # this should be removed if we update BatchNorm stats
-            # broadcast_buffers=False,
+            broadcast_buffers=False,
             find_unused_parameters=True,
         )
     debug_print(logger, 'end distributed')
@@ -220,8 +211,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
     debug_print(logger, 'end dataloader')
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
-    # writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_train'))
-    writer = None
+    writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_train'))
     if cfg.SOLVER.PRE_VAL and val_before:
         with experiment.validate():
             logger.info("Validate before training")
@@ -253,147 +243,103 @@ def train(cfg, local_rank, distributed, logger, experiment):
     val_period = cfg.SOLVER.VAL_PERIOD
     using_WarmupReduceLROnPlateau = cfg.SOLVER.SCHEDULE.TYPE == "WarmupReduceLROnPlateau"
     max_decay_step = cfg.SOLVER.SCHEDULE.MAX_DECAY_STEP
+    using_apex_solvers = cfg.SOLVER.TYPE in APEX_FUSED_OPTIMIZERS
     max_norm = cfg.SOLVER.GRAD_NORM_CLIP
     print_grad_freq = cfg.SOLVER.PRINT_GRAD_FREQ
     max_iter = cfg.SOLVER.MAX_ITER
     model_name = os_environ['MODEL_NAME']
-    project_dir = os_environ['PROJECT_DIR']
-    skip_test = mode == 'sgdet' and predictor == 'VCTreePredictor'
-    profiling_dirpath = os_path_join(project_dir, 'profiling', model_name)
-    # with profile(
-    #     activities=[
-    #         ProfilerActivity.CPU,
-    #         ProfilerActivity.CUDA],
-    #     schedule=schedule(wait=1, warmup=1, active=1),
-    #     # schedule=schedule(wait=1, warmup=1, active=5),
-    #     # on_trace_ready=tensorboard_trace_handler(profiling_dirpath),
-    #     # record_shapes=True,
-    #     with_modules=True,
-    #     with_stack=True) as prof:
-        # ) as prof:
-    # prof.start()
-    model_name = os_environ['MODEL_NAME']
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
-        # with experiment.train():
-
-            # print(f'prof.record_steps = {prof.record_steps}')
-            # print(f'prof.step_num = {prof.step_num}')
+        with experiment.train():
             # if iteration % 1000 == 0:
             #     haaa=0
-        if any(len(target) < 1 for target in targets):
-            logger.error("Iteration={iteration + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
-        data_time = time_time() - end
-        iteration = iteration + 1
-        # if iteration > 1 + 1 + 1:
-        #     print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cuda_time_total", row_limit=5))
-        #     break
-        arguments["iteration"] = iteration
+            if any(len(target) < 1 for target in targets):
+                logger.error("Iteration={iteration + 1} || Image Ids used for training {_} || targets Length={[len(target) for target in targets]}")
+            data_time = time_time() - end
+            iteration = iteration + 1
+            arguments["iteration"] = iteration
 
-        model.train()
-        #fix_eval_modules(eval_modules)
-        if clean_classifier:
-            fix_eval_modules_no_classifier(model, with_grad_name='_clean')
-        else:
-            fix_eval_modules(eval_modules)
-        debug_print(logger, f'{iteration} end fixing eval modules')
+            model.train()
+            #fix_eval_modules(eval_modules)
+            if clean_classifier:
+                fix_eval_modules_no_classifier(model, with_grad_name='_clean')
+            else:
+                fix_eval_modules(eval_modules)
 
-        images = images.to(device, non_blocking=True)
-        targets = [target.to(device) for target in targets]
-        debug_print(logger, f'{iteration} end inputs and target')
-        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, record_shapes=True, with_stack=True) as prof:
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], with_modules=True, with_stack=True, on_trace_ready=tensorboard_trace_handler(profiling_dirpath)) as prof:
-            with record_function("model_inference"):
-                loss_dict = model(images, targets)
-        # breakpoint()
-        # print(prof.key_averages(group_by_stack_n=5).table(sort_by="count", row_limit=5))
-        print(prof.key_averages(group_by_stack_n=-1).table(sort_by="count"))
-        # prof.export_stacks(f"./profiling/{model_name}_profiler_stacks.txt", "self_cuda_time_total")
-        sys.exit()
+            images = images.to(device, non_blocking=True)
+            targets = [target.to(device) for target in targets]
 
-        debug_print(logger, f'{iteration} end model inference')
-        # prof.step()
-        # debug_print(logger, f'{iteration} end prof step')
-        # print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cuda_time_total", row_limit=10))
-        # print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=100))
-        # sys.exit()
+            loss_dict = model(images, targets)
 
-        # with record_function("losses"):
-        losses = sum(loss for loss in loss_dict.values())
+            losses = sum(loss for loss in loss_dict.values())
 
-        # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = reduce_loss_dict(loss_dict)
-        losses_reduced = sum(loss for loss in loss_dict_reduced.values())
-        meters.update(loss=losses_reduced, **loss_dict_reduced)
-        experiment.log_metrics(loss_dict_reduced, epoch=iteration)
+            # reduce losses over all GPUs for logging purposes
+            loss_dict_reduced = reduce_loss_dict(loss_dict)
+            losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+            meters.update(loss=losses_reduced, **loss_dict_reduced)
+            experiment.log_metrics(loss_dict_reduced, epoch=iteration)
 
-        # with record_function("gradients"):
-        optimizer.zero_grad(set_to_none=True)
-        # Note: If mixed precision is not used, this ends up doing nothing
-        # Otherwise apply loss scaling for mixed-precision recipe
-        # with amp_scale_loss(losses, optimizer) as scaled_losses:
-        #     scaled_losses.backward()
-        losses.backward()
-        debug_print(logger, f'{iteration} end backward')
+            if using_apex_solvers:
+                optimizer.zero_grad() # For Apex FusedSGD, FusedAdam, etc
+            else:
+                optimizer.zero_grad(set_to_none=True) # For Apex FusedSGD, FusedAdam, etc
+            # Note: If mixed precision is not used, this ends up doing nothing
+            # Otherwise apply loss scaling for mixed-precision recipe
+            with amp_scale_loss(losses, optimizer) as scaled_losses:
+                scaled_losses.backward()
 
-        # add clip_grad_norm from MOTIFS, tracking gradient, used for debug
-        verbose = (iteration % print_grad_freq) == 0 # print grad or not
-        clip_grad_norm([(n, p) for n, p in model.named_parameters() if p.requires_grad], max_norm=max_norm, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
-        debug_print(logger, f'{iteration} end gradient clipping')
+            # add clip_grad_norm from MOTIFS, tracking gradient, used for debug
+            verbose = (iteration % print_grad_freq) == 0 # print grad or not
+            clip_grad_norm([(n, p) for n, p in model.named_parameters() if p.requires_grad], max_norm=max_norm, logger=logger, verbose=verbose, writer=writer, iteration=iteration, clip=True)
 
-        optimizer.step()
-        debug_print(logger, f'{iteration} end optimizer step')
+            optimizer.step()
 
-        batch_time = time_time() - end
-        end = time_time()
-        meters.update(time=batch_time, data=data_time)
+            batch_time = time_time() - end
+            end = time_time()
+            meters.update(time=batch_time, data=data_time)
 
-        eta_seconds = meters.time.global_avg * (max_iter - iteration)
-        eta_string = str(datetime_timedelta(seconds=int(eta_seconds)))
+            eta_seconds = meters.time.global_avg * (max_iter - iteration)
+            eta_string = str(datetime_timedelta(seconds=int(eta_seconds)))
 
-        if iteration % print_etari == 0 or iteration == max_iter:
-            lr_i = optimizer.param_groups[-1]["lr"]
-            mem_i = max_memory_allocated() / 1048576.0
-            logger.info(
-                meters.delimiter.join(
-                    [
-                        "eta: {eta}",
-                        "iter: {iter}",
-                        "{meters}",
-                        "lr: {lr:.6f}",
-                        "max mem: {memory:.0f}",
-                    ]
-                ).format(
-                    eta=eta_string,
-                    iter=iteration,
-                    meters=str(meters),
-                    lr=lr_i,
-                    memory=mem_i,
+            if iteration % print_etari == 0 or iteration == max_iter:
+                lr_i = optimizer.param_groups[-1]["lr"]
+                mem_i = max_memory_allocated() / 1048576.0
+                logger.info(
+                    meters.delimiter.join(
+                        [
+                            "eta: {eta}",
+                            "iter: {iter}",
+                            "{meters}",
+                            "lr: {lr:.6f}",
+                            "max mem: {memory:.0f}",
+                        ]
+                    ).format(
+                        eta=eta_string,
+                        iter=iteration,
+                        meters=str(meters),
+                        lr=lr_i,
+                        memory=mem_i,
+                    )
                 )
-            )
-            # writer.add_scalar(f'{mode}/lr', lr_i, iteration)
-            # writer.add_scalar(f'{mode}/memory', mem_i, iteration)
-            experiment.log_metric('lr', lr_i)
+                writer.add_scalar(f'{mode}/lr', lr_i, iteration)
+                writer.add_scalar(f'{mode}/memory', mem_i, iteration)
+                experiment.log_metric('lr', lr_i)
 
-        if iteration % checkpoint_period == 0 and iteration != max_iter:
-            checkpointer.save("model_{:07d}".format(iteration), **arguments)
-        if iteration == max_iter:
-            checkpointer.save("model_{:07d}_final".format(iteration), **arguments)
+            if iteration % checkpoint_period == 0 and iteration != max_iter:
+                checkpointer.save("model_{:07d}".format(iteration), **arguments)
+            if iteration == max_iter:
+                checkpointer.save("model_{:07d}_final".format(iteration), **arguments)
 
-        val_result = None # used for scheduler updating
-        if (to_val and iteration % val_period == 0) or (iteration == max_iter):
+            val_result = None # used for scheduler updating
+        if to_val and iteration % val_period == 0:
             with experiment.validate():
-                logger.info(f'Start validating model {model_name} at iteration={iteration}.')
+                logger.info("Start validating")
                 val_result = run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment)
-                logger.info(f'Finished validating model {model_name} at iteration={iteration}. mR@50={val_result}')
-                experiment.log_metric('val_mR@50', val_result, epoch=iteration)
-            with experiment.test():
-                if skip_test:
-                    logger.info(f'Skip testing model {model_name} at iteration={iteration}.')
-                else:
-                    logger.info(f'Start testing model {model_name} at iteration={iteration}.')
-                    mr50 = run_test(cfg, model, distributed, logger, iteration, experiment)
-                    logger.info(f'Finished testing model {model_name} at iteration={iteration}. mR@50={mr50}')
-                    experiment.log_metric('test_mR@50', mr50, epoch=iteration)
+                logger.info("Validation Result: %.4f" % val_result)
+                if val_result > 0.17 and iteration < max_iter:
+                    with experiment.test():
+                        mr50 = run_test(cfg, model, distributed, logger, iteration, experiment)
+                        logger.info(f'Finished testing model {model_name} at iteration={iteration}')
+                        experiment.log_metric('mR@50', mr50, epoch=iteration)
 
         # scheduler should be called after optimizer.step() in pytorch>=1.1.0
         # https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
@@ -401,17 +347,13 @@ def train(cfg, local_rank, distributed, logger, experiment):
             scheduler.step(val_result, epoch=iteration)
             if scheduler.stage_count >= max_decay_step:
                 logger.info("Trigger MAX_DECAY_STEP at iteration {}.".format(iteration))
+                # break
         else:
             scheduler.step()
-        debug_print(logger, f'{iteration} end scheduler')
-
-        # writer.add_scalars(f'{mode}/loss', {'loss': losses_reduced, **loss_dict_reduced}, iteration)
-        # writer.add_scalars(f'{mode}/time', {'time_batch': batch_time, 'time_data': data_time}, iteration)
+        writer.add_scalars(f'{mode}/loss', {'loss': losses_reduced, **loss_dict_reduced}, iteration)
+        writer.add_scalars(f'{mode}/time', {'time_batch': batch_time, 'time_data': data_time}, iteration)
         experiment.log_epoch_end(iteration)
-        debug_print(logger, f'{iteration} end writer')
 
-    # prof.stop()
-    debug_print(logger, f'end train loop')
     total_training_time = time_time() - start_training_time
     total_time_str = str(datetime_timedelta(seconds=total_training_time))
     logger.info(
@@ -419,7 +361,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
             total_time_str, total_training_time / (max_iter)
         )
     )
-    # writer.close()
+    writer.close()
     return model
 
 def fix_eval_modules(eval_modules):
@@ -436,7 +378,6 @@ def fix_eval_modules_no_classifier(module, with_grad_name='_clean'):
         # DO NOT use module.eval(), otherwise the module will be in the test mode, i.e., all self.training condition is set to False
 
 
-# @record
 @torch_no_grad()
 def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration, output_dir, experiment):
     model_name = os_environ.get('MODEL_NAME')
@@ -492,7 +433,7 @@ def run_val(cfg, model, val_data_loaders, distributed, logger, writer, iteration
 @torch_no_grad()
 def run_test(cfg, model, distributed, logger, iteration, experiment):
     model_name = os_environ.get('MODEL_NAME')
-    debug_print(logger, f'running test for model {model_name} at iteration={iteration}')
+    debug_print(logger, f'running val for model {model_name} at iteration={iteration}')
     writer = SummaryWriter(log_dir=os_path_join(cfg.OUTPUT_DIR, 'tensorboard_test'))
     if distributed:
         model = model.module
@@ -548,10 +489,9 @@ def run_test(cfg, model, distributed, logger, iteration, experiment):
     return val_result
 
 
-# @record
+@record
 def main():
-    set_detect_anomaly(True)
-    # set_sharing_strategy('file_system')
+    set_sharing_strategy('file_system')
     setrlimit(RLIMIT_NOFILE, (4096, getrlimit(RLIMIT_NOFILE)[1]))
     setup_seed(int(os_environ['SEED']))
     parser = argparse.ArgumentParser(description="PyTorch Relation Detection Training")
@@ -579,8 +519,8 @@ def main():
 
     num_gpus = int(os_environ["WORLD_SIZE"]) if "WORLD_SIZE" in os_environ else 1
     args.distributed = num_gpus > 1
-    print(f'args.distributed = {args.distributed}')
-    local_rank = int(os_environ.get('LOCAL_RANK', -1))
+
+    local_rank = int(os_environ['LOCAL_RANK'])
     if args.distributed:
         set_device(local_rank)
         init_process_group(
@@ -615,32 +555,16 @@ def main():
     save_config(cfg, output_config_path)
 
     model_name = os_environ['MODEL_NAME']
-    disable_comet = bool(os_environ.get('COMET_DISABLE', False))
-    # if disable_comet:
-    #     experiment=None
-    # else:
-    experiment = get_experiment(model_name, disable_comet)
+    experiment = get_experiment(model_name)
     experiment.set_name(model_name)
 
-    # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, record_shapes=True) as prof:
-    #     try:
-    #         train(cfg, local_rank, args.distributed, logger, experiment)
-    #     except Exception as E:
-    #         prof.export_chrome_trace("trace.json")
-    #         prof.export_stacks("profiler_stacks.txt", "self_cuda_time_total")
-    #         print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cuda_time_total", row_limit=2))
-    #         raise
-    train(cfg, local_rank, args.distributed, logger, experiment)
+    model = train(cfg, local_rank, args.distributed, logger, experiment)
 
-    # print(prof.key_averages().table(sort_by="self_cpu_memory_usage", row_limit=10))
-    #
-    # print(prof.key_averages().table(sort_by="cpu_memory_usage", row_limit=10))
-
-    # if not args.skip_test:
-    #     with experiment.test():
-    #         mr50 = run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER, experiment)
-    #         logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
-    #         experiment.log_metric('mR@50', mr50, epoch=cfg.SOLVER.MAX_ITER)
+    if not args.skip_test:
+        with experiment.test():
+            mr50 = run_test(cfg, model, args.distributed, logger, cfg.SOLVER.MAX_ITER, experiment)
+            logger.info(f'Finished testing model {model_name} at a total of {cfg.SOLVER.MAX_ITER}')
+            experiment.log_metric('mR@50', mr50, epoch=cfg.SOLVER.MAX_ITER)
 
     logger.info(f'Finished training model {model_name} at a total of {cfg.SOLVER.MAX_ITER} iterations')
 
