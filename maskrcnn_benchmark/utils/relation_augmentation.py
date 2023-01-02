@@ -1,71 +1,8 @@
 # -*- coding: utf-8 -*-
-from typing import Tuple
-from torch import Tensor
-from torch import as_tensor as torch_as_tensor
-from maskrcnn_benchmark.structures.image_list import ImageList
+from copy import deepcopy
+from torch import Tensor, no_grad as torch_no_grad
+from maskrcnn_benchmark.structures.image_list import to_image_list
 from maskrcnn_benchmark.structures.bounding_box import BoxList
-
-
-def rel_aug(images: ImageList, targets: Tuple[BoxList], num_to_aug: int, strategy: str) -> Tuple[ImageList, Tuple[BoxList]]:
-    p_rel_all = pred_counts/pred_counts.sum()
-    if strategy == 'all':
-        return rel_aug_all(images, targets, p_rel_all, num_to_aug)
-    else:
-        raise NotImplementedError(f'rel_aug: strategy={strategy} is not implemented yet')
-
-
-def rel_aug_all_triplets(idx_rel: int, num2aug: int, replace: bool, distribution: Tensor) -> Tensor:
-    r"""
-    Given a relation, outputs the related relations.
-
-    Args:
-        idx_rel (int): The index of the relation in the sorted global relations.
-        num2aug (int): The size of each output sample.
-        replace (bool): Whether to allow duplicates in the output relations.
-        distribution (tensor): The frequency distribution of the
-
-    Shape:
-        - Input: :math:`(*, H_{in})`, where :math:`*` represents any number of
-          dimensions (including none) and :math:`H_{in} = \text{in\_features}`.
-        - Output: :math:`(*, H_{out})`, where all but the last dimension
-          match the input shape and :math:`H_{out} = \text{out\_features}`.
-
-    Attributes:
-        weight: The learnable weights of the module of shape :math:`(H_{out}, H_{in})`, where
-                :math:`H_{in} = \text{in\_features}` and :math:`H_{out} = \text{out\_features}`.
-                The values are initialized from :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`, where
-                :math:`k = \frac{1}{\text{in1\_features}}`.
-        bias: The learnable bias of the module of shape :math:`(H_{out})`. Only present when
-              :attr:`bias` is ``True``. The values are initialized from
-              :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`, where :math:`k = \frac{1}{H_{in}}`.
-
-    Examples::
-        >>> m = nn.Linear(20, 30)
-        >>> input = torch.randn(128, 20)
-        >>> output = m(input)
-        >>> print(output.size())
-        torch.Size([128, 30])
-
-        >>> # Example of creating a Linear layer with no bias.
-        >>> m = nn.Linear(3, 3, bias=False)
-        >>> input = torch.randn(10, 3)
-        >>> output = m(input)
-        >>> print(output.size())
-        torch.Size([10, 3])
-    """
-    '''
-    Given a single triplet in the form of (subj, rel, obj) and outputs a list of triplets with
-    the , not including the original. You should append the original.
-
-    Note that the input indices much be singular (one element) but the outputs will have multiple
-    (specificall num2aug elements).
-    '''
-    # Construct the inverse relation frequency distribution
-    n = len(pred_counts)
-    P_REL_ALL = 1 - (pred_counts/pred_counts.sum()).repeat(n, 1)
-    DIST_RELS_ALL_EXCLUDED_BY = P_REL_ALL.flatten()[1:].view(n-1, n+1)[:,:-1].reshape(n, n-1) # remove diagonal values
-
-    return DIST_RELS_ALL_EXCLUDED_BY[idx_rel].multinomial(num2aug, replacement=replace)
 
 
 class RelationAugmenter(object):
@@ -147,14 +84,63 @@ class RelationAugmenter(object):
     # """
     def __init__(self, pred_counts):
         n = len(pred_counts)
+        # Construct the inverse relation frequency distribution
+
         P_REL_ALL = 1.0 - (pred_counts/pred_counts.sum()).repeat(n, 1)
         # Cache
         self.dist_rels_all_excluded_by = P_REL_ALL.flatten()[1:].view(n-1, n+1)[:,:-1].reshape(n, n-1)
 
-    def sample(self, idx_rel, num2aug):
+    @torch_no_grad()
+    def sample(self, idx_rel: int, num2aug: int, replace: bool) -> Tensor:
+         # r"""
+        #     Given a relation, outputs the related relations.
+        #
+        #     Args:
+        #         idx_rel (int): The index of the relation in the sorted global relations.
+        #         num2aug (int): The size of each output sample.
+        #         replace (bool): Whether to allow duplicates in the output relations.
+        #         distribution (tensor): The frequency distribution of the
+        #
+        #     Shape:
+        #         - Input: :math:`(*, H_{in})`, where :math:`*` represents any number of
+        #           dimensions (including none) and :math:`H_{in} = \text{in\_features}`.
+        #         - Output: :math:`(*, H_{out})`, where all but the last dimension
+        #           match the input shape and :math:`H_{out} = \text{out\_features}`.
+        #
+        #     Attributes:
+        #         weight: The learnable weights of the module of shape :math:`(H_{out}, H_{in})`, where
+        #                 :math:`H_{in} = \text{in\_features}` and :math:`H_{out} = \text{out\_features}`.
+        #                 The values are initialized from :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`, where
+        #                 :math:`k = \frac{1}{\text{in1\_features}}`.
+        #         bias: The learnable bias of the module of shape :math:`(H_{out})`. Only present when
+        #               :attr:`bias` is ``True``. The values are initialized from
+        #               :math:`\mathcal{U}(-\sqrt{k}, \sqrt{k})`, where :math:`k = \frac{1}{H_{in}}`.
+        #
+        #     Examples::
+        #         >>> m = nn.Linear(20, 30)
+        #         >>> input = torch.randn(128, 20)
+        #         >>> output = m(input)
+        #         >>> print(output.size())
+        #         torch.Size([128, 30])
+        #
+        #         >>> # Example of creating a Linear layer with no bias.
+        #         >>> m = nn.Linear(3, 3, bias=False)
+        #         >>> input = torch.randn(10, 3)
+        #         >>> output = m(input)
+        #         >>> print(output.size())
+        #         torch.Size([10, 3])
+        #     """
+        #     '''
+        #     Given a single triplet in the form of (subj, rel, obj) and outputs a list of triplets with
+        #     the , not including the original. You should append the original.
+        #
+        #     Note that the input indices much be singular (one element) but the outputs will have multiple
+        #     (specificall num2aug elements).
+        #     '''
         return self.dist_rels_all_excluded_by[idx_rel].multinomial(num2aug, replacement=replace)
 
-    def augment(self, images, targets):
+    @torch_no_grad()
+    def augment(self, images, targets, num2aug: int):
         # TODO: vectorize
         images_augmented = []
         targets_augmented = []
@@ -170,7 +156,7 @@ class RelationAugmenter(object):
             targets_augmented.append(target)
 
             for idx_subj_og, rel_og, idx_obj_og in zip(idx_subj, rels, idx_obj):
-                rels_new = self.rel_aug_all_triplets(rel_og, 10, True)
+                rels_new = self.sample(rel_og, num2aug, True)
                 for rel_new in rels_new:
                     images_augmented.append(image)
 
@@ -180,4 +166,5 @@ class RelationAugmenter(object):
                     relation_new[idx_subj_og, idx_subj_og] = rel_new
                     target_new.extra_fields['relation'] = relation_new
                     targets_augmented.append(target_new)
+        del images, targets
         return to_image_list(images_augmented), targets_augmented

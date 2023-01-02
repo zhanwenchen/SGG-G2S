@@ -281,7 +281,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
     # prof.start()
     model_name = os_environ['MODEL_NAME']
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
-        images, targets = relation_augmenter.augment(images, targets)
+        images, targets = relation_augmenter.augment(images, targets, 2)
+        # TODO: refactor the per-batch
         # with experiment.train():
 
             # print(f'prof.record_steps = {prof.record_steps}')
