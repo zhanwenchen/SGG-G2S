@@ -295,11 +295,9 @@ def train(cfg, local_rank, distributed, logger, experiment):
             fix_eval_modules_no_classifier(model, with_grad_name='_clean')
         else:
             fix_eval_modules(eval_modules)
-        debug_print(logger, f'{iteration} end fixing eval modules')
 
         images = images.to(device, non_blocking=True)
         targets = [target.to(device) for target in targets]
-        debug_print(logger, f'{iteration} end inputs and target')
         # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, record_shapes=True, with_stack=True) as prof:
         # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], with_modules=True, with_stack=True, on_trace_ready=tensorboard_trace_handler(profiling_dirpath)) as prof:
         #     with record_function("model_inference"):
@@ -310,7 +308,6 @@ def train(cfg, local_rank, distributed, logger, experiment):
         # prof.export_stacks(f"./profiling/{model_name}_profiler_stacks.txt", "self_cuda_time_total")
         # sys.exit()
 
-        debug_print(logger, f'{iteration} end model inference')
         # prof.step()
         # debug_print(logger, f'{iteration} end prof step')
         # print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cuda_time_total", row_limit=10))
@@ -403,15 +400,12 @@ def train(cfg, local_rank, distributed, logger, experiment):
                 logger.info("Trigger MAX_DECAY_STEP at iteration {}.".format(iteration))
         else:
             scheduler.step()
-        debug_print(logger, f'{iteration} end scheduler')
 
         writer.add_scalars(f'{mode}/loss', {'loss': losses_reduced, **loss_dict_reduced}, iteration)
         writer.add_scalars(f'{mode}/time', {'time_batch': batch_time, 'time_data': data_time}, iteration)
         experiment.log_epoch_end(iteration)
-        # debug_print(logger, f'{iteration} end writer')
 
     # prof.stop()
-    debug_print(logger, f'end train loop')
     total_training_time = time_time() - start_training_time
     total_time_str = str(datetime_timedelta(seconds=total_training_time))
     logger.info(
