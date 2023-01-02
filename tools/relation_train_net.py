@@ -34,7 +34,7 @@ from torch.profiler import profile, record_function, ProfilerActivity, schedule,
 from torch.autograd import set_detect_anomaly
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
 from maskrcnn_benchmark.config import cfg
-from maskrcnn_benchmark.data import make_data_loader
+from maskrcnn_benchmark.data import make_data_loader, get_dataset_statistics
 from maskrcnn_benchmark.solver import make_lr_scheduler
 from maskrcnn_benchmark.solver import make_optimizer
 from maskrcnn_benchmark.engine.trainer import reduce_loss_dict
@@ -48,6 +48,7 @@ from maskrcnn_benchmark.utils.logger import setup_logger, debug_print
 from maskrcnn_benchmark.utils.miscellaneous import mkdir, save_config
 from maskrcnn_benchmark.utils.metric_logger import MetricLogger
 from maskrcnn_benchmark.utils.comet import get_experiment
+from maskrcnn_benchmark.utils.relation_augmentation import RelationAugmenter
 
 # See if we can use apex.DistributedDataParallel instead of the torch default,
 # and enable mixed-precision via apex.amp
@@ -230,6 +231,11 @@ def train(cfg, local_rank, distributed, logger, experiment):
         is_distributed=distributed,
     )
     debug_print(logger, 'end dataloader')
+    statistics = get_dataset_statistics(cfg)
+    fg_matrix = statistics['fg_matrix']
+    pred_counts = fg_matrix.sum((0,1))
+    relation_augmenter = RelationAugmenter(pred_counts)
+    debug_print(logger, 'end RelationAugmenter')
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
     writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_train'))
@@ -260,6 +266,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
     model_name = os_environ['MODEL_NAME']
     project_dir = os_environ['PROJECT_DIR']
     profiling_dirpath = os_path_join(project_dir, 'profiling', model_name)
+
     # with profile(
     #     activities=[
     #         ProfilerActivity.CPU,
@@ -274,6 +281,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
     # prof.start()
     model_name = os_environ['MODEL_NAME']
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
+        images, targets = relation_augmenter.augment(images, targets)
         # with experiment.train():
 
             # print(f'prof.record_steps = {prof.record_steps}')
