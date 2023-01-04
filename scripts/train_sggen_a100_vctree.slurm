@@ -82,6 +82,8 @@ else
   export WITH_CLEAN_CLASSIFIER=False
   export WITH_TRANSFER_CLASSIFIER=False
   export WEIGHT="''"
+  export NUM2AUG=4
+  export MAX_BATCHSIZE_AUG=32
 
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_vctree.sh
 fi

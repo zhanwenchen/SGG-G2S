@@ -58,6 +58,8 @@ else
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_pairwise.yaml
   export DATA_DIR_VG_RCNN=${HOME}/datasets
   export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))
+  export NUM2AUG=4
+  export MAX_BATCHSIZE_AUG=32
 
   ${PROJECT_DIR}/scripts/train_predcls.sh
 fi

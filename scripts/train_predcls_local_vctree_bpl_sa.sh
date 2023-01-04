@@ -69,6 +69,8 @@ else
   export PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
   export WITH_CLEAN_CLASSIFIER=True
   export WITH_TRANSFER_CLASSIFIER=True
+  export NUM2AUG=4
+  export MAX_BATCHSIZE_AUG=32
 
   ${PROJECT_DIR}/scripts/train_vctree.sh
 fi

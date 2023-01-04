@@ -74,6 +74,8 @@ else
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_pairwise.yaml
   export NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
   export DATA_DIR_VG_RCNN=${HOME}/datasets
+  export NUM2AUG=4
+  export MAX_BATCHSIZE_AUG=32
 
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_sgcls.sh
 fi

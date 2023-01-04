@@ -68,6 +68,8 @@ else
   export WITH_CLEAN_CLASSIFIER=False
   export WITH_TRANSFER_CLASSIFIER=False
   export WEIGHT="''"
+  export NUM2AUG=4
+  export MAX_BATCHSIZE_AUG=32
 
   ${PROJECT_DIR}/scripts/train_vctree.sh
 fi

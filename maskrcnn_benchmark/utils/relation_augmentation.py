@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 from copy import deepcopy
-from torch import Tensor, no_grad as torch_no_grad
-from maskrcnn_benchmark.structures.image_list import to_image_list
+from torch import (
+    Tensor,
+    no_grad as torch_no_grad,
+    randperm as torch_randperm,
+    stack as torch_stack,
+)
+from maskrcnn_benchmark.structures.image_list import ImageList
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 
 
@@ -140,11 +145,14 @@ class RelationAugmenter(object):
         return self.dist_rels_all_excluded_by[idx_rel].multinomial(num2aug, replacement=replace)
 
     @torch_no_grad()
-    def augment(self, images, targets, num2aug: int):
-        # TODO: vectorize
+    def augment(self, images, targets, num2aug: int, randmax: int):
+        # TODO: vectorized
+        device = targets[0].bbox.device
         images_augmented = []
+        image_sizes_augmented = []
         targets_augmented = []
-        for image, target in zip(images.tensors, targets):
+
+        for image, image_size, target in zip(images.tensors, images.image_sizes, targets):
             relation_old = target.extra_fields['relation']
 
             # triplets are represented as the relation map.
@@ -153,18 +161,77 @@ class RelationAugmenter(object):
 
             # First add old
             images_augmented.append(image)
+            image_sizes_augmented.append(image_size)
             targets_augmented.append(target)
 
             for idx_subj_og, rel_og, idx_obj_og in zip(idx_subj, rels, idx_obj):
                 rels_new = self.sample(rel_og, num2aug, True)
                 for rel_new in rels_new:
                     images_augmented.append(image)
-
+                    image_sizes_augmented.append(image_size)
                     # Triplet to Map
                     relation_new = relation_old.detach().clone()
-                    target_new = deepcopy(target)
+                    target_new = target.copy_with_fields(target.fields())
                     relation_new[idx_subj_og, idx_subj_og] = rel_new
                     target_new.extra_fields['relation'] = relation_new
                     targets_augmented.append(target_new)
         del images, targets
-        return to_image_list(images_augmented), targets_augmented
+        if randmax > -1:
+            idx_randperm = torch_randperm(len(images_augmented), device=device)[:randmax]
+            images_augmented = [images_augmented[i] for i in idx_randperm]
+            image_sizes_augmented = [image_sizes_augmented[i] for i in idx_randperm]
+            targets_augmented = [targets_augmented[i] for i in idx_randperm]
+        return ImageList(torch_stack(images_augmented, dim=0), image_sizes_augmented), targets_augmented
+
+    # @torch_no_grad()
+    # def augment_new(self, images, targets, num2aug: int, randmax: int):
+    #     # TODO: vectorized
+    #     device = targets[0].bbox.device
+    #     images_augmented = []
+    #     targets_augmented = []
+    #
+    #     num_images = len(images.image_sizes)
+    #
+    #     # For each image in the batch
+    #     for idx_image, (image, target) in enumerate(zip(images.tensors, targets)):
+    #         breakpoint()
+    #         image_augmented = []
+    #         target_augmented = []
+    #         relation_old = target.extra_fields['relation']
+    #
+    #         # triplets are represented as the relation map.
+    #         idx_subj, idx_obj = idx_rel = relation_old.nonzero(as_tuple=True) # tuple
+    #         rels = relation_old[idx_rel]
+    #         num_rels = len(rels)
+    #
+    #         # First add old rel
+    #         image_augmented.append(image)
+    #         target_augmented.append(target)
+    #         print(f'augment: processing the {idx_image+1}/{num_images} image of size {images.image_sizes[idx_image]} with {num_rels} old rels')
+    #
+    #         # expected_len = num_images * num_rels * average(num_new_rels). All rels are in one image.
+    #         # But each new rel requires a new image because of single-label
+    #         # For each old rel in the image
+    #         for idx_subj_og, rel_og, idx_obj_og in zip(idx_subj, rels, idx_obj):
+    #             rels_new = self.sample(rel_og, num2aug, True)
+    #             for rel_new in rels_new:
+    #                 image_augmented.append(image) #
+    #
+    #                 # Triplet to Map
+    #                 relation_new = relation_old.detach().clone()
+    #                 # target_new = deepcopy(target) # deepcopy doesn't really create a copy of tensors
+    #                 target_new = target.copy_with_fields([]) # deepcopy doesn't really create a copy of tensors
+    #                 # print(target_new.size)
+    #                 # breakpoint()
+    #                 relation_new[idx_subj_og, idx_subj_og] = rel_new
+    #                 target_new.extra_fields['relation'] = relation_new
+    #                 target_augmented.append(target_new)
+    #         if randmax > -1:
+    #             idx_randperm = torch_randperm(len(image_augmented), device=device)[:randmax]
+    #             image_augmented = [image_augmented[i] for i in idx_randperm]
+    #             target_augmented = [target_augmented[i] for i in idx_randperm]
+    #         images_augmented.extend(image_augmented)
+    #         targets_augmented.extend(target_augmented)
+    #     assert len(images_augmented) == len(targets_augmented)
+    #     # breakpoint()
+    #     return to_image_list(images_augmented), targets_augmented

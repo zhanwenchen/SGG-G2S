@@ -50,7 +50,7 @@ if [ -d "$MODEL_DIRNAME" ]; then
 else
   export CUDA_VISIBLE_DEVICES=0
   export SEED=1234
-  export BATCH_SIZE=12
+  export BATCH_SIZE=4
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False
@@ -65,6 +65,8 @@ else
   export USE_GT_OBJECT_LABEL=True
   export PRE_VAL=False
   export PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
+  export NUM2AUG=4
+  export MAX_BATCHSIZE_AUG=32
 
   ${PROJECT_DIR}/scripts/train_motif.sh
 fi

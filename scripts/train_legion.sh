@@ -26,6 +26,8 @@ cp -r ${PROJECT_DIR}/maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
 torchrun --nproc_per_node=$NUM_GPUS \
   ${PROJECT_DIR}/tools/relation_train_net.py \
   --config-file "configs/e2e_relation_X_101_32_8_FPN_1x_transformer.yaml" \
+  SOLVER.AUGMENTATION.NUM2AUG ${NUM2AUG} \
+  SOLVER.AUGMENTATION.MAX_BATCHSIZE_AUG ${MAX_BATCHSIZE_AUG} \
   MODEL.ROI_RELATION_HEAD.USE_GSC True  \
   MODEL.ROI_RELATION_HEAD.USE_GSC_FE False  \
   SOLVER.TYPE SGD \
