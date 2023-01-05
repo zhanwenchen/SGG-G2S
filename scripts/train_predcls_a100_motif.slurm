@@ -7,7 +7,7 @@
 #SBATCH -t 48:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB # need to match batch size.
-#SBATCH -J motif_baseline_predcls_4GPU_riv_1 # TODO: CHANGE THIS
+#SBATCH -J motif_baseline_predcls_4GPU_riv_1_random # TODO: CHANGE THIS
 #SBATCH -o /home/pct4et/gsc/log/%x-%A.out
 #SBATCH -e /home/pct4et/gsc/log/%x-%A.err
 #SBATCH --mail-type=ALL
@@ -85,5 +85,7 @@ else
   export NUM2AUG=4
   export MAX_BATCHSIZE_AUG=80
   export ALL_EDGES_FPATH=/gpfs/gpfs0/project/SDS/research/sds-rise/zhanwen/datasets/visual_genome/vg_gbnet/all_edges.pkl
+  export STRATEGY='random' # 'cooccurrence-pred_cov'
+
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_motif.sh
 fi

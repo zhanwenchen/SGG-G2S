@@ -234,7 +234,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
     statistics = get_dataset_statistics(cfg)
     fg_matrix = statistics['fg_matrix']
     pred_counts = fg_matrix.sum((0,1))
-    relation_augmenter = RelationAugmenter(pred_counts, strategy='cooccurrence-pred_cov') # TODO: read strategy from scripts
+    strategy = cfg.SOLVER.AUGMENTATION.STRATEGY
+    relation_augmenter = RelationAugmenter(pred_counts, strategy=strategy) # TODO: read strategy from scripts
     debug_print(logger, 'end RelationAugmenter')
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
@@ -287,7 +288,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
         # [print(i, b.size) for i, b in zip(images.image_sizes, targets)];
         num_before = len(targets)
         images, targets = relation_augmenter.augment(images, targets, num2aug, max_batchsize_aug)
-        print(f'Augmentation: {num_before} => {len(targets)}')
+        print(f'{iteration}: Augmentation: {num_before} => {len(targets)}')
         # [print(i, b.size) for i, b in zip(images.image_sizes, targets)];
         # breakpoint()
         # TODO: refactor the per-batch
