@@ -63,6 +63,7 @@ else
   export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))
   export NUM2AUG=4
   export MAX_BATCHSIZE_AUG=32
+  export ALL_EDGES_FPATH=/home/zhanwen/gbnet/graphs/005/all_edges.pkl
 
   ${PROJECT_DIR}/scripts/train_sgcls_vctree.sh
 fi

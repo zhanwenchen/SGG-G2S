@@ -67,6 +67,7 @@ else
   export PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
   export NUM2AUG=4
   export MAX_BATCHSIZE_AUG=32
+  export ALL_EDGES_FPATH=/home/zhanwen/gbnet/graphs/005/all_edges.pkl
 
   ${PROJECT_DIR}/scripts/train_motif.sh
 fi

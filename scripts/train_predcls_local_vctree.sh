@@ -69,7 +69,8 @@ else
   export WITH_TRANSFER_CLASSIFIER=False
   export WEIGHT="''"
   export NUM2AUG=4
-  export MAX_BATCHSIZE_AUG=32
+  export MAX_BATCHSIZE_AUG=16
+  export ALL_EDGES_FPATH=/home/zhanwen/gbnet/graphs/005/all_edges.pkl
 
   ${PROJECT_DIR}/scripts/train_vctree.sh
 fi

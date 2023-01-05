@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-from copy import deepcopy
+from os import environ as os_environ
+from pickle import load as pickle_load
 from torch import (
     Tensor,
     no_grad as torch_no_grad,
@@ -87,13 +88,54 @@ class RelationAugmenter(object):
     # .. _link:
     #     https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
     # """
-    def __init__(self, pred_counts):
+    def __init__(self, pred_counts, bottom_k=None, strategy=None):
         n = len(pred_counts)
         # Construct the inverse relation frequency distribution
 
-        P_REL_ALL = 1.0 - (pred_counts/pred_counts.sum()).repeat(n, 1)
+        P_REL_ALL_INV = 1.0 - (pred_counts/pred_counts.sum())
+        P_REL_ALL_INV_CACHE = P_REL_ALL_INV.repeat(n, 1)
         # Cache
-        self.dist_rels_all_excluded_by = P_REL_ALL.flatten()[1:].view(n-1, n+1)[:,:-1].reshape(n, n-1)
+
+        if bottom_k:
+            print(f'Only augment the {bottom_k} least frequent relations')
+            _, indices = torch_topk(P_REL_ALL_INV, bottom_k, largest=True, sorted=True)
+            self.bottom_k_rels = set(indices)
+        else:
+            self.bottom_k_rels = None
+
+        if strategy == 'random':
+            self.dist_rels_all_excluded_by = P_REL_ALL_INV_CACHE.flatten()[1:].view(n-1, n+1)[:,:-1].reshape(n, n-1)
+        elif strategy == 'cooccurrence-pred_cov':
+            all_edges_fpath = os_environ['ALL_EDGES_FPATH']
+            with open(all_edges_fpath, 'rb') as f:
+                all_edges = pickle_load(f)
+
+            edges_ent2ent = all_edges['edges_ent2ent']
+            print('edges_ent2ent.shape =', edges_ent2ent.shape)
+            p_obj_given_subj_zareian = edges_ent2ent[5, :, :].T
+            p_subj_given_obj_zareian = edges_ent2ent[6, :, :].T
+            noun_cov_zareian = edges_ent2ent[7, :, :].T
+            edges_wordnet_zareian = edges_ent2ent[8, :, :]
+
+
+            edges_pred2pred = all_edges['edges_pred2pred']
+            print('edges_pred2pred.shape =', edges_pred2pred.shape)
+            pred_cov_zareian = edges_pred2pred[3, : :].T
+
+            edges_ent2pred = all_edges['edges_ent2pred']
+            print('edges_ent2pred.shape =', edges_ent2pred.shape)
+            p_subj_given_pred_zareian = edges_ent2pred[1, :, :].T
+            p_obj_given_pred_zareian = edges_ent2pred[2, :, :].T
+
+            edges_pred2ent = all_edges['edges_pred2ent']
+            print('edges_pred2ent.shape =', edges_pred2ent.shape)
+            p_pred_given_subj_zareian = edges_pred2ent[1, :, :].T
+            p_pred_given_obj_zareian = edges_pred2ent[2, :, :].T
+            self.cooccurrence = pred_cov_zareian
+        elif strategy == 'cooccurrence-fgmat':
+            pass
+        else:
+            raise ValueError(f'Invalid strategy: {strategy}')
 
     @torch_no_grad()
     def sample(self, idx_rel: int, num2aug: int, replace: bool) -> Tensor:
@@ -145,7 +187,12 @@ class RelationAugmenter(object):
         return self.dist_rels_all_excluded_by[idx_rel].multinomial(num2aug, replacement=replace)
 
     @torch_no_grad()
+    def sample_cooccurrence(self, idx_rel: int, num2aug: int, replace: bool) -> Tensor:
+        return self.cooccurrence[idx_rel].multinomial(num2aug, replacement=replace)
+
+    @torch_no_grad()
     def augment(self, images, targets, num2aug: int, randmax: int):
+        # NOTE: not for cutmix because of rel_new
         # TODO: vectorized
         device = targets[0].bbox.device
         images_augmented = []
@@ -164,9 +211,16 @@ class RelationAugmenter(object):
             image_sizes_augmented.append(image_size)
             targets_augmented.append(target)
 
+            bottom_k_rels = self.bottom_k_rels
+
             for idx_subj_og, rel_og, idx_obj_og in zip(idx_subj, rels, idx_obj):
+                # QUESTION: Should we augment the bottom og or the bottom others?
+                # ANSWER: For cutmix-like, we only augment the bottom rel_og.
+                # For others, we save the bottom rel_new.
                 rels_new = self.sample(rel_og, num2aug, True)
                 for rel_new in rels_new:
+                    if bottom_k_rels and rel_new not in bottom_k_rels:
+                        continue
                     images_augmented.append(image)
                     image_sizes_augmented.append(image_size)
                     # Triplet to Map
@@ -181,6 +235,7 @@ class RelationAugmenter(object):
             images_augmented = [images_augmented[i] for i in idx_randperm]
             image_sizes_augmented = [image_sizes_augmented[i] for i in idx_randperm]
             targets_augmented = [targets_augmented[i] for i in idx_randperm]
+
         return ImageList(torch_stack(images_augmented, dim=0), image_sizes_augmented), targets_augmented
 
     # @torch_no_grad()

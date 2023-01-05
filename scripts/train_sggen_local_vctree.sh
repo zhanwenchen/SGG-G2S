@@ -70,6 +70,7 @@ else
   export WEIGHT="''"
   export NUM2AUG=4
   export MAX_BATCHSIZE_AUG=32
+  export ALL_EDGES_FPATH=/home/zhanwen/gbnet/graphs/005/all_edges.pkl
 
   ${PROJECT_DIR}/scripts/train_vctree.sh
 fi
