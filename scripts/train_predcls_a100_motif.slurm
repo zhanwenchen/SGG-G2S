@@ -79,9 +79,11 @@ else
   export USE_GT_OBJECT_LABEL=True
   export PRE_VAL=False
   export PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
+  export WEIGHT="''"
+  export WITH_CLEAN_CLASSIFIER=False
+  export WITH_TRANSFER_CLASSIFIER=False
   export NUM2AUG=4
   export MAX_BATCHSIZE_AUG=80
   export ALL_EDGES_FPATH=/gpfs/gpfs0/project/SDS/research/sds-rise/zhanwen/datasets/visual_genome/vg_gbnet/all_edges.pkl
-
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_motif.sh
 fi
