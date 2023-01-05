@@ -234,7 +234,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
     statistics = get_dataset_statistics(cfg)
     fg_matrix = statistics['fg_matrix']
     pred_counts = fg_matrix.sum((0,1))
-    relation_augmenter = RelationAugmenter(pred_counts)
+    relation_augmenter = RelationAugmenter(pred_counts, strategy='cooccurrence-pred_cov') # TODO: read strategy from scripts
     debug_print(logger, 'end RelationAugmenter')
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
@@ -279,9 +279,17 @@ def train(cfg, local_rank, distributed, logger, experiment):
     #     with_stack=True) as prof:
         # ) as prof:
     # prof.start()
+    num2aug = cfg.SOLVER.AUGMENTATION.NUM2AUG
+    max_batchsize_aug = cfg.SOLVER.AUGMENTATION.MAX_BATCHSIZE_AUG
     model_name = os_environ['MODEL_NAME']
     for iteration, (images, targets, _) in enumerate(train_data_loader, start_iter):
-        images, targets = relation_augmenter.augment(images, targets, 2)
+        # print(f'Before Augmentation: len(images.image_sizes) = {len(images.image_sizes)}; len(targets) = {len(targets)}')
+        # [print(i, b.size) for i, b in zip(images.image_sizes, targets)];
+        num_before = len(targets)
+        images, targets = relation_augmenter.augment(images, targets, num2aug, max_batchsize_aug)
+        print(f'Augmentation: {num_before} => {len(targets)}')
+        # [print(i, b.size) for i, b in zip(images.image_sizes, targets)];
+        # breakpoint()
         # TODO: refactor the per-batch
         # with experiment.train():
 

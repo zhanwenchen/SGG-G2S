@@ -57,7 +57,7 @@ else
   export USE_GSC_FE=False
   export PAIRWISE_METHOD_DATA='hadamard'
   export PAIRWISE_METHOD_FUNC='mha'
-  export USE_PAIRWISE_L2=True
+  export USE_PAIRWISE_L2=False
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml
   export DATA_DIR_VG_RCNN=${HOME}/datasets
   export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))
@@ -65,8 +65,11 @@ else
   export USE_GT_OBJECT_LABEL=True
   export PRE_VAL=False
   export PORT=$(comm -23 <(seq 49152 65535 | sort) <(ss -Htan | awk '{print $4}' | cut -d':' -f2 | sort -u) | shuf | head -n 1)
+  export WEIGHT="''"
+  export WITH_CLEAN_CLASSIFIER=False
+  export WITH_TRANSFER_CLASSIFIER=False
   export NUM2AUG=4
-  export MAX_BATCHSIZE_AUG=32
+  export MAX_BATCHSIZE_AUG=12
   export ALL_EDGES_FPATH=/home/zhanwen/gbnet/graphs/005/all_edges.pkl
 
   ${PROJECT_DIR}/scripts/train_motif.sh

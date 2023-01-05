@@ -6,6 +6,7 @@ from torch import (
     no_grad as torch_no_grad,
     randperm as torch_randperm,
     stack as torch_stack,
+    from_numpy as torch_from_numpy,
 )
 from maskrcnn_benchmark.structures.image_list import ImageList
 from maskrcnn_benchmark.structures.bounding_box import BoxList
@@ -131,14 +132,15 @@ class RelationAugmenter(object):
             print('edges_pred2ent.shape =', edges_pred2ent.shape)
             p_pred_given_subj_zareian = edges_pred2ent[1, :, :].T
             p_pred_given_obj_zareian = edges_pred2ent[2, :, :].T
-            self.cooccurrence = pred_cov_zareian
+            self.cooccurrence = torch_from_numpy(pred_cov_zareian)
         elif strategy == 'cooccurrence-fgmat':
             pass
         else:
             raise ValueError(f'Invalid strategy: {strategy}')
+        self.strategy = strategy
 
     @torch_no_grad()
-    def sample(self, idx_rel: int, num2aug: int, replace: bool) -> Tensor:
+    def sample_random(self, idx_rel: int, num2aug: int, replace: bool) -> Tensor:
          # r"""
         #     Given a relation, outputs the related relations.
         #
@@ -194,6 +196,15 @@ class RelationAugmenter(object):
     def augment(self, images, targets, num2aug: int, randmax: int):
         # NOTE: not for cutmix because of rel_new
         # TODO: vectorized
+        bottom_k_rels = self.bottom_k_rels
+        strategy = self.strategy
+        if strategy == 'random':
+            sample_func = self.sample_random
+        elif strategy == 'cooccurrence-pred_cov':
+            sample_func = self.sample_cooccurrence
+        else:
+            raise ValueError(f'Invalid strategy: {strategy}')
+
         device = targets[0].bbox.device
         images_augmented = []
         image_sizes_augmented = []
@@ -211,13 +222,12 @@ class RelationAugmenter(object):
             image_sizes_augmented.append(image_size)
             targets_augmented.append(target)
 
-            bottom_k_rels = self.bottom_k_rels
-
             for idx_subj_og, rel_og, idx_obj_og in zip(idx_subj, rels, idx_obj):
                 # QUESTION: Should we augment the bottom og or the bottom others?
                 # ANSWER: For cutmix-like, we only augment the bottom rel_og.
                 # For others, we save the bottom rel_new.
-                rels_new = self.sample(rel_og, num2aug, True)
+                rels_new = sample_func(rel_og, num2aug, True)
+
                 for rel_new in rels_new:
                     if bottom_k_rels and rel_new not in bottom_k_rels:
                         continue
