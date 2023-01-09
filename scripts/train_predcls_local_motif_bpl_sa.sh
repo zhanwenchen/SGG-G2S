@@ -73,6 +73,7 @@ else
   export MAX_BATCHSIZE_AUG=32
   export ALL_EDGES_FPATH=/gpfs/gpfs0/project/SDS/research/sds-rise/zhanwen/datasets/visual_genome/vg_gbnet/all_edges.pkl
   export STRATEGY='random' # 'cooccurrence-pred_cov'
+  export BOTTOM_K=30 # 'cooccurrence-pred_cov'
 
   ${PROJECT_DIR}/scripts/train_vctree.sh
 fi

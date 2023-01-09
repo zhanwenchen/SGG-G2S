@@ -235,7 +235,8 @@ def train(cfg, local_rank, distributed, logger, experiment):
     fg_matrix = statistics['fg_matrix']
     pred_counts = fg_matrix.sum((0,1))
     strategy = cfg.SOLVER.AUGMENTATION.STRATEGY
-    relation_augmenter = RelationAugmenter(pred_counts, strategy=strategy) # TODO: read strategy from scripts
+    bottom_k = cfg.SOLVER.AUGMENTATION.BOTTOM_K
+    relation_augmenter = RelationAugmenter(pred_counts, bottom_k=bottom_k, strategy=strategy) # TODO: read strategy from scripts
     debug_print(logger, 'end RelationAugmenter')
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 

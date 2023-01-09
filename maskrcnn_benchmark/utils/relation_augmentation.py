@@ -89,7 +89,7 @@ class RelationAugmenter(object):
     # .. _link:
     #     https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
     # """
-    def __init__(self, pred_counts, bottom_k=None, strategy=None):
+    def __init__(self, pred_counts, bottom_k: int, strategy: str):
         n = len(pred_counts)
         # Construct the inverse relation frequency distribution
 
@@ -97,7 +97,7 @@ class RelationAugmenter(object):
         P_REL_ALL_INV_CACHE = P_REL_ALL_INV.repeat(n, 1)
         # Cache
 
-        if bottom_k:
+        if bottom_k > -1:
             print(f'Only augment the {bottom_k} least frequent relations')
             _, indices = torch_topk(P_REL_ALL_INV, bottom_k, largest=True, sorted=True)
             self.bottom_k_rels = set(indices)
@@ -190,6 +190,7 @@ class RelationAugmenter(object):
 
     @torch_no_grad()
     def sample_cooccurrence(self, idx_rel: int, num2aug: int, replace: bool) -> Tensor:
+        # TODO: is this correct?
         return self.cooccurrence[idx_rel].multinomial(num2aug, replacement=replace)
 
     @torch_no_grad()
