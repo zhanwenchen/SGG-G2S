@@ -131,7 +131,8 @@ class RelationAugmenter(object):
 
             p_rel_all_inv_cache = p_rel_all_inv.repeat(n, 1)
             # Cache
-            self.dist_rels_all_excluded_by = p_rel_all_inv_cache.flatten()[1:].view(n-1, n+1)[:,:-1].reshape(n, n-1)
+            p_rel_all_inv_cache.fill_diagonal_(0)
+            self.dist_rels_all_excluded_by = p_rel_all_inv_cache
         elif strategy == 'cooccurrence-pred_cov':
             all_edges_fpath = os_environ['ALL_EDGES_FPATH']
             with open(all_edges_fpath, 'rb') as f:
