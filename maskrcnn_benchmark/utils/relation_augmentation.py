@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 from os import environ as os_environ
+from os.path import join as os_path_join
+from json import load as json_load
 from pickle import load as pickle_load
+from numpy import array as np_array
 from torch import (
     Tensor,
     no_grad as torch_no_grad,
@@ -12,6 +15,7 @@ from torch import (
     cat as torch_cat,
     sort as torch_sort,
     as_tensor as torch_as_tensor,
+    empty as torch_empty,
 )
 from maskrcnn_benchmark.structures.image_list import ImageList
 from maskrcnn_benchmark.structures.bounding_box import BoxList
@@ -95,6 +99,12 @@ class RelationAugmenter(object):
     #     https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
     # """
     def __init__(self, pred_counts, bottom_k: int, strategy: str):
+        DATA_DIR = os_environ['DATA_DIR_VG_RCNN']
+        with open(os_path_join(DATA_DIR, 'visual_genome', 'VG-SGG-dicts-with-attri.json'), 'r') as fin:
+            scene_graph_meta = json_load(fin)
+        self.idx2preds = ['_'] + list(scene_graph_meta['idx_to_predicate'].values())
+        self.idx2preds_np = np_array(self.idx2preds)
+
         n = len(pred_counts)
         pred_counts_minus_1 = pred_counts[1:] # Exclude the background pred.
 
@@ -106,6 +116,7 @@ class RelationAugmenter(object):
             pred_counts_sorted_indices_bottom = pred_counts_sorted_indices[:bottom_k] + 1 # added back
             pred_counts_sorted_indices_bottom = pred_counts_sorted_indices_bottom.tolist()
             self.bottom_k_rels = set(pred_counts_sorted_indices_bottom)
+            pred_counts_sorted_indices_top = pred_counts_sorted_indices[bottom_k:] + 1 # added back
         else:
             self.bottom_k_rels = None
 
@@ -115,7 +126,6 @@ class RelationAugmenter(object):
             # Or we can assume a gaussian dist., etc.
             p_rel_all_inv = torch_reciprocal(pred_counts_dist)
             p_rel_all_inv = torch_cat((torch_as_tensor([0]), p_rel_all_inv))
-            pred_counts_sorted_indices_top = pred_counts_sorted_indices[bottom_k:] + 1 # added back
             p_rel_all_inv[pred_counts_sorted_indices_top] = 0 # set highest to 0
             p_rel_all_inv /= p_rel_all_inv.sum()
 
@@ -134,7 +144,6 @@ class RelationAugmenter(object):
             noun_cov_zareian = edges_ent2ent[7, :, :].T
             edges_wordnet_zareian = edges_ent2ent[8, :, :]
 
-
             edges_pred2pred = all_edges['edges_pred2pred']
             print('edges_pred2pred.shape =', edges_pred2pred.shape)
             pred_cov_zareian = edges_pred2pred[3, : :].T
@@ -149,6 +158,8 @@ class RelationAugmenter(object):
             p_pred_given_subj_zareian = edges_pred2ent[1, :, :].T
             p_pred_given_obj_zareian = edges_pred2ent[2, :, :].T
             self.cooccurrence = torch_from_numpy(pred_cov_zareian)
+            # set top k to 0
+            self.cooccurrence[:, pred_counts_sorted_indices_top] = 0
         elif strategy == 'cooccurrence-fgmat':
             pass
         else:
@@ -206,8 +217,11 @@ class RelationAugmenter(object):
 
     @torch_no_grad()
     def sample_cooccurrence(self, idx_rel: int, num2aug: int, replace: bool) -> Tensor:
-        # TODO: is this correct?
-        return self.cooccurrence[idx_rel].multinomial(num2aug, replacement=replace)
+        cooccurrence_current = self.cooccurrence[idx_rel]
+        if cooccurrence_current.count_nonzero() > 0:
+            return cooccurrence_current.multinomial(num2aug, replacement=replace)
+        else:
+            return torch_empty(0)
 
     @torch_no_grad()
     def augment(self, images, targets, num2aug: int, randmax: int):
@@ -244,7 +258,10 @@ class RelationAugmenter(object):
                 # ANSWER: For cutmix-like, we only augment the bottom rel_og.
                 # For others, we save the bottom rel_new.
                 rels_new = sample_func(rel_og, num2aug, False)
-                num_new_all = len(rels_new)
+                if rels_new.nelement() == 0:
+                    print(f'no rels_new for rel_og={self.idx2preds[rel_og]}')
+                else:
+                    print(f'considering rel_og={self.idx2preds[rel_og]} => rel_new={self.idx2preds_np[rels_new]}')
 
                 for rel_new in rels_new:
                     if bottom_k_rels and int(rel_new) not in bottom_k_rels:
