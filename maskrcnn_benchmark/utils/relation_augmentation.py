@@ -7,6 +7,11 @@ from torch import (
     randperm as torch_randperm,
     stack as torch_stack,
     from_numpy as torch_from_numpy,
+    topk as torch_topk,
+    reciprocal as torch_reciprocal,
+    cat as torch_cat,
+    sort as torch_sort,
+    as_tensor as torch_as_tensor,
 )
 from maskrcnn_benchmark.structures.image_list import ImageList
 from maskrcnn_benchmark.structures.bounding_box import BoxList
@@ -91,21 +96,32 @@ class RelationAugmenter(object):
     # """
     def __init__(self, pred_counts, bottom_k: int, strategy: str):
         n = len(pred_counts)
-        # Construct the inverse relation frequency distribution
-
-        P_REL_ALL_INV = 1.0 - (pred_counts/pred_counts.sum())
-        P_REL_ALL_INV_CACHE = P_REL_ALL_INV.repeat(n, 1)
-        # Cache
+        pred_counts_minus_1 = pred_counts[1:] # Exclude the background pred.
 
         if bottom_k > -1:
-            print(f'Only augment the {bottom_k} least frequent relations')
-            _, indices = torch_topk(P_REL_ALL_INV, bottom_k, largest=True, sorted=True)
-            self.bottom_k_rels = set(indices)
+            _, pred_counts_sorted_indices = torch_sort(pred_counts_minus_1, descending=False)
+            print(f'Only augment the {bottom_k} least frequent relations out of {n}')
+            # _, indices = torch_topk(P_REL_ALL_INV, bottom_k, largest=True, sorted=True)
+            # don't dynamically sort.
+            pred_counts_sorted_indices_bottom = pred_counts_sorted_indices[:bottom_k] + 1 # added back
+            pred_counts_sorted_indices_bottom = pred_counts_sorted_indices_bottom.tolist()
+            self.bottom_k_rels = set(pred_counts_sorted_indices_bottom)
         else:
             self.bottom_k_rels = None
 
         if strategy == 'random':
-            self.dist_rels_all_excluded_by = P_REL_ALL_INV_CACHE.flatten()[1:].view(n-1, n+1)[:,:-1].reshape(n, n-1)
+            # Construct the inverse relation frequency distribution
+            pred_counts_dist = pred_counts_minus_1/pred_counts_minus_1.sum() # population dist
+            # Or we can assume a gaussian dist., etc.
+            p_rel_all_inv = torch_reciprocal(pred_counts_dist)
+            p_rel_all_inv = torch_cat((torch_as_tensor([0]), p_rel_all_inv))
+            pred_counts_sorted_indices_top = pred_counts_sorted_indices[bottom_k:] + 1 # added back
+            p_rel_all_inv[pred_counts_sorted_indices_top] = 0 # set highest to 0
+            p_rel_all_inv /= p_rel_all_inv.sum()
+
+            p_rel_all_inv_cache = p_rel_all_inv.repeat(n, 1)
+            # Cache
+            self.dist_rels_all_excluded_by = p_rel_all_inv_cache.flatten()[1:].view(n-1, n+1)[:,:-1].reshape(n, n-1)
         elif strategy == 'cooccurrence-pred_cov':
             all_edges_fpath = os_environ['ALL_EDGES_FPATH']
             with open(all_edges_fpath, 'rb') as f:
@@ -227,10 +243,11 @@ class RelationAugmenter(object):
                 # QUESTION: Should we augment the bottom og or the bottom others?
                 # ANSWER: For cutmix-like, we only augment the bottom rel_og.
                 # For others, we save the bottom rel_new.
-                rels_new = sample_func(rel_og, num2aug, True)
+                rels_new = sample_func(rel_og, num2aug, False)
+                num_new_all = len(rels_new)
 
                 for rel_new in rels_new:
-                    if bottom_k_rels and rel_new not in bottom_k_rels:
+                    if bottom_k_rels and int(rel_new) not in bottom_k_rels:
                         continue
                     images_augmented.append(image)
                     image_sizes_augmented.append(image_size)
