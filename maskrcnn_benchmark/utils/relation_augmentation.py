@@ -172,6 +172,7 @@ class RelationAugmenter(object):
             fg_matrix[:, 0, :] = 0 # we don't care about background.
             cooccurrence = fg_matrix / fg_matrix.sum(dim=-1).unsqueeze_(-1)
             self.cooccurrence = torch_nan_to_num(cooccurrence, nan=0.0, out=cooccurrence)
+            self.cooccurrence[:, :, pred_counts_sorted_indices_top] = 0
         else:
             raise ValueError(f'Invalid strategy: {strategy}')
         self.strategy = strategy
@@ -239,7 +240,6 @@ class RelationAugmenter(object):
         if subj == 0 or obj == 0:
             return torch_empty(0)
         rel_counts = self.cooccurrence[subj, obj, :]
-        rel_counts[idx_rel] = 0
         if rel_counts.count_nonzero() > 0 and not torch_isnan(rel_counts).any():
             return rel_counts.multinomial(num2aug, replacement=replace)
         else:
