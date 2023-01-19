@@ -71,7 +71,7 @@ else
   export NUM2AUG=4
   export MAX_BATCHSIZE_AUG=12
   export ALL_EDGES_FPATH=/home/zhanwen/gbnet/graphs/005/all_edges.pkl
-  export STRATEGY='random' # 'cooccurrence-pred_cov'
+  export STRATEGY='cooccurrence-fgmat' # 'cooccurrence-pred_cov'
   export BOTTOM_K=30 # 'cooccurrence-pred_cov'
 
   ${PROJECT_DIR}/scripts/train_motif.sh

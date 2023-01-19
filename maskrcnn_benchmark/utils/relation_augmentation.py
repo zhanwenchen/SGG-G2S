@@ -16,9 +16,12 @@ from torch import (
     sort as torch_sort,
     as_tensor as torch_as_tensor,
     empty as torch_empty,
+    isnan as torch_isnan,
+    nan_to_num as torch_nan_to_num,
 )
 from maskrcnn_benchmark.structures.image_list import ImageList
 from maskrcnn_benchmark.structures.bounding_box import BoxList
+from maskrcnn_benchmark.data import get_dataset_statistics # calls VisualGenome.get_statistics which calls get_VG_statistics
 
 
 class RelationAugmenter(object):
@@ -98,7 +101,7 @@ class RelationAugmenter(object):
     # .. _link:
     #     https://github.com/vdumoulin/conv_arithmetic/blob/master/README.md
     # """
-    def __init__(self, pred_counts, bottom_k: int, strategy: str):
+    def __init__(self, pred_counts, bottom_k: int, strategy: str, cfg=None):
         DATA_DIR = os_environ['DATA_DIR_VG_RCNN']
         with open(os_path_join(DATA_DIR, 'visual_genome', 'VG-SGG-dicts-with-attri.json'), 'r') as fin:
             scene_graph_meta = json_load(fin)
@@ -162,13 +165,19 @@ class RelationAugmenter(object):
             # set top k to 0
             self.cooccurrence[:, pred_counts_sorted_indices_top] = 0
         elif strategy == 'cooccurrence-fgmat':
-            pass
+            statistics = get_dataset_statistics(cfg)
+            fg_matrix = statistics['fg_matrix'] # [151, 151, 51]
+            fg_matrix[:, :, 0] = 0 # we don't care about background.
+            fg_matrix[0, :, :] = 0 # we don't care about background.
+            fg_matrix[:, 0, :] = 0 # we don't care about background.
+            cooccurrence = fg_matrix / fg_matrix.sum(dim=-1).unsqueeze_(-1)
+            self.cooccurrence = torch_nan_to_num(cooccurrence, nan=0.0, out=cooccurrence)
         else:
             raise ValueError(f'Invalid strategy: {strategy}')
         self.strategy = strategy
 
     @torch_no_grad()
-    def sample_random(self, idx_rel: int, num2aug: int, replace: bool) -> Tensor:
+    def sample_random(self, idx_rel: int, num2aug: int, replace: bool, subj=None, obj=None) -> Tensor:
          # r"""
         #     Given a relation, outputs the related relations.
         #
@@ -217,10 +226,21 @@ class RelationAugmenter(object):
         return self.dist_rels_all_excluded_by[idx_rel].multinomial(num2aug, replacement=replace)
 
     @torch_no_grad()
-    def sample_cooccurrence(self, idx_rel: int, num2aug: int, replace: bool) -> Tensor:
+    def sample_predcov(self, idx_rel: int, num2aug: int, replace: bool, subj=None, obj=None) -> Tensor:
         cooccurrence_current = self.cooccurrence[idx_rel]
         if cooccurrence_current.count_nonzero() > 0:
             return cooccurrence_current.multinomial(num2aug, replacement=replace)
+        else:
+            return torch_empty(0)
+
+    @torch_no_grad()
+    def sample_fgmat(self, idx_rel: int, num2aug: int, replace: bool, subj=None, obj=None) -> Tensor:
+        # TODO: for all sampling methods, return empty if idx_rel == 0
+        if subj == 0 or obj == 0:
+            return torch_empty(0)
+        rel_counts = self.cooccurrence[subj, obj, :]
+        if rel_counts.count_nonzero() > 0 and not torch_isnan(rel_counts).any():
+            return rel_counts.multinomial(num2aug, replacement=replace)
         else:
             return torch_empty(0)
 
@@ -233,7 +253,9 @@ class RelationAugmenter(object):
         if strategy == 'random':
             sample_func = self.sample_random
         elif strategy == 'cooccurrence-pred_cov':
-            sample_func = self.sample_cooccurrence
+            sample_func = self.sample_predcov
+        elif strategy == 'cooccurrence-fgmat':
+            sample_func = self.sample_fgmat
         else:
             raise ValueError(f'Invalid strategy: {strategy}')
 
@@ -258,7 +280,7 @@ class RelationAugmenter(object):
                 # QUESTION: Should we augment the bottom og or the bottom others?
                 # ANSWER: For cutmix-like, we only augment the bottom rel_og.
                 # For others, we save the bottom rel_new.
-                rels_new = sample_func(rel_og, num2aug, False)
+                rels_new = sample_func(rel_og, num2aug, False, subj=idx_subj_og, obj=idx_obj_og)
                 if rels_new.nelement() == 0:
                     print(f'no rels_new for rel_og={self.idx2preds[rel_og]}')
                 else:
