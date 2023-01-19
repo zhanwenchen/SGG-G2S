@@ -239,6 +239,7 @@ class RelationAugmenter(object):
         if subj == 0 or obj == 0:
             return torch_empty(0)
         rel_counts = self.cooccurrence[subj, obj, :]
+        rel_counts[idx_rel] = 0
         if rel_counts.count_nonzero() > 0 and not torch_isnan(rel_counts).any():
             return rel_counts.multinomial(num2aug, replacement=replace)
         else:
