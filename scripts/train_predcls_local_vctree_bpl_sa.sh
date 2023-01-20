@@ -72,7 +72,7 @@ else
   export NUM2AUG=4
   export MAX_BATCHSIZE_AUG=32
   export ALL_EDGES_FPATH=/home/zhanwen/gbnet/graphs/005/all_edges.pkl
-  export STRATEGY='cooccurrence-fgmat' # 'cooccurrence-pred_cov'
+  export STRATEGY='wordnet'
   export BOTTOM_K=30 # 'cooccurrence-pred_cov'
 
   ${PROJECT_DIR}/scripts/train_vctree.sh

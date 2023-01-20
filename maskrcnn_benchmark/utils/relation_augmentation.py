@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from os import environ as os_environ
-from os.path import join as os_path_join
+from os.path import join as os_path_join, dirname as os_path_dirname
 from json import load as json_load
 from pickle import load as pickle_load
 from numpy import array as np_array
@@ -173,6 +173,16 @@ class RelationAugmenter(object):
             cooccurrence = fg_matrix / fg_matrix.sum(dim=-1).unsqueeze_(-1)
             self.cooccurrence = torch_nan_to_num(cooccurrence, nan=0.0, out=cooccurrence)
             self.cooccurrence[:, :, pred_counts_sorted_indices_top] = 0
+        elif strategy == 'wordnet':
+            with open(os_path_join(os_path_dirname(__file__), 'pred_sim.pkl'), 'rb') as f:
+                pred_sim_path_sim = pickle_load(f)[0, :, :]
+            pred_sim_path_sim = torch_from_numpy(pred_sim_path_sim)
+            pred_sim_path_sim.fill_diagonal_(0)
+            pred_sim_path_sim /= pred_sim_path_sim.sum(dim=-1).unsqueeze_(-1)
+            torch_nan_to_num(pred_sim_path_sim, nan=0.0, out=pred_sim_path_sim)
+            pred_sim_path_sim[pred_counts_sorted_indices_top, :] = 0
+            pred_sim_path_sim[:, pred_counts_sorted_indices_top] = 0
+            self.cooccurrence = pred_sim_path_sim
         else:
             raise ValueError(f'Invalid strategy: {strategy}')
         self.strategy = strategy
@@ -240,8 +250,17 @@ class RelationAugmenter(object):
         if subj == 0 or obj == 0:
             return torch_empty(0)
         rel_counts = self.cooccurrence[subj, obj, :]
+        rel_counts[idx_rel] = 0
         if rel_counts.count_nonzero() > 0 and not torch_isnan(rel_counts).any():
             return rel_counts.multinomial(num2aug, replacement=replace)
+        else:
+            return torch_empty(0)
+
+    @torch_no_grad()
+    def sample_wordnet(self, idx_rel: int, num2aug: int, replace: bool, subj=None, obj=None) -> Tensor:
+        cooccurrence_current = self.cooccurrence[idx_rel]
+        if cooccurrence_current.count_nonzero() > 0:
+            return cooccurrence_current.multinomial(num2aug, replacement=replace)
         else:
             return torch_empty(0)
 
@@ -257,6 +276,8 @@ class RelationAugmenter(object):
             sample_func = self.sample_predcov
         elif strategy == 'cooccurrence-fgmat':
             sample_func = self.sample_fgmat
+        elif strategy == 'wordnet':
+            sample_func = self.sample_wordnet
         else:
             raise ValueError(f'Invalid strategy: {strategy}')
 
