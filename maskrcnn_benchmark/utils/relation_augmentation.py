@@ -183,6 +183,23 @@ class RelationAugmenter(object):
             pred_sim_path_sim[pred_counts_sorted_indices_top, :] = 0
             pred_sim_path_sim[:, pred_counts_sorted_indices_top] = 0
             self.cooccurrence = pred_sim_path_sim
+        elif strategy == 'csk':
+            all_edges_fpath = os_environ['ALL_EDGES_FPATH']
+            with open(all_edges_fpath, 'rb') as f:
+                all_edges = pickle_load(f)
+
+            edges_pred2pred = all_edges['edges_pred2pred']
+            # Sum all edge types because we don't care about which one
+            cooccurrence = edges_pred2pred[:3, :, :].sum(axis=0)
+            cooccurrence = torch_from_numpy(cooccurrence)
+
+            # No need to normalize because multinomial will treat it as weights
+            # set top k to 0
+            cooccurrence[:, pred_counts_sorted_indices_top] = 0
+            cooccurrence.fill_diagonal_(0)
+            torch_nan_to_num(cooccurrence, nan=0.0, out=cooccurrence)
+            # print(f'csk: cooccurrence.sum() = {cooccurrence.sum()}') # only 19
+            self.cooccurrence = cooccurrence
         else:
             raise ValueError(f'Invalid strategy: {strategy}')
         self.strategy = strategy
@@ -265,6 +282,14 @@ class RelationAugmenter(object):
             return torch_empty(0)
 
     @torch_no_grad()
+    def sample_csk(self, idx_rel: int, num2aug: int, replace: bool, subj=None, obj=None) -> Tensor:
+        cooccurrence_current = self.cooccurrence[idx_rel]
+        if cooccurrence_current.count_nonzero() > 0:
+            return cooccurrence_current.multinomial(num2aug, replacement=replace)
+        else:
+            return torch_empty(0)
+
+    @torch_no_grad()
     def augment(self, images, targets, num2aug: int, randmax: int):
         # NOTE: not for cutmix because of rel_new
         # TODO: vectorized
@@ -278,6 +303,8 @@ class RelationAugmenter(object):
             sample_func = self.sample_fgmat
         elif strategy == 'wordnet':
             sample_func = self.sample_wordnet
+        elif strategy == 'csk': # Commonsence Knowledge
+            sample_func = self.sample_csk
         else:
             raise ValueError(f'Invalid strategy: {strategy}')
 
