@@ -18,7 +18,7 @@ from .collate_batch import BatchCollator, BBoxAugCollator
 from .transforms import build_transforms
 
 # by Jiaxin
-def get_dataset_statistics(cfg):
+def get_dataset_statistics(cfg, return_lookup=False, return_datasets=False, vg_dataset=None):
     """
     get dataset statistics (e.g., frequency bias) from training data
     will be called to help construct FrequencyBias module
@@ -35,19 +35,23 @@ def get_dataset_statistics(cfg):
     data_statistics_name = ''.join(dataset_names) + '_statistics'
     save_file = os_path_join(cfg.OUTPUT_DIR, "{}.cache".format(data_statistics_name))
 
-    if os_path_exists(save_file):
-        logger.info('Loading data statistics from: ' + str(save_file))
-        logger.info('-'*100)
-        return torch_load(save_file, map_location=torch_device("cpu"))
+    # if os_path_exists(save_file):
+    #     logger.info('Loading data statistics from: ' + str(save_file))
+    #     logger.info('-'*100)
+    #     return torch_load(save_file, map_location=torch_device("cpu"))
 
     statistics = []
+    if return_datasets:
+        datasets = []
     for dataset_name in dataset_names:
         print(f'dataset_name={dataset_name}')
         data = DatasetCatalog.get(dataset_name, cfg)
         factory = getattr(D, data["factory"])
         args = data["args"]
         dataset = factory(**args)
-        statistics.append(dataset.get_statistics())
+        statistics.append(dataset.get_statistics(return_lookup=return_lookup))
+        if return_datasets:
+            datasets.append(dataset)
     logger.info('finish')
 
     assert len(statistics) == 1
@@ -58,10 +62,17 @@ def get_dataset_statistics(cfg):
         'obj_classes': statistics_0['obj_classes'], # must be exactly same for multiple datasets
         'rel_classes': statistics_0['rel_classes'],
         'att_classes': statistics_0['att_classes'],
+        'stats': statistics_0['stats'],
     }
+    if return_lookup:
+        result['obj2examples'] = statistics_0['obj2examples']
+        result['rel2examples'] = statistics_0['rel2examples']
+
     logger.info('Save data statistics to: ' + str(save_file))
     logger.info('-'*100)
     torch_save(result, save_file)
+    if return_datasets:
+        return result, datasets
     return result
 
 

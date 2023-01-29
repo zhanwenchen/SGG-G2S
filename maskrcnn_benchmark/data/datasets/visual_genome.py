@@ -1,3 +1,4 @@
+from collections import defaultdict
 from os import environ as os_environ
 from os.path import join as os_path_join, exists as os_path_exists
 from pickle import load as pickle_load, dump as pickle_dump
@@ -85,6 +86,17 @@ class VGDataset(Dataset):
         indices = np_where(self.split_mask)[0]
         self.filenames = [self.filenames[i] for i in indices]
         self.img_info = [self.img_info[i] for i in indices]
+    #
+    #     if split == 'train':
+    #         self._augment_relation()
+    #
+    # def _augment_relation(self):
+    #     self.img_info
+    #     self.filenames
+    #     pass
+    #
+    #     for lol in dataset:
+    #         pass
 
     def __getitem__(self, index):
         # if self.split == 'train':
@@ -151,15 +163,19 @@ class VGDataset(Dataset):
 
         return img, target, index
 
-    def get_statistics(self):
-        if os_path_exists(STATISTICS_FPATH):
-            print(f'visual_genome.VGDataset.get_statistics: loading existing statistics from {STATISTICS_FPATH} with hash NotImplementedError')
-            with open(STATISTICS_FPATH, 'rb') as f:
-                result = pickle_load(f)
-            return result
-        fg_matrix, bg_matrix = get_VG_statistics(img_dir=self.img_dir, roidb_file=self.roidb_file,
-                                                 dict_file=self.dict_file,
-                                                 image_file=self.image_file, must_overlap=True)
+    def get_statistics(self, return_lookup=False):
+        # if os_path_exists(STATISTICS_FPATH):
+        #     print(f'visual_genome.VGDataset.get_statistics: loading existing statistics from {STATISTICS_FPATH} with hash NotImplementedError')
+        #     with open(STATISTICS_FPATH, 'rb') as f:
+        #         result = pickle_load(f)
+        #     return result
+        fg_matrix, bg_matrix, obj2examples, rel2examples, stats = get_VG_statistics(img_dir=self.img_dir,
+                                                                                    roidb_file=self.roidb_file,
+                                                                                    dict_file=self.dict_file,
+                                                                                    image_file=self.image_file,
+                                                                                    must_overlap=True,
+                                                                                    return_lookup=return_lookup,
+                                                                                    train_data=self)
         eps = 1e-3
         bg_matrix += 1
         fg_matrix[:, :, 0] = bg_matrix
@@ -172,10 +188,13 @@ class VGDataset(Dataset):
             'obj_classes': self.ind_to_classes,
             'rel_classes': self.ind_to_predicates,
             'att_classes': self.ind_to_attributes,
+            'obj2examples': obj2examples,
+            'rel2examples': rel2examples,
+            'stats': stats,
         }
-        with open(STATISTICS_FPATH, 'wb') as f:
-            print(f'visual_genome.VGDataset.get_statistics: saving statistics from {STATISTICS_FPATH} with hash NotImplementedError')
-            pickle_dump(result, f)
+        # with open(STATISTICS_FPATH, 'wb') as f:
+        #     print(f'visual_genome.VGDataset.get_statistics: saving statistics from {STATISTICS_FPATH} with hash NotImplementedError')
+        #     pickle_dump(result, f)
         return result
 
 
@@ -236,32 +255,56 @@ class VGDataset(Dataset):
         return len(self.filenames)
 
 
-def get_VG_statistics(img_dir, roidb_file, dict_file, image_file, must_overlap=True):
+def get_VG_statistics(img_dir, roidb_file, dict_file, image_file, must_overlap=True, return_lookup=False, train_data=None):
     print("get visual genome statistics!!!!!!!!!!!!!!!!!!")
-    train_data = VGDataset(split='train', img_dir=img_dir, roidb_file=roidb_file,
-                           dict_file=dict_file, image_file=image_file, num_val_im=5000,
-                           filter_duplicate_rels=False, get_state=True)
+    if train_data is None:
+        train_data = VGDataset(split='train', img_dir=img_dir, roidb_file=roidb_file,
+                               dict_file=dict_file, image_file=image_file, num_val_im=5000,
+                               filter_duplicate_rels=False, get_state=True)
+
     num_obj_classes = len(train_data.ind_to_classes)
     num_rel_classes = len(train_data.ind_to_predicates)
     fg_matrix = np_zeros((num_obj_classes, num_obj_classes, num_rel_classes), dtype=np_int64)
     bg_matrix = np_zeros((num_obj_classes, num_obj_classes), dtype=np_int64)
+
+    obj2examples = defaultdict(set) if return_lookup else None
+    rel2examples = defaultdict(set) if return_lookup else None
+    stats = []
 
     for ex_ind in tqdm(range(len(train_data))):
         gt_classes = train_data.gt_classes[ex_ind]
         gt_relations = train_data.relationships[ex_ind]
         gt_boxes = train_data.gt_boxes[ex_ind]
 
+        # TODO: add the relative position of the relation to retrieve it.
+        # or just do a triplet
+
+        if return_lookup:
+            for gt_class in gt_classes:
+                obj2examples[gt_class].add(ex_ind)
+
+            for gt_relation in gt_relations:
+                rel2examples[gt_class].add(ex_ind)
+            # For boxes, just use train_data.gt_boxes[ex_ind]
+
         # For the foreground, we'll just look at everything
-        o1o2 = gt_classes[gt_relations[:, :2]]
-        for (o1, o2), gtr in zip(o1o2, gt_relations[:, 2]):
+        o1o2_indices = gt_relations[:, :2]
+        o1o2 = gt_classes[o1o2_indices]
+        # QUESTION: are indicies and o1o2 even? Yes.
+        for idx, ((o1_idx, o2_idx), (o1, o2), gtr) in enumerate(zip(o1o2_indices, o1o2, gt_relations[:, 2])):
             fg_matrix[o1, o2, gtr] += 1
+            gt_box_o1 = gt_boxes[o1_idx]
+            gt_box_o2 = gt_boxes[o2_idx]
+            row = [ex_ind, o1_idx, o1] + list(gt_box_o1) + [o2_idx, o2] + list(gt_box_o2) + [idx, gtr]
+            stats.append(row)
+            # TODO: add boxes too. What do they look like?
         # For the background, get all of the things that overlap.
         o1o2_total = gt_classes[np_array(
             box_filter(gt_boxes, must_overlap=must_overlap), dtype=int)]
         for (o1, o2) in o1o2_total:
             bg_matrix[o1, o2] += 1
 
-    return fg_matrix, bg_matrix
+    return fg_matrix, bg_matrix, obj2examples, rel2examples, stats
 
 
 def box_filter(boxes, must_overlap=False):
