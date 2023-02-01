@@ -3,22 +3,21 @@ from os.path import exists as os_path_exists, join as os_path_join
 from bisect import bisect_right
 import copy
 import logging
-
 from torch import save as torch_save, load as torch_load, device as torch_device
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import RandomSampler, SequentialSampler, BatchSampler
 from maskrcnn_benchmark.utils.comm import get_world_size
 from maskrcnn_benchmark.utils.imports import import_file
 from maskrcnn_benchmark.utils.miscellaneous import save_labels
+from maskrcnn_benchmark.data import datasets as D
+from maskrcnn_benchmark.data.samplers import DistributedSampler, GroupedBatchSampler, IterationBasedBatchSampler
+from maskrcnn_benchmark.data.collate_batch import BatchCollator, BBoxAugCollator
+from maskrcnn_benchmark.data.transforms import build_transforms
+from maskrcnn_benchmark.data.datasets.graft_augmenter import GraftAugmenterDataset
 
-from . import datasets as D
-from . import samplers
-
-from .collate_batch import BatchCollator, BBoxAugCollator
-from .transforms import build_transforms
 
 # by Jiaxin
-def get_dataset_statistics(cfg, return_lookup=False, return_datasets=False, vg_dataset=None):
+def get_dataset_statistics(cfg, return_lookup=False, return_datasets=False, train_data=None):
     """
     get dataset statistics (e.g., frequency bias) from training data
     will be called to help construct FrequencyBias module
@@ -49,7 +48,7 @@ def get_dataset_statistics(cfg, return_lookup=False, return_datasets=False, vg_d
         factory = getattr(D, data["factory"])
         args = data["args"]
         dataset = factory(**args)
-        statistics.append(dataset.get_statistics(return_lookup=return_lookup))
+        statistics.append(dataset.get_statistics(return_lookup=return_lookup, train_data=train_data))
         if return_datasets:
             datasets.append(dataset)
     logger.info('finish')
@@ -76,7 +75,7 @@ def get_dataset_statistics(cfg, return_lookup=False, return_datasets=False, vg_d
     return result
 
 
-def build_dataset(cfg, dataset_list, transforms, dataset_catalog, is_train=True):
+def build_dataset(cfg, dataset_list, transforms, dataset_catalog, is_train=True, aug=False):
     """
     Arguments:
         dataset_list (list[str]): Contains the names of the datasets, i.e.,
@@ -106,7 +105,8 @@ def build_dataset(cfg, dataset_list, transforms, dataset_catalog, is_train=True)
         # make dataset from factory
         dataset = factory(**args)
         datasets.append(dataset)
-
+    if cfg.SOLVER.AUGMENTATION.USE_GRAFT is True and aug is True:
+        datasets.append(GraftAugmenterDataset(cfg))
     # for testing, return a list of datasets
     if not is_train:
         return datasets
@@ -121,7 +121,7 @@ def build_dataset(cfg, dataset_list, transforms, dataset_catalog, is_train=True)
 
 def make_data_sampler(dataset, shuffle, distributed):
     if distributed:
-        return samplers.DistributedSampler(dataset, shuffle=shuffle)
+        return DistributedSampler(dataset, shuffle=shuffle)
     if shuffle:
         sampler = RandomSampler(dataset)
     else:
@@ -153,7 +153,7 @@ def make_batch_data_sampler(
             aspect_grouping = [aspect_grouping]
         aspect_ratios = _compute_aspect_ratios(dataset)
         group_ids = _quantize(aspect_ratios, aspect_grouping)
-        batch_sampler = samplers.GroupedBatchSampler(
+        batch_sampler = GroupedBatchSampler(
             sampler, group_ids, images_per_batch, drop_uneven=False
         )
     else:
@@ -161,13 +161,13 @@ def make_batch_data_sampler(
             sampler, images_per_batch, drop_last=False
         )
     if num_iters is not None:
-        batch_sampler = samplers.IterationBasedBatchSampler(
+        batch_sampler = IterationBasedBatchSampler(
             batch_sampler, num_iters, start_iter
         )
     return batch_sampler
 
 
-def make_data_loader(cfg, mode='train', is_distributed=False, start_iter=0):
+def make_data_loader(cfg, mode='train', is_distributed=False, start_iter=0, aug=False):
     assert mode in {'train', 'val', 'test'}
     logger = logging.getLogger(__name__)
     num_gpus = get_world_size()
@@ -226,7 +226,7 @@ def make_data_loader(cfg, mode='train', is_distributed=False, start_iter=0):
 
     # If bbox aug is enabled in testing, simply set transforms to None and we will apply transforms later
     transforms = None if not is_train and cfg.TEST.BBOX_AUG.ENABLED else build_transforms(cfg, is_train)
-    datasets = build_dataset(cfg, dataset_list, transforms, DatasetCatalog, is_train)
+    datasets = build_dataset(cfg, dataset_list, transforms, DatasetCatalog, is_train, aug=aug)
 
     if is_train:
         # save category_id to label name mapping

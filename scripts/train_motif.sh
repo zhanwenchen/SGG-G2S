@@ -46,6 +46,7 @@ cp -r ${PROJECT_DIR}/maskrcnn_benchmark/ ${MODEL_DIRNAME} &&
 torchrun --master_port ${PORT} --nproc_per_node=$NUM_GPUS \
   ${PROJECT_DIR}/tools/relation_train_net.py \
   --config-file ${CONFIG_FILE} \
+  SOLVER.AUGMENTATION.USE_GRAFT ${USE_GRAFT} \
   SOLVER.AUGMENTATION.NUM2AUG ${NUM2AUG} \
   SOLVER.AUGMENTATION.MAX_BATCHSIZE_AUG ${MAX_BATCHSIZE_AUG} \
   SOLVER.AUGMENTATION.STRATEGY ${STRATEGY} \

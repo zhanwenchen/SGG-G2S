@@ -84,6 +84,7 @@ else
   export ALL_EDGES_FPATH=/gpfs/gpfs0/project/SDS/research/sds-rise/zhanwen/datasets/visual_genome/vg_gbnet/all_edges.pkl
   export STRATEGY='csk'
   export BOTTOM_K=30 # 'cooccurrence-pred_cov'
+  export USE_GRAFT=True
 
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_motif.sh
 fi

@@ -63,6 +63,7 @@ else
   export ALL_EDGES_FPATH=/home/zhanwen/gbnet/graphs/005/all_edges.pkl
   export STRATEGY='csk'
   export BOTTOM_K=30 # 'cooccurrence-pred_cov'
+  export USE_GRAFT=True
 
   ${PROJECT_DIR}/scripts/train_predcls.sh
 fi

@@ -241,11 +241,11 @@ class BoxList(object):
         TO_REMOVE = 1
         max_x = self.size[0] - TO_REMOVE
         max_y = self.size[1] - TO_REMOVE
-        self.bbox[:, [0, 2]].clamp_(min=0, max=max_x)
-        self.bbox[:, [1, 3]].clamp_(min=0, max=max_y)
+        bbox = self.bbox
+        bbox[:, [0, 2]] = bbox[:, [0, 2]].clamp_(min=0, max=max_x)
+        bbox[:, [1, 3]] = bbox[:, [1, 3]].clamp_(min=0, max=max_y)
         if remove_empty:
-            box = self.bbox
-            keep = (box[:, 3] > box[:, 1]) & (box[:, 2] > box[:, 0])
+            keep = (bbox[:, 3] > bbox[:, 1]) & (bbox[:, 2] > bbox[:, 0])
             return self[keep]
         return self
 

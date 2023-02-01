@@ -1,6 +1,7 @@
 from collections import defaultdict
 from os import environ as os_environ
 from os.path import join as os_path_join, exists as os_path_exists
+import pdb
 from pickle import load as pickle_load, dump as pickle_dump
 from json import load as json_load, dump as json_dump
 from collections import defaultdict
@@ -139,7 +140,7 @@ class VGDataset(Dataset):
         # breakpoint()
         flip_img = (random_random() > 0.5) and self.flip_aug and (self.split == 'train')
 
-        target = self.get_groundtruth(index, flip_img)
+        target = self.get_groundtruth(index, evaluation=False, flip_img=flip_img)
 
         if flip_img:
             img = img.transpose(method=Image_FLIP_LEFT_RIGHT) # TODO: inplace?
@@ -163,7 +164,7 @@ class VGDataset(Dataset):
 
         return img, target, index
 
-    def get_statistics(self, return_lookup=False):
+    def get_statistics(self, return_lookup=False, train_data=None):
         # if os_path_exists(STATISTICS_FPATH):
         #     print(f'visual_genome.VGDataset.get_statistics: loading existing statistics from {STATISTICS_FPATH} with hash NotImplementedError')
         #     with open(STATISTICS_FPATH, 'rb') as f:
@@ -175,7 +176,7 @@ class VGDataset(Dataset):
                                                                                     image_file=self.image_file,
                                                                                     must_overlap=True,
                                                                                     return_lookup=return_lookup,
-                                                                                    train_data=self)
+                                                                                    train_data=train_data)
         eps = 1e-3
         bg_matrix += 1
         fg_matrix[:, :, 0] = bg_matrix
@@ -261,7 +262,6 @@ def get_VG_statistics(img_dir, roidb_file, dict_file, image_file, must_overlap=T
         train_data = VGDataset(split='train', img_dir=img_dir, roidb_file=roidb_file,
                                dict_file=dict_file, image_file=image_file, num_val_im=5000,
                                filter_duplicate_rels=False, get_state=True)
-
     num_obj_classes = len(train_data.ind_to_classes)
     num_rel_classes = len(train_data.ind_to_predicates)
     fg_matrix = np_zeros((num_obj_classes, num_obj_classes, num_rel_classes), dtype=np_int64)
@@ -270,21 +270,30 @@ def get_VG_statistics(img_dir, roidb_file, dict_file, image_file, must_overlap=T
     obj2examples = defaultdict(set) if return_lookup else None
     rel2examples = defaultdict(set) if return_lookup else None
     stats = []
-
+    get_groundtruth = train_data.get_groundtruth
+    
     for ex_ind in tqdm(range(len(train_data))):
+        # img, target, _ = train_data[ex_ind]
+        # NOTE: the gt_boxes are right. The images haven't been transformed yet.
+        # gt_boxes = target.bbox[ex_ind].numpy()
+        target = get_groundtruth(ex_ind, evaluation=True, flip_img=False)
+        bbox = target.bbox
+        keep = (bbox[:, 3] > bbox[:, 1]) & (bbox[:, 2] > bbox[:, 0])
+        gt_boxes = bbox.floor().int().numpy()
         gt_classes = train_data.gt_classes[ex_ind]
         gt_relations = train_data.relationships[ex_ind]
-        gt_boxes = train_data.gt_boxes[ex_ind]
+        # gt_boxes = train_data.gt_boxes[ex_ind]
+        # Don't need to worry about 
 
         # TODO: add the relative position of the relation to retrieve it.
         # or just do a triplet
 
-        if return_lookup:
-            for gt_class in gt_classes:
-                obj2examples[gt_class].add(ex_ind)
+        # if return_lookup:
+        #     for gt_class in gt_classes:
+        #         obj2examples[gt_class].add(ex_ind)
 
-            for gt_relation in gt_relations:
-                rel2examples[gt_class].add(ex_ind)
+        #     for gt_relation in gt_relations:
+        #         rel2examples[gt_class].add(ex_ind)
             # For boxes, just use train_data.gt_boxes[ex_ind]
 
         # For the foreground, we'll just look at everything
@@ -292,12 +301,12 @@ def get_VG_statistics(img_dir, roidb_file, dict_file, image_file, must_overlap=T
         o1o2 = gt_classes[o1o2_indices]
         # QUESTION: are indicies and o1o2 even? Yes.
         for idx, ((o1_idx, o2_idx), (o1, o2), gtr) in enumerate(zip(o1o2_indices, o1o2, gt_relations[:, 2])):
-            fg_matrix[o1, o2, gtr] += 1
-            gt_box_o1 = gt_boxes[o1_idx]
-            gt_box_o2 = gt_boxes[o2_idx]
-            row = [ex_ind, o1_idx, o1] + list(gt_box_o1) + [o2_idx, o2] + list(gt_box_o2) + [idx, gtr]
-            stats.append(row)
-            # TODO: add boxes too. What do they look like?
+            fg_matrix[o1, o2, gtr] += 1 # Keep shouldn't affect simple stats
+            if keep[o1_idx] and keep[o2_idx]:
+                gt_box_o1 = gt_boxes[o1_idx]
+                gt_box_o2 = gt_boxes[o2_idx]
+                row = [ex_ind, o1_idx, o1] + list(gt_box_o1) + [o2_idx, o2] + list(gt_box_o2) + [idx, gtr]
+                stats.append(row)
         # For the background, get all of the things that overlap.
         o1o2_total = gt_classes[np_array(
             box_filter(gt_boxes, must_overlap=must_overlap), dtype=int)]
