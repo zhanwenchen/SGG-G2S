@@ -234,10 +234,12 @@ def train(cfg, local_rank, distributed, logger, experiment):
     statistics = get_dataset_statistics(cfg)
     fg_matrix = statistics['fg_matrix']
     pred_counts = fg_matrix.sum((0,1))
-    strategy = cfg.SOLVER.AUGMENTATION.STRATEGY
-    bottom_k = cfg.SOLVER.AUGMENTATION.BOTTOM_K
-    relation_augmenter = RelationAugmenter(pred_counts, bottom_k=bottom_k, strategy=strategy, cfg=cfg) # TODO: read strategy from scripts
-    debug_print(logger, 'end RelationAugmenter')
+    use_semantic = cfg.SOLVER.AUGMENTATION.USE_SEMANTIC
+    if use_semantic:
+        strategy = cfg.SOLVER.AUGMENTATION.STRATEGY
+        bottom_k = cfg.SOLVER.AUGMENTATION.BOTTOM_K
+        relation_augmenter = RelationAugmenter(pred_counts, bottom_k=bottom_k, strategy=strategy, cfg=cfg) # TODO: read strategy from scripts
+        debug_print(logger, 'end RelationAugmenter')
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
     writer = SummaryWriter(log_dir=os_path_join(output_dir, 'tensorboard_train'))
@@ -288,8 +290,9 @@ def train(cfg, local_rank, distributed, logger, experiment):
         # print(f'Before Augmentation: len(images.image_sizes) = {len(images.image_sizes)}; len(targets) = {len(targets)}')
         # [print(i, b.size) for i, b in zip(images.image_sizes, targets)];
         num_before = len(targets)
-        images, targets = relation_augmenter.augment(images, targets, num2aug, max_batchsize_aug)
-        print(f'{iteration}: Augmentation: {num_before} => {len(targets)}')
+        if use_semantic:
+            images, targets = relation_augmenter.augment(images, targets, num2aug, max_batchsize_aug)
+            print(f'{iteration}: Augmentation: {num_before} => {len(targets)}')
         # [print(i, b.size) for i, b in zip(images.image_sizes, targets)];
         # breakpoint()
         # TODO: refactor the per-batch

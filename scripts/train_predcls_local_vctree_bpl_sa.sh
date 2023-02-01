@@ -75,6 +75,7 @@ else
   export STRATEGY='csk'
   export BOTTOM_K=30 # 'cooccurrence-pred_cov'
   export USE_GRAFT=True
+  export USE_SEMANTIC=False
 
   ${PROJECT_DIR}/scripts/train_vctree.sh
 fi

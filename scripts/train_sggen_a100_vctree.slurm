@@ -88,6 +88,7 @@ else
   export STRATEGY='csk'
   export BOTTOM_K=30 # 'cooccurrence-pred_cov'
   export USE_GRAFT=True
+  export USE_SEMANTIC=False
 
   singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_vctree.sh
 fi
