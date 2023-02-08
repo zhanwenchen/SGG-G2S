@@ -103,7 +103,7 @@ class RelationAugmenter(object):
     # """
     def __init__(self, pred_counts, bottom_k: int, strategy: str, cfg=None):
         DATA_DIR = os_environ['DATA_DIR_VG_RCNN']
-        with open(os_path_join(DATA_DIR, 'visual_genome', 'VG-SGG-dicts-with-attri.json'), 'r') as fin:
+        with open(os_path_join(DATA_DIR, 'datasets', 'visual_genome', 'VG-SGG-dicts-with-attri.json'), 'r') as fin:
             scene_graph_meta = json_load(fin)
         self.idx2preds = ['_'] + list(scene_graph_meta['idx_to_predicate'].values())
         self.idx2preds_np = np_array(self.idx2preds)
