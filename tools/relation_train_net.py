@@ -125,8 +125,9 @@ def train(cfg, local_rank, distributed, logger, experiment):
     if not cfg.MODEL.WEIGHT.startswith('catalog://') and cfg.MODEL.PRETRAINED_DETECTOR_CKPT != '':
         debug_print(logger, f'{__file__}.train: CONTINUE Learning with {cfg.MODEL.WEIGHT}')
         checkpointer.load(cfg.MODEL.WEIGHT)
-        arguments["iteration"] = scheduler.last_epoch
-        assert cfg.SOLVER.MAX_ITER != arguments["iteration"]
+        arguments["iteration"] = 0
+        # arguments["iteration"] = scheduler.last_epoch
+        # assert cfg.SOLVER.MAX_ITER != arguments["iteration"]
         debug_print(logger, f'{__file__}.train: CONTINUE Learning with {cfg.MODEL.WEIGHT} from iteration {arguments["iteration"]}')
     else:
         debug_print(logger, f'{__file__}.train: Learning FROM SCRATCH with pretrained detector {cfg.MODEL.PRETRAINED_DETECTOR_CKPT}')
@@ -208,7 +209,7 @@ def train(cfg, local_rank, distributed, logger, experiment):
         mode = 'sgdet'
     if mode is None:
         raise ValueError(f'mode is None given use_gt_box={use_gt_box} and use_gt_object_label={use_gt_object_label}')
-    skip_test = mode == 'sgdet' and predictor == 'VCTreePredictor'
+    skip_test = (mode in {'sgcls', 'sgdet'} and predictor == 'VCTreePredictor') or mode in {'sgcls', 'sgdet'} and predictor == 'MotifPredictor'
 
     if distributed:
         model = DistributedDataParallel(
