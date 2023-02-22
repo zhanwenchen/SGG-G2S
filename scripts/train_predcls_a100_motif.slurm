@@ -3,16 +3,16 @@
 #SBATCH -A sds-rise
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:a100:4
+#SBATCH -C a100_80gb
 #SBATCH --ntasks-per-node=4 # need to match number of gpus
 #SBATCH -t 48:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB # need to match batch size.
-#SBATCH -J motif_baseline_predcls_4GPU_riv_1_random # TODO: CHANGE THIS
+#SBATCH -J motif_none_semantic_predcov_bottom30_4GPU_riv_1_predcls # TODO: CHANGE THIS
 #SBATCH -o /home/pct4et/gsc/log/%x-%A.out
 #SBATCH -e /home/pct4et/gsc/log/%x-%A.err
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=pct4et@virginia.edu
-#SBATCH --exclude=udc-an28-1,udc-an28-7
 
 timestamp() {
   date +"%Y-%m-%d%H%M%S"
@@ -51,6 +51,7 @@ error_check()
 
 }
 
+export CONDA_ENVS_DIR=/scratch/pct4et/envs
 export PROJECT_DIR=${HOME}/gsc
 export MODEL_NAME="${SLURM_JOB_ID}_${SLURM_JOB_NAME}"
 export LOGDIR=${PROJECT_DIR}/log
@@ -85,10 +86,10 @@ else
   export NUM2AUG=4
   export MAX_BATCHSIZE_AUG=80
   export ALL_EDGES_FPATH=/gpfs/gpfs0/project/SDS/research/sds-rise/zhanwen/datasets/visual_genome/vg_gbnet/all_edges.pkl
-  export STRATEGY='csk'
-  export BOTTOM_K=30 # 'cooccurrence-pred_cov'
-  export USE_GRAFT=True
-  export USE_SEMANTIC=False
+  export STRATEGY='cooccurrence-pred_cov'
+  export BOTTOM_K=30
+  export USE_GRAFT=False
+  export USE_SEMANTIC=True
 
-  singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${HOME}/.conda/envs/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_motif.sh
+  singularity exec --nv --env LD_LIBRARY_PATH="\$LD_LIBRARY_PATH:${CONDA_ENVS_DIR}/gsc_docker/lib" docker://pytorch/pytorch:1.12.1-cuda11.3-cudnn8-devel ${PROJECT_DIR}/scripts/train_motif.sh
 fi
