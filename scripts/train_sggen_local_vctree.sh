@@ -48,9 +48,9 @@ MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 if [ -d "$MODEL_DIRNAME" ]; then
   error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.log
 else
-  export CUDA_VISIBLE_DEVICES=0
+  export CUDA_VISIBLE_DEVICES=0,1
   export SEED=1234
-  export BATCH_SIZE=8
+  export BATCH_SIZE=6
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False
@@ -69,12 +69,12 @@ else
   export WITH_TRANSFER_CLASSIFIER=False
   export WEIGHT="''"
   export NUM2AUG=4
-  export MAX_BATCHSIZE_AUG=32
-  export ALL_EDGES_FPATH=/home/zhanwen/gbnet/graphs/005/all_edges.pkl
-  export STRATEGY='csk'
-  export BOTTOM_K=30 # 'cooccurrence-pred_cov'
-  export USE_GRAFT=True
-  export USE_SEMANTIC=False
+  export MAX_BATCHSIZE_AUG=12
+  export ALL_EDGES_FPATH=${DATA_DIR_VG_RCNN}/visual_genome/gbnet/all_edges.pkl
+  export STRATEGY='cooccurrence-pred_cov'
+  export BOTTOM_K=30
+  export USE_GRAFT=False
+  export USE_SEMANTIC=True
 
   ${PROJECT_DIR}/scripts/train_vctree.sh
 fi
