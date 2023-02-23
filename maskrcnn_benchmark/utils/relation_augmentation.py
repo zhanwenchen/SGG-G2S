@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 from os import environ as os_environ
-from os.path import join as os_path_join, dirname as os_path_dirname
+from os.path import (
+    join as os_path_join,
+    exists as os_path_exists,
+    dirname as os_path_dirname,
+)
 from json import load as json_load
 from pickle import load as pickle_load
 from numpy import array as np_array
@@ -103,7 +107,14 @@ class RelationAugmenter(object):
     # """
     def __init__(self, pred_counts, bottom_k: int, strategy: str, cfg=None):
         DATA_DIR = os_environ['DATA_DIR_VG_RCNN']
-        with open(os_path_join(DATA_DIR, 'datasets', 'visual_genome', 'VG-SGG-dicts-with-attri.json'), 'r') as fin:
+        dicts_fpath1 = os_path_join(DATA_DIR, 'visual_genome', 'VG-SGG-dicts-with-attri.json')
+        dicts_fpath2 = os_path_join(DATA_DIR, 'datasets', 'visual_genome', 'VG-SGG-dicts-with-attri.json')
+        if os_path_exists(dicts_fpath1):
+            dicts_fpath = dicts_fpath1
+        else:
+            assert os_path_exists(dicts_fpath2)
+            dicts_fpath = dicts_path2
+        with open(dicts_fpath, 'r') as fin:
             scene_graph_meta = json_load(fin)
         self.idx2preds = ['_'] + list(scene_graph_meta['idx_to_predicate'].values())
         self.idx2preds_np = np_array(self.idx2preds)
