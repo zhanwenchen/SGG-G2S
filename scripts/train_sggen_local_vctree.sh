@@ -4,7 +4,7 @@ timestamp() {
   date +"%Y%m%d%H%M%S"
 }
 
-SLURM_JOB_NAME=vctree_pairwise_sggen_4GPU_gcp_1e3
+SLURM_JOB_NAME=vctree_semantic_sggen_4GPU_lab1_1e3
 SLURM_JOB_ID=$(timestamp)
 
 error_exit()
@@ -48,16 +48,16 @@ MODEL_DIRNAME=${PROJECT_DIR}/checkpoints/${MODEL_NAME}/
 if [ -d "$MODEL_DIRNAME" ]; then
   error_exit "Aborted: ${MODEL_DIRNAME} exists." 2>&1 | tee -a ${LOGDIR}/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.log
 else
-  export CUDA_VISIBLE_DEVICES=0,1
+  export CUDA_VISIBLE_DEVICES=1,2,3,4
   export SEED=1234
-  export BATCH_SIZE=6
+  export BATCH_SIZE=16
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False
   export USE_GSC_FE=False
   export PAIRWISE_METHOD_DATA='hadamard'
   export PAIRWISE_METHOD_FUNC='mha'
-  export USE_PAIRWISE_L2=True
+  export USE_PAIRWISE_L2=False
   export CONFIG_FILE=configs/e2e_relation_X_101_32_8_FPN_1x_vctree.yaml
   export DATA_DIR_VG_RCNN=${HOME}/datasets
   export NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd , | wc -c); ((NUM_GPUS++))
@@ -69,7 +69,7 @@ else
   export WITH_TRANSFER_CLASSIFIER=False
   export WEIGHT="''"
   export NUM2AUG=4
-  export MAX_BATCHSIZE_AUG=12
+  export MAX_BATCHSIZE_AUG=32
   export ALL_EDGES_FPATH=${DATA_DIR_VG_RCNN}/visual_genome/gbnet/all_edges.pkl
   export STRATEGY='cooccurrence-pred_cov'
   export BOTTOM_K=30
