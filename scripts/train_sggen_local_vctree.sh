@@ -50,7 +50,7 @@ if [ -d "$MODEL_DIRNAME" ]; then
 else
   export CUDA_VISIBLE_DEVICES=1,2,3,4
   export SEED=1234
-  export BATCH_SIZE=16
+  export BATCH_SIZE=8
   export MAX_ITER=50000
   export LR=1e-3
   export USE_GSC=False
@@ -69,7 +69,7 @@ else
   export WITH_TRANSFER_CLASSIFIER=False
   export WEIGHT="''"
   export NUM2AUG=4
-  export MAX_BATCHSIZE_AUG=32
+  export MAX_BATCHSIZE_AUG=16
   export ALL_EDGES_FPATH=${DATA_DIR_VG_RCNN}/visual_genome/gbnet/all_edges.pkl
   export STRATEGY='cooccurrence-pred_cov'
   export BOTTOM_K=30
